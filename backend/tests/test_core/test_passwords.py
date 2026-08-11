@@ -105,6 +105,13 @@ class TestVerifyPassword:
     def test_empty_stored_hash_returns_false_not_exception(self) -> None:
         assert verify_password(_VALID_PASSWORD, "") is False
 
+    def test_non_ascii_stored_hash_returns_false_not_exception(self) -> None:
+        """A non-ASCII stored hash raises `UnicodeEncodeError` on
+        `.encode("ascii")` — a `ValueError` subclass — and must be
+        treated as a verification failure like any other malformed
+        hash, never propagate as an unhandled exception."""
+        assert verify_password(_VALID_PASSWORD, "$2b$12$éèêë-not-ascii") is False
+
 
 @pytest.mark.unit
 class TestVerifyDummyPassword:

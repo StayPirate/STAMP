@@ -782,6 +782,155 @@ class TestListAllApiKeys:
 
         assert response.status_code == 422
 
+    @pytest.mark.parametrize(
+        "status_value",
+        ["active", "expired", "revoked"],
+    )
+    async def test_status_filter_scopes_to_exactly_one_status(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        status_value: str,
+    ) -> None:
+        """Mirrors `TestListMyApiKeys::test_status_filter_scopes_to_exactly_one_status`
+        for the admin endpoint — keys belong to different owners, proving
+        the filter is applied across all owners, not just the caller's own
+        keys (docs/features/platform/testing-strategy.md, API Key
+        Management: "pagination, status filtering, ... for self-service
+        and admin lists")."""
+        admin_user, client = admin_user_and_client
+        other = await user_factory()
+        now = datetime.now(UTC)
+        await api_key_factory(user_id=admin_user.id, name="active-key")
+        await api_key_factory(
+            user_id=other.id, name="expired-key", expires_at=now - timedelta(days=1)
+        )
+        await api_key_factory(
+            user_id=admin_user.id,
+            name="revoked-key",
+            revoked_at=now,
+            revoked_by=admin_user.id,
+        )
+
+        response = await client.get(
+            "/api/v1/admin/api-keys", params={"status": status_value}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["meta"]["total"] == 1
+        assert body["data"][0]["status"] == status_value
+
+    async def test_page_beyond_last_page_returns_empty_data_with_correct_total(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        admin_user, client = admin_user_and_client
+        await api_key_factory(user_id=admin_user.id)
+
+        response = await client.get(
+            "/api/v1/admin/api-keys", params={"page": 5, "per_page": 10}
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["data"] == []
+        assert body["meta"] == {"total": 1, "page": 5, "per_page": 10}
+
+    async def test_sort_order_asc_and_desc_reverse_the_result(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        admin_user, client = admin_user_and_client
+        other = await user_factory()
+        now = datetime.now(UTC)
+        first = await api_key_factory(
+            user_id=admin_user.id,
+            name="first-created",
+            created_at=now - timedelta(hours=1),
+        )
+        second = await api_key_factory(
+            user_id=other.id, name="second-created", created_at=now
+        )
+
+        desc = await client.get(
+            "/api/v1/admin/api-keys",
+            params={"sort_by": "created_at", "sort_order": "desc"},
+        )
+        asc = await client.get(
+            "/api/v1/admin/api-keys",
+            params={"sort_by": "created_at", "sort_order": "asc"},
+        )
+
+        assert [item["name"] for item in desc.json()["data"]] == [
+            second.name,
+            first.name,
+        ]
+        assert [item["name"] for item in asc.json()["data"]] == [
+            first.name,
+            second.name,
+        ]
+
+    async def test_stable_ordering_tiebreaks_by_id_across_owners(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+    ) -> None:
+        """Two keys owned by different users with an identical
+        `created_at` must still sort deterministically by `id` — proving
+        the admin endpoint's ordering is stable across owners, not just
+        within a single owner's keys."""
+        admin_user, client = admin_user_and_client
+        other = await user_factory()
+        same_time = datetime.now(UTC)
+        key1 = await api_key_factory(
+            user_id=admin_user.id, name="k1", created_at=same_time
+        )
+        key2 = await api_key_factory(user_id=other.id, name="k2", created_at=same_time)
+        expected_asc_ids = sorted([str(key1.id), str(key2.id)])
+
+        response = await client.get(
+            "/api/v1/admin/api-keys",
+            params={"sort_by": "created_at", "sort_order": "asc"},
+        )
+
+        assert response.status_code == 200
+        ids = [item["id"] for item in response.json()["data"]]
+        assert ids == expected_asc_ids
+
+    @pytest.mark.parametrize("sort_order", ["asc", "desc"])
+    async def test_last_used_at_null_sorts_last_in_both_directions(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        sort_order: str,
+    ) -> None:
+        admin_user, client = admin_user_and_client
+        other = await user_factory()
+        never_used = await api_key_factory(
+            user_id=admin_user.id, name="never-used", last_used_at=None
+        )
+        used = await api_key_factory(
+            user_id=other.id,
+            name="used",
+            last_used_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+
+        response = await client.get(
+            "/api/v1/admin/api-keys",
+            params={"sort_by": "last_used_at", "sort_order": sort_order},
+        )
+
+        assert response.status_code == 200
+        names = [item["name"] for item in response.json()["data"]]
+        assert names == [used.name, never_used.name]
+
 
 # ---------------------------------------------------------------------------
 # POST /api/v1/admin/api-keys/{key_id}/revoke

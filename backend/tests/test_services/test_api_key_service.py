@@ -1634,29 +1634,51 @@ class TestListAllKeys:
         assert page.items == []
         assert page.total == 0
 
+    @pytest.mark.parametrize(
+        ("status_filter", "expected_name"),
+        [
+            (ApiKeyStatus.ACTIVE, "active"),
+            (ApiKeyStatus.EXPIRED, "expired"),
+            (ApiKeyStatus.REVOKED, "revoked"),
+        ],
+    )
     async def test_status_filter_applies_across_owners(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         api_key_factory: Callable[..., Awaitable[ApiKey]],
+        status_filter: ApiKeyStatus,
+        expected_name: str,
     ) -> None:
         owner1 = await user_factory()
         owner2 = await user_factory()
+        owner3 = await user_factory()
+        now = datetime.now(UTC)
         active = await api_key_factory(user_id=owner1.id, name="active")
-        await api_key_factory(
-            user_id=owner2.id, name="revoked", revoked_at=datetime.now(UTC)
+        expired = await api_key_factory(
+            user_id=owner2.id, name="expired", expires_at=now - timedelta(days=1)
         )
+        revoked = await api_key_factory(
+            user_id=owner3.id, name="revoked", revoked_at=now
+        )
+        expected_by_name = {
+            "active": active,
+            "expired": expired,
+            "revoked": revoked,
+        }
 
         page = await list_all_keys(
             db_session,
             owner=None,
-            status=ApiKeyStatus.ACTIVE,
+            status=status_filter,
             page=1,
             per_page=20,
             sort_by=ApiKeySortField.CREATED_AT,
             sort_order=SortOrder.DESC,
         )
-        assert [item.api_key.id for item in page.items] == [active.id]
+        assert [item.api_key.id for item in page.items] == [
+            expected_by_name[expected_name].id
+        ]
 
     async def test_sorting_and_id_tiebreak_across_owners(
         self,
@@ -1683,30 +1705,36 @@ class TestListAllKeys:
         )
         assert [item.api_key.id for item in asc_page.items] == expected_asc
 
+    @pytest.mark.parametrize("sort_order", [SortOrder.ASC, SortOrder.DESC])
     async def test_last_used_at_nulls_sort_last_across_owners(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
         api_key_factory: Callable[..., Awaitable[ApiKey]],
+        sort_order: SortOrder,
     ) -> None:
-        """Verifies NULL-last ordering for `last_used_at` in admin list."""
+        """Verifies NULL-last ordering for `last_used_at` in admin list,
+        in both sort directions (docs/features/platform/testing-strategy.md,
+        API Key Management: "last_used_at NULL-last ordering for
+        self-service and admin lists")."""
         owner = await user_factory()
+        other = await user_factory()
         now = datetime.now(UTC)
         used = await api_key_factory(
             user_id=owner.id, name="used", last_used_at=now - timedelta(days=1)
         )
-        never_used = await api_key_factory(user_id=owner.id, name="never-used")
+        never_used = await api_key_factory(user_id=other.id, name="never-used")
 
-        asc_page = await list_all_keys(
+        page = await list_all_keys(
             db_session,
             owner=None,
             status=None,
             page=1,
             per_page=20,
             sort_by=ApiKeySortField.LAST_USED_AT,
-            sort_order=SortOrder.ASC,
+            sort_order=sort_order,
         )
-        ids = [item.api_key.id for item in asc_page.items]
+        ids = [item.api_key.id for item in page.items]
         assert ids == [used.id, never_used.id]
 
     async def test_multi_page_pagination(

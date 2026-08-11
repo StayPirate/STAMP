@@ -194,6 +194,29 @@ class TestEnforceQueryParameterLengthLimit:
         assert response.status_code == 422
         assert response.json()["errors"][0]["loc"] == ["query", "status"]
 
+    async def test_repeated_param_produces_one_error_per_over_limit_occurrence(
+        self, limit_client: AsyncClient
+    ) -> None:
+        """Two over-limit occurrences of the same repeated parameter
+        produce exactly two error entries — one per occurrence, not one
+        per parameter name — proving the dependency does not
+        short-circuit after the first violation (see
+        `enforce_query_parameter_length_limit`, Q6: "one Pydantic-shaped
+        error entry per over-limit occurrence")."""
+        response = await limit_client.get(
+            "/flat",
+            params=[
+                ("status", "x" * 501),
+                ("status", "ok"),
+                ("status", "y" * 600),
+            ],
+        )
+        assert response.status_code == 422
+        errors = response.json()["errors"]
+        assert len(errors) == 2
+        assert all(error["loc"] == ["query", "status"] for error in errors)
+        assert all(error["type"] == "string_too_long" for error in errors)
+
     async def test_nested_dependency_field_is_discovered(
         self, limit_client: AsyncClient
     ) -> None:

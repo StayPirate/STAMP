@@ -214,6 +214,16 @@ class TestDecodeAndValidateTemporalBoundaries:
         claims = decode_and_validate(_encode(payload), secret_key=_SECRET, now=now)
         assert claims is not None
 
+    def test_session_deadline_one_second_before_now_is_expired(self) -> None:
+        now = datetime.now(UTC)
+        payload = _payload(
+            iat=int((now - timedelta(hours=1)).timestamp()),
+            exp=int((now + timedelta(hours=1)).timestamp()),
+            session_deadline=int(now.timestamp()) - 1,
+        )
+        with pytest.raises(InvalidTokenError):
+            decode_and_validate(_encode(payload), secret_key=_SECRET, now=now)
+
     def test_iat_in_future_is_rejected(self) -> None:
         now = datetime.now(UTC)
         payload = _payload(
@@ -388,16 +398,25 @@ class TestRefreshToken:
         return claims, deadline
 
     def test_below_threshold_is_a_noop(self) -> None:
-        now = datetime.now(UTC)
+        # Second-aligned `now`: `claims.issued_at` round-trips through
+        # the JWT's integer epoch claims (see `_to_epoch`/
+        # `_epoch_to_datetime`), so a `now` carrying microseconds would
+        # make `now - claims.issued_at` include a sub-second remainder
+        # not accounted for by the `timedelta` offset below, blurring
+        # the exact boundary this test targets.
+        now = datetime.now(UTC).replace(microsecond=0)
         claims, _ = self._claims_at(now, jwt_expiry_hours=72)
-        later = now + timedelta(hours=35, seconds=-1)  # just under 50% of 72h
+        one_second_before_threshold = now + timedelta(hours=36, seconds=-1)
         result = refresh_token(
-            claims, now=later, jwt_expiry_hours=72, secret_key=_SECRET
+            claims,
+            now=one_second_before_threshold,
+            jwt_expiry_hours=72,
+            secret_key=_SECRET,
         )
         assert result is None
 
     def test_exactly_at_threshold_refreshes(self) -> None:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(microsecond=0)
         claims, _ = self._claims_at(now, jwt_expiry_hours=72)
         exactly_at_threshold = now + timedelta(hours=36)  # 50% of 72h
         result = refresh_token(
@@ -409,7 +428,7 @@ class TestRefreshToken:
         assert result is not None
 
     def test_just_after_threshold_refreshes(self) -> None:
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).replace(microsecond=0)
         claims, _ = self._claims_at(now, jwt_expiry_hours=72)
         after = now + timedelta(hours=36, seconds=1)
         result = refresh_token(
