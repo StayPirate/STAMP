@@ -4,18 +4,19 @@ Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the
 image's non-root user before the test suite starts (`compose up --wait`
 already blocks until `migrate` exits cleanly — see the comment on that
-service). These tests exercise the *result* of that migration through
-the `api` container, which:
+service).
 
-- Shares the exact same image and non-root user as `migrate` (neither
-  service overrides `user:` in docker-compose.smoke.yml), so verifying
-  the acting user here also verifies the user `migrate` ran as.
-- Shares the same PostgreSQL database (`DATABASE_URL`), already migrated
-  by `migrate` by the time these tests run.
+The non-root identity is verified directly against the `migrate`
+service's own definition via `compose run` (a fresh, throwaway
+container reusing that exact service's image/user/environment — see
+the `compose_run` fixture), since the one-shot `migrate` container
+itself has already exited by the time pytest runs and cannot be
+`compose exec`'d into.
 
-`migrate` itself cannot be `compose exec`'d into directly: it is a
-one-shot container with `restart: "no"` that has already exited by the
-time pytest runs.
+The remaining tests exercise the *result* of the migration through the
+`api` container, which shares the same PostgreSQL database
+(`DATABASE_URL`), already migrated by `migrate` by the time these tests
+run.
 
 See docs/features/platform/testing-strategy.md (Image / Container Smoke
 Testing, Growth Rule).
@@ -122,17 +123,26 @@ asyncio.run(main())
 
 @pytest.mark.image
 def test_migration_ran_as_non_root(
-    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+    compose_run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
     """The migration step runs as the image's non-root `appuser`.
 
-    `migrate` and `api` share the same image and no per-service `user:`
-    override, so confirming the acting user for `api` confirms it for
-    `migrate` too.
+    Verified directly against the `migrate` service's own definition via
+    `compose run --rm --no-deps migrate id -u` (a fresh, throwaway
+    container built from that exact service configuration — image,
+    user, environment — with its default command overridden), rather
+    than inferred from the long-running `api` service that happens to
+    share the same image and no `user:` override. This also exercises
+    the actual command `migrate` runs *as* — the same non-root identity
+    that ran `alembic upgrade head` moments earlier in the primary
+    stack.
     """
-    result = compose_exec("api", "id", "-u")
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() != "0", "container is running as root"
+    result = compose_run("migrate", "id", "-u")
+    assert result.returncode == 0, (
+        f"expected exit 0 for id -u (stdout={result.stdout!r}, "
+        f"stderr={result.stderr!r})"
+    )
+    assert result.stdout.strip() != "0", "migrate service runs as root"
 
 
 @pytest.mark.image

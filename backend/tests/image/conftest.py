@@ -21,6 +21,60 @@ from collections.abc import Callable, Iterator
 import httpx
 import pytest
 
+# Default bound for every `compose_exec` invocation. All existing exec
+# calls (import checks, `celery report`, `alembic check`, `id -u`, etc.)
+# complete in well under a second inside the container; 30s leaves ample
+# margin for a loaded CI runner while still failing fast — and with a
+# clear diagnostic — if a command hangs instead of silently blocking the
+# test run indefinitely. Callers with a legitimately longer bounded
+# operation (e.g. a poll loop for a broker-delivered task effect) pass an
+# explicit `timeout=` override.
+_DEFAULT_EXEC_TIMEOUT = 30.0
+
+
+def _resolve_compose_invocation() -> tuple[list[str], list[str], str]:
+    """Resolve the shared ``(compose_cmd, file_args, project)`` triple
+    from the env vars scripts/image-smoke.sh exports (see the
+    ``compose_exec``/``compose_run`` fixture docstrings below for the
+    meaning of each variable). Shared by both fixtures so the
+    resolution logic lives in exactly one place.
+    """
+    compose_cmd = shlex.split(os.environ.get("COMPOSE_CMD", "docker compose"))
+    compose_files = os.environ.get("COMPOSE_FILES", "docker-compose.smoke.yml").split(
+        ":"
+    )
+    project = os.environ.get("COMPOSE_PROJECT", "sentinel-smoke")
+    file_args: list[str] = []
+    for compose_file in compose_files:
+        file_args.extend(["-f", compose_file])
+    return compose_cmd, file_args, project
+
+
+def _run_compose_bounded(
+    cmd: list[str], timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run an assembled compose command, bounded by ``timeout`` seconds.
+
+    Shared by ``compose_exec`` and ``compose_run``. A command that
+    exceeds the bound fails the test immediately via ``pytest.fail``
+    with the full command, timeout value, and any output captured
+    before the kill — instead of hanging the whole suite (and, in CI,
+    the job) until the external runner-level timeout intervenes.
+    """
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"compose command timed out after {timeout}s: cmd={cmd!r} "
+            f"stdout={exc.stdout!r} stderr={exc.stderr!r}"
+        )
+
 
 @pytest.fixture(scope="session")
 def base_url() -> str:
@@ -64,24 +118,28 @@ def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
       ``-p sentinel-smoke``); otherwise ``compose exec`` would target the
       default project and fail to find the running containers.
 
-    Returns a callable ``(service, *args, env=None) -> CompletedProcess``.
-    ``env``, when given, overrides/adds environment variables for that
-    single invocation only (via ``compose exec -e KEY=VAL``) — it does
-    not persist across calls or affect the long-running service process.
-    Used to exercise startup validation (e.g. an invalid ``LOG_LEVEL``)
-    in a fresh process without restarting the service.
+    Returns a callable ``(service, *args, env=None, timeout=_DEFAULT_EXEC_TIMEOUT)
+    -> CompletedProcess``. ``env``, when given, overrides/adds environment
+    variables for that single invocation only (via ``compose exec -e
+    KEY=VAL``) — it does not persist across calls or affect the
+    long-running service process. Used to exercise startup validation
+    (e.g. an invalid ``LOG_LEVEL``) in a fresh process without
+    restarting the service.
+
+    ``timeout`` (seconds) bounds how long the invocation may block,
+    defaulting to ``_DEFAULT_EXEC_TIMEOUT``. A command that exceeds it
+    fails the test immediately via ``pytest.fail`` with the service,
+    command, timeout value, and any output captured before the kill —
+    instead of hanging the whole suite (and, in CI, the job) until the
+    external runner-level timeout intervenes.
     """
-    compose_cmd = shlex.split(os.environ.get("COMPOSE_CMD", "docker compose"))
-    compose_files = os.environ.get("COMPOSE_FILES", "docker-compose.smoke.yml").split(
-        ":"
-    )
-    project = os.environ.get("COMPOSE_PROJECT", "sentinel-smoke")
-    file_args: list[str] = []
-    for compose_file in compose_files:
-        file_args.extend(["-f", compose_file])
+    compose_cmd, file_args, project = _resolve_compose_invocation()
 
     def _exec(
-        service: str, *args: str, env: dict[str, str] | None = None
+        service: str,
+        *args: str,
+        env: dict[str, str] | None = None,
+        timeout: float = _DEFAULT_EXEC_TIMEOUT,
     ) -> subprocess.CompletedProcess[str]:
         env_args: list[str] = []
         for key, value in (env or {}).items():
@@ -97,11 +155,57 @@ def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
             service,
             *args,
         ]
-        return subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        return _run_compose_bounded(cmd, timeout)
 
     return _exec
+
+
+@pytest.fixture(scope="session")
+def compose_run() -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Run a one-shot container from a compose service's own definition.
+
+    Distinct from ``compose_exec``: it does not target an already-running
+    container, it starts a brand-new one from the service's own image,
+    user, and environment (via ``compose run --rm --no-deps``), then
+    removes it. Used to verify a service that has already exited by the
+    time the test suite runs (e.g. the one-shot ``migrate`` service,
+    which uses ``restart: "no"``) directly against its own service
+    definition, rather than inferring its properties from a
+    long-running sibling service that happens to share the same image.
+
+    ``--no-deps`` skips starting/waiting on the service's own
+    ``depends_on`` entries: by the time image tests run, ``postgres``
+    and ``redis`` are already up (the primary stack brought up by
+    ``scripts/image-smoke.sh`` established that), so re-evaluating
+    those conditions here would be redundant.
+
+    Same env var resolution, return type, and bounded-timeout contract
+    as ``compose_exec`` (see above).
+    """
+    compose_cmd, file_args, project = _resolve_compose_invocation()
+
+    def _run(
+        service: str,
+        *args: str,
+        env: dict[str, str] | None = None,
+        timeout: float = _DEFAULT_EXEC_TIMEOUT,
+    ) -> subprocess.CompletedProcess[str]:
+        env_args: list[str] = []
+        for key, value in (env or {}).items():
+            env_args.extend(["-e", f"{key}={value}"])
+        cmd = [
+            *compose_cmd,
+            "-p",
+            project,
+            *file_args,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            *env_args,
+            service,
+            *args,
+        ]
+        return _run_compose_bounded(cmd, timeout)
+
+    return _run
