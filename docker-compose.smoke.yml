@@ -30,7 +30,9 @@
 # docs/features/platform/testing-strategy.md, Image / Container Smoke
 # Testing — Growth Rule). Keeping them commented lets the argument-free
 # `up --wait` stay green so the CI gate does not block `latest`
-# publication before those services land.
+# publication before those services land. `worker` and `beat` are active
+# (Celery runtime — see docs/features/platform/fetcher-infrastructure.md);
+# `git-worker` remains commented out (Phase 5, git-based CVE fetchers).
 
 x-app-common: &app-common
   image: ${SENTINEL_IMAGE:-sentinel-backend:smoke}
@@ -109,20 +111,46 @@ services:
     command: ["alembic", "upgrade", "head"]
     restart: "no"
 
-  # --- Uncomment in Phase 3 (fetcher framework: requires app.celery_app) ---
-  # worker:
-  #   <<: *app-common
-  #   command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
-  #   healthcheck:
-  #     test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
-  #     interval: 15s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-  #
-  # beat:
-  #   <<: *app-common
-  #   command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+  # Background task execution (Celery). Depends on `migrate` reaching
+  # successful completion, not just on infrastructure health — see
+  # docs/deployment.md (Container Images, Startup Ordering). The `api`
+  # service does not yet declare this same dependency; that is
+  # deliberately deferred to the work item that introduces
+  # system-setting persistence (see docs/deployment.md).
+  worker:
+    <<: *app-common
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.celery_app", "inspect", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # Periodic task scheduler (Celery Beat + RedBeat). No healthcheck is
+  # defined: Celery Beat exposes no broadcast-ping mechanism (that is a
+  # worker-only remote-control command), and `up --wait` already treats
+  # an unhealthy-by-crash container as non-running, which is a
+  # sufficient startup signal here. Beat's actual schedule registration
+  # is verified by the image test suite via RedBeat's public API (see
+  # backend/tests/image/test_celery.py).
+  beat:
+    <<: *app-common
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   # --- Uncomment in Phase 5 (git-based CVE fetchers) ---
   # git-worker:
