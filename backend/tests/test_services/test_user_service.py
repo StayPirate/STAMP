@@ -27,7 +27,13 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import IdentityAuditEventType, Role
+from app.core.enums import (
+    IdentityAuditEventType,
+    Role,
+    SortOrder,
+    UserSortField,
+    UserType,
+)
 from app.core.exceptions import UserNotFoundError
 from app.core.passwords import (
     MAX_PASSWORD_LENGTH,
@@ -51,8 +57,10 @@ from app.services.user_service import (
     UserConflictError,
     UsernameFormatError,
     create_user,
+    get_user,
     get_user_by_id,
     get_user_roles,
+    list_users,
     reactivate_user,
     reset_password,
     resolve_user_identifier,
@@ -2848,3 +2856,360 @@ class TestPiiAndSecretSafety:
                 acting_user_id=None,
             )
         assert _VALID_PASSWORD not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# list_users() / get_user() — P2-10 read/query boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestListUsers:
+    async def test_empty_database_returns_empty_page(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_users(db_session)
+
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_default_ordering_is_username_ascending(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="charlie")
+        await user_factory(username="alice")
+        await user_factory(username="bob")
+
+        page = await list_users(db_session)
+
+        assert [user.username for user in page.items] == ["alice", "bob", "charlie"]
+
+    async def test_search_matches_username_case_insensitively(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="johndoe")
+        await user_factory(username="alicesmith")
+
+        page = await list_users(db_session, search="JohnD")
+
+        assert [user.username for user in page.items] == ["johndoe"]
+
+    async def test_search_matches_email(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(email="findme@example.com")
+        await user_factory(email="other@example.com")
+
+        page = await list_users(db_session, search="findme")
+
+        assert [user.id for user in page.items] == [target.id]
+
+    async def test_search_matches_full_name(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        target = await user_factory(full_name="Alice Smith")
+        await user_factory(full_name="Bob Wilson")
+
+        page = await list_users(db_session, search="Alice")
+
+        assert [user.id for user in page.items] == [target.id]
+
+    async def test_search_combines_with_active_filter_via_and(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """docs/features/identity/user-management.md (List Users):
+        filters of different kinds combine with AND semantics."""
+        active_match = await user_factory(username="searchmatch1", active=True)
+        await user_factory(username="searchmatch2", active=False)
+
+        page = await list_users(db_session, search="searchmatch", active=True)
+
+        assert [user.id for user in page.items] == [active_match.id]
+
+    async def test_type_filter_local(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        local_user = await user_factory()
+        await user_factory(external_id=uuid.uuid4(), password_hash=None)
+
+        page = await list_users(db_session, user_type=UserType.LOCAL)
+
+        assert [user.id for user in page.items] == [local_user.id]
+
+    async def test_type_filter_external(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory()
+        external_user = await user_factory(external_id=uuid.uuid4(), password_hash=None)
+
+        page = await list_users(db_session, user_type=UserType.EXTERNAL)
+
+        assert [user.id for user in page.items] == [external_user.id]
+
+    async def test_active_filter_true(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        active_user = await user_factory(active=True)
+        await user_factory(active=False)
+
+        page = await list_users(db_session, active=True)
+
+        assert [user.id for user in page.items] == [active_user.id]
+
+    async def test_active_filter_false(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(active=True)
+        inactive_user = await user_factory(active=False)
+
+        page = await list_users(db_session, active=False)
+
+        assert [user.id for user in page.items] == [inactive_user.id]
+
+    async def test_role_filter_or_semantics(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        admin_user = await user_factory(username="adminuser")
+        await user_role_factory(user_id=admin_user.id, role=Role.ADMIN.value)
+        analyst_user = await user_factory(username="analystuser")
+        await user_role_factory(
+            user_id=analyst_user.id, role=Role.VULNERABILITY_ANALYST.value
+        )
+        no_role_user = await user_factory(username="noroleuser")
+
+        page = await list_users(
+            db_session, roles=[Role.ADMIN, Role.VULNERABILITY_ANALYST]
+        )
+
+        result_ids = {user.id for user in page.items}
+        assert result_ids == {admin_user.id, analyst_user.id}
+        assert no_role_user.id not in result_ids
+
+    async def test_role_filter_no_duplicate_for_multiple_origins(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """A user holding the same role from two origins (manual + one
+        external group) must appear exactly once, with an accurate
+        total — the `EXISTS` subquery must not duplicate the row."""
+        user = await user_factory(username="dualorigin")
+        await user_role_factory(
+            user_id=user.id, role=Role.ADMIN.value, group_name="_manual"
+        )
+        await user_role_factory(
+            user_id=user.id, role=Role.ADMIN.value, group_name="O SUSE Security"
+        )
+
+        page = await list_users(db_session, roles=[Role.ADMIN])
+
+        assert [u.id for u in page.items] == [user.id]
+        assert page.total == 1
+
+    async def test_has_role_true(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        with_role = await user_factory(username="hasrole")
+        await user_role_factory(user_id=with_role.id)
+        await user_factory(username="norole")
+
+        page = await list_users(db_session, has_role=True)
+
+        assert [user.id for user in page.items] == [with_role.id]
+
+    async def test_has_role_false(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        with_role = await user_factory(username="hasrole2")
+        await user_role_factory(user_id=with_role.id)
+        no_role = await user_factory(username="norole2")
+
+        page = await list_users(db_session, has_role=False)
+
+        assert [user.id for user in page.items] == [no_role.id]
+
+    @pytest.mark.parametrize(
+        ("sort_by", "field"),
+        [
+            (UserSortField.USERNAME, "username"),
+            (UserSortField.EMAIL, "email"),
+            (UserSortField.CREATED_AT, "created_at"),
+        ],
+    )
+    async def test_sort_by_field_ascending_and_descending(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        sort_by: UserSortField,
+        field: str,
+    ) -> None:
+        first = await user_factory(username="aaa-user", email="aaa@example.com")
+        second = await user_factory(username="zzz-user", email="zzz@example.com")
+
+        ascending = await list_users(
+            db_session, sort_by=sort_by, sort_order=SortOrder.ASC
+        )
+        descending = await list_users(
+            db_session, sort_by=sort_by, sort_order=SortOrder.DESC
+        )
+
+        asc_values = [getattr(user, field) for user in ascending.items]
+        desc_values = [getattr(user, field) for user in descending.items]
+        assert asc_values == sorted(asc_values)
+        assert desc_values == sorted(desc_values, reverse=True)
+        assert {u.id for u in ascending.items} == {first.id, second.id}
+
+    async def test_full_name_sort_places_nulls_last_ascending(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="hasnameuser", full_name="Alice Smith")
+        await user_factory(username="nonameuser", full_name=None)
+
+        page = await list_users(
+            db_session, sort_by=UserSortField.FULL_NAME, sort_order=SortOrder.ASC
+        )
+
+        assert [user.full_name for user in page.items] == ["Alice Smith", None]
+
+    async def test_full_name_sort_places_nulls_last_descending(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory(username="hasnameuser2", full_name="Alice Smith")
+        await user_factory(username="nonameuser2", full_name=None)
+
+        page = await list_users(
+            db_session, sort_by=UserSortField.FULL_NAME, sort_order=SortOrder.DESC
+        )
+
+        assert [user.full_name for user in page.items] == ["Alice Smith", None]
+
+    async def test_tie_break_by_id_same_direction_as_sort_order(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """Two users sharing the same non-unique sort value
+        (`full_name`) fall back to the deterministic `User.id`
+        tiebreaker in the same direction as `sort_order`."""
+        first = await user_factory(username="tieuser1", full_name="Same Name")
+        second = await user_factory(username="tieuser2", full_name="Same Name")
+        expected_asc = sorted([first.id, second.id])
+        expected_desc = list(reversed(expected_asc))
+
+        ascending = await list_users(
+            db_session, sort_by=UserSortField.FULL_NAME, sort_order=SortOrder.ASC
+        )
+        descending = await list_users(
+            db_session, sort_by=UserSortField.FULL_NAME, sort_order=SortOrder.DESC
+        )
+
+        assert [u.id for u in ascending.items] == expected_asc
+        assert [u.id for u in descending.items] == expected_desc
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        await user_factory()
+
+        page = await list_users(db_session, page=2, per_page=20)
+
+        assert page.items == []
+        assert page.total == 1
+
+    async def test_roles_and_manager_are_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        """Accessing `.roles`/`.manager` on a returned item must not
+        require additional I/O — SQLAlchemy async raises a
+        `MissingGreenlet`-style error on implicit lazy load, so a clean
+        attribute access proves eager loading."""
+        manager = await user_factory(username="managerof")
+        user = await user_factory(username="hasmanager", manager_id=manager.id)
+        await user_role_factory(user_id=user.id)
+
+        page = await list_users(db_session, search="hasmanager")
+
+        (item,) = page.items
+        assert item.manager is not None
+        assert item.manager.id == manager.id
+        assert len(item.roles) == 1
+
+
+@pytest.mark.integration
+class TestGetUser:
+    async def test_resolves_by_uuid_with_roles_and_manager_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+    ) -> None:
+        manager = await user_factory(username="managerof2")
+        user = await user_factory(username="target-user", manager_id=manager.id)
+        await user_role_factory(user_id=user.id)
+
+        result = await get_user(db_session, str(user.id))
+
+        assert result.id == user.id
+        assert result.manager is not None
+        assert result.manager.id == manager.id
+        assert len(result.roles) == 1
+
+    async def test_resolves_by_exact_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        user = await user_factory(username="byusername")
+
+        result = await get_user(db_session, "byusername")
+
+        assert result.id == user.id
+
+    async def test_unknown_uuid_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await get_user(db_session, str(uuid.uuid4()))
+
+    async def test_unknown_username_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        with pytest.raises(UserNotFoundError):
+            await get_user(db_session, "no-such-user")

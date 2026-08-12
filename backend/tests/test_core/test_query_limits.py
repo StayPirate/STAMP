@@ -63,13 +63,32 @@ class TestIsStringLike:
     def test_uuid_is_not_string_like(self) -> None:
         assert _is_string_like(UUID) is False
 
+    def test_list_str_is_string_like(self) -> None:
+        assert _is_string_like(list[str]) is True
+
+    def test_optional_list_str_is_string_like(self) -> None:
+        assert _is_string_like(list[str] | None) is True
+
+    def test_list_str_enum_is_string_like(self) -> None:
+        assert _is_string_like(list[_Choice]) is True
+
+    def test_list_int_is_not_string_like(self) -> None:
+        assert _is_string_like(list[int]) is False
+
+    def test_bare_list_is_not_string_like(self) -> None:
+        """A bare, unparameterized `list` has no element type to
+        inspect — treated as not string-shaped rather than raising."""
+        assert _is_string_like(list) is False
+
 
 def _flat_query(
     status: Annotated[str | None, Query()] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     sort_by: Annotated[_Choice, Query()] = _Choice.ONE,
+    *,
+    tag: Annotated[list[str], Query(default_factory=list)],
 ) -> dict[str, object]:
-    return {"status": status, "page": page, "sort_by": sort_by.value}
+    return {"status": status, "page": page, "sort_by": sort_by.value, "tag": tag}
 
 
 def _nested_query(
@@ -240,3 +259,30 @@ class TestEnforceQueryParameterLengthLimit:
     ) -> None:
         response = await limit_client.get("/flat")
         assert response.status_code == 200
+
+    async def test_repeatable_list_param_each_occurrence_checked_individually(
+        self, limit_client: AsyncClient
+    ) -> None:
+        """A `list[str]` query field (repeatable filter) is
+        string-shaped: each raw occurrence is checked individually,
+        matching the existing repeated-string-param behavior."""
+        response = await limit_client.get(
+            "/flat", params=[("tag", "ok"), ("tag", "x" * 501)]
+        )
+        assert response.status_code == 422
+        assert response.json()["errors"][0]["loc"] == ["query", "tag"]
+
+    async def test_repeatable_list_param_within_limit_is_accepted(
+        self, limit_client: AsyncClient
+    ) -> None:
+        response = await limit_client.get(
+            "/flat", params=[("tag", "a" * 500), ("tag", "b" * 500)]
+        )
+        assert response.status_code == 200
+
+    async def test_repeatable_list_param_absent_is_a_no_op(
+        self, limit_client: AsyncClient
+    ) -> None:
+        response = await limit_client.get("/flat")
+        assert response.status_code == 200
+        assert response.json()["tag"] == []

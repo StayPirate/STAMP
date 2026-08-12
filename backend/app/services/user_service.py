@@ -26,17 +26,24 @@ import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final, Literal
+from typing import Any, Final, Literal
 from uuid import UUID
 
 import structlog
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import ColumnElement, select
+from sqlalchemy import ColumnElement, exists, func, nullslast, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.enums import IdentityAuditEventType, Role, SessionInvalidationReason
+from app.core.enums import (
+    IdentityAuditEventType,
+    Role,
+    SessionInvalidationReason,
+    SortOrder,
+    UserSortField,
+    UserType,
+)
 from app.core.exceptions import ServiceError, UserNotFoundError
 from app.core.passwords import PasswordValidationError, hash_password, validate_password
 from app.core.permissions import role_to_wire
@@ -183,6 +190,17 @@ class PasswordResetResult:
     username: str
 
 
+@dataclass(frozen=True)
+class UserPage:
+    """A page of `User` rows returned by `list_users()`, with `roles` and
+    `manager` eagerly loaded for direct profile serialization."""
+
+    items: list[User]
+    total: int
+    page: int
+    per_page: int
+
+
 async def get_user_by_id(session: AsyncSession, user_id: UUID) -> User | None:
     """Return the `User` row for `user_id`, or ``None`` if no row exists.
 
@@ -247,6 +265,127 @@ async def get_user_roles(session: AsyncSession, user_id: UUID) -> list[Role]:
         select(UserRole.role).where(UserRole.user_id == user_id).distinct()
     )
     return [Role(value) for value in result.scalars().all()]
+
+
+def _user_sort_clauses(
+    sort_by: UserSortField, sort_order: SortOrder
+) -> list[ColumnElement[Any]]:
+    """Deterministic ORDER BY clauses: the requested field plus the
+    primary-key tiebreaker in the same direction (`docs/api-spec.md`,
+    Deterministic Pagination Ordering). `full_name` NULLs sort last in
+    both directions (`docs/features/identity/user-management.md`, List
+    Users); the other three fields are never NULL, so `nullslast()` is a
+    no-op there.
+    """
+    column = {
+        UserSortField.USERNAME: User.username,
+        UserSortField.FULL_NAME: User.full_name,
+        UserSortField.EMAIL: User.email,
+        UserSortField.CREATED_AT: User.created_at,
+    }[sort_by]
+    if sort_order is SortOrder.ASC:
+        return [nullslast(column.asc()), User.id.asc()]
+    return [nullslast(column.desc()), User.id.desc()]
+
+
+async def list_users(
+    session: AsyncSession,
+    *,
+    search: str | None = None,
+    user_type: UserType | None = None,
+    active: bool | None = None,
+    roles: list[Role] | None = None,
+    has_role: bool | None = None,
+    page: int = 1,
+    per_page: int = 20,
+    sort_by: UserSortField = UserSortField.USERNAME,
+    sort_order: SortOrder = SortOrder.ASC,
+) -> UserPage:
+    """Return one page of the public user directory.
+
+    Q1: `search` is a case-insensitive substring matched against
+    `username`, `email`, and `full_name` (OR); `user_type` restricts to
+    local (`external_id IS NULL`) or external (`external_id IS NOT
+    NULL`) users; `roles`, when non-empty, restricts to users holding at
+    least one of the given roles (OR, via an `EXISTS` subquery — a role
+    held from multiple origins never duplicates the user row or the
+    total); `has_role` additionally restricts to users with at least one
+    role (`True`) or none (`False`). All provided filter categories
+    combine with AND
+    (`docs/features/identity/user-management.md`, List Users).
+    `page`/`per_page`/`sort_by`/`sort_order` have already passed API
+    schema validation.
+
+    Q3: returns `UserPage(items, total, page, per_page)` with `roles`
+    and `manager` eagerly loaded on every item, ordered per `sort_by`/
+    `sort_order` with the deterministic `User.id` tiebreaker and
+    `full_name` NULL-last placement. An out-of-range page returns an
+    empty `items` list with the correct `total`. No row lock or audit
+    event is created.
+
+    Q6: propagates any underlying database exception. Infallible
+    otherwise.
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if search:
+        pattern = f"%{search}%"
+        conditions.append(
+            or_(
+                User.username.ilike(pattern),
+                User.email.ilike(pattern),
+                User.full_name.ilike(pattern),
+            )
+        )
+    if user_type is not None:
+        conditions.append(
+            User.external_id.is_not(None)
+            if user_type is UserType.EXTERNAL
+            else User.external_id.is_(None)
+        )
+    if active is not None:
+        conditions.append(User.active.is_(active))
+    if roles:
+        conditions.append(
+            exists().where(
+                UserRole.user_id == User.id,
+                UserRole.role.in_([role.value for role in roles]),
+            )
+        )
+    if has_role is not None:
+        role_exists = exists().where(UserRole.user_id == User.id)
+        conditions.append(role_exists if has_role else ~role_exists)
+
+    total = (
+        await session.execute(select(func.count()).select_from(User).where(*conditions))
+    ).scalar_one()
+
+    data_query = (
+        select(User)
+        .where(*conditions)
+        .options(selectinload(User.roles), selectinload(User.manager))
+        .order_by(*_user_sort_clauses(sort_by, sort_order))
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    items = list((await session.execute(data_query)).scalars().all())
+    return UserPage(items=items, total=total, page=page, per_page=per_page)
+
+
+async def get_user(session: AsyncSession, identifier: str) -> User:
+    """Return the complete profile for a UUID-or-username identifier.
+
+    Q1: `identifier` is the raw path value supplied by a caller — see
+    `docs/api-spec.md` (User Identifier Resolution).
+
+    Q3: resolves `identifier` via `resolve_user_identifier()`, then
+    returns the matching `User` with `roles` and `manager` eagerly
+    loaded (`docs/features/identity/user-management.md`, Get User).
+
+    Q6: propagates `UserNotFoundError` when `identifier` resolves to no
+    user, and any underlying database exception.
+    """
+    user = await resolve_user_identifier(session, identifier)
+    return await _load_user_profile(session, user.id)
 
 
 def _normalize_username(username: str) -> str:

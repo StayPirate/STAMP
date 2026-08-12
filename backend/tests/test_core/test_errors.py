@@ -64,3 +64,8 @@ class TestErrorCode:
         assert ErrorCode.AUTH_API_KEY_NAME_INVALID == "AUTH_API_KEY_NAME_INVALID"
         assert ErrorCode.AUTH_API_KEY_INVALID_EXPIRY == "AUTH_API_KEY_INVALID_EXPIRY"
         assert ErrorCode.USER_INACTIVE == "USER_INACTIVE"
+
+    def test_date_range_inverted_is_registered(self) -> None:
+        """See docs/api-spec.md (Date Range Interpretation, Inverted
+        range validation)."""
+        assert ErrorCode.DATE_RANGE_INVERTED == "DATE_RANGE_INVERTED"

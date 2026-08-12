@@ -9,13 +9,14 @@ convention.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime
 from typing import Any, ClassVar
 
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import class_mapper
 
+from app.core.dates import normalize_date_bound
 from app.models.mixins import AuditEventMixin
 from app.models.user import User
 
@@ -113,11 +114,12 @@ class BaseAuditLog:
         if from_date is not None:
             query = query.where(
                 cls.model_class.created_at
-                >= _normalize_bound(from_date, end_of_day=False)
+                >= normalize_date_bound(from_date, end_of_day=False)
             )
         if to_date is not None:
             query = query.where(
-                cls.model_class.created_at <= _normalize_bound(to_date, end_of_day=True)
+                cls.model_class.created_at
+                <= normalize_date_bound(to_date, end_of_day=True)
             )
         return query
 
@@ -154,19 +156,3 @@ class BaseAuditLog:
         return query.join(User, User.id == cls.model_class.user_id).where(
             User.username == actor
         )
-
-
-def _normalize_bound(value: date | datetime, *, end_of_day: bool) -> datetime:
-    """Normalize a date-filter bound to a UTC `datetime`.
-
-    A `date` value is expanded to the start (`00:00:00`) or end
-    (`23:59:59.999999`) of that UTC day, per `end_of_day`. A naive
-    `datetime` is interpreted as UTC. An offset-aware `datetime` is
-    converted to UTC.
-    """
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
-        return value.astimezone(UTC)
-    bound_time = time.max if end_of_day else time.min
-    return datetime.combine(value, bound_time, tzinfo=UTC)

@@ -14,10 +14,17 @@ Completeness).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 
-from app.schemas.auth import LoginData, LoginRequest, LoginResponse
+from app.schemas.auth import (
+    CurrentUserData,
+    CurrentUserResponse,
+    LoginData,
+    LoginRequest,
+    LoginResponse,
+)
 
 
 @pytest.mark.unit
@@ -72,3 +79,55 @@ class TestLoginResponse:
             )
         )
         assert secret_token not in repr(response)
+
+
+@pytest.mark.unit
+class TestCurrentUserData:
+    """See docs/features/identity/authentication.md (Get Current User)."""
+
+    def _make(self, **overrides: object) -> CurrentUserData:
+        defaults: dict[str, object] = {
+            "id": uuid4(),
+            "username": "jdoe",
+            "email": "jdoe@example.com",
+            "full_name": "John Doe",
+            "roles": ["admin"],
+            "active": True,
+        }
+        defaults.update(overrides)
+        return CurrentUserData(**defaults)
+
+    def test_full_name_accepts_null(self) -> None:
+        data = self._make(full_name=None)
+        assert data.full_name is None
+
+    def test_roles_accepts_empty_list(self) -> None:
+        data = self._make(roles=[])
+        assert data.roles == []
+
+    def test_roles_accepts_multiple_wire_values(self) -> None:
+        data = self._make(roles=["admin", "restricted_analyst"])
+        assert data.roles == ["admin", "restricted_analyst"]
+
+    def test_has_no_full_profile_only_fields(self) -> None:
+        """Structural guarantee: the concise current-user schema must
+        never carry `source`, `external_id`, `manager`, or role
+        assignment metadata — those belong only to the full profile
+        schema (`app.schemas.user.UserData`)."""
+        fields = set(CurrentUserData.model_fields)
+        assert fields == {"id", "username", "email", "full_name", "roles", "active"}
+
+
+@pytest.mark.unit
+class TestCurrentUserResponse:
+    def test_wraps_a_single_object(self) -> None:
+        data = CurrentUserData(
+            id=uuid4(),
+            username="jdoe",
+            email="jdoe@example.com",
+            full_name="John Doe",
+            roles=["admin"],
+            active=True,
+        )
+        response = CurrentUserResponse(data=data)
+        assert response.data.username == "jdoe"

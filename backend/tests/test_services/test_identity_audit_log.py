@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -26,6 +27,8 @@ from app.services import base_audit_log
 from app.services.identity_audit_log import (
     IdentityAuditLog,
     _measure_and_check_detail_size,
+    list_events,
+    list_user_events,
 )
 
 # No module-level `pytestmark` here: pytest marks accumulate rather than
@@ -1217,3 +1220,456 @@ class TestMeasureAndCheckDetailSizeInternal:
 
     def test_within_limit_does_not_raise(self) -> None:
         _measure_and_check_detail_size({"key_id": "a" * 10})
+
+
+# ---------------------------------------------------------------------------
+# list_events() / list_user_events() — P2-10 read/query boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestListEvents:
+    """`list_events()` — the admin identity audit log query
+    (`docs/features/identity/identity-audit-log.md`, List Identity
+    Audit Events)."""
+
+    async def test_empty_database_returns_empty_page(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_events(db_session)
+
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_actor_and_target_user_are_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory(username="adminactor")
+        target = await user_factory(username="targetuser")
+        await identity_audit_event_factory(
+            event_type="role_added",
+            user_id=actor.id,
+            target_user_id=target.id,
+            new_value="admin",
+        )
+
+        page = await list_events(db_session)
+
+        (event,) = page.items
+        assert event.actor is not None
+        assert event.actor.username == "adminactor"
+        assert event.target_user is not None
+        assert event.target_user.username == "targetuser"
+
+    async def test_system_event_has_null_actor(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", user_id=None, target_user_id=target.id
+        )
+
+        page = await list_events(db_session)
+
+        (event,) = page.items
+        assert event.actor is None
+
+    async def test_null_target_configuration_event_is_included(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_mapping_created",
+            user_id=actor.id,
+            target_user_id=None,
+        )
+
+        page = await list_events(db_session)
+
+        (event,) = page.items
+        assert event.target_user is None
+
+    async def test_event_type_filter_or_semantics(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_added", target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="role_removed", target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="username_changed", target_user_id=target.id
+        )
+
+        page = await list_events(
+            db_session,
+            event_types=[
+                IdentityAuditEventType.ROLE_ADDED,
+                IdentityAuditEventType.ROLE_REMOVED,
+            ],
+        )
+
+        event_types = {event.event_type for event in page.items}
+        assert event_types == {"role_added", "role_removed"}
+        assert page.total == 2
+
+    async def test_actor_filter_by_uuid(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        other_actor = await user_factory()
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_added", user_id=actor.id, target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="role_added", user_id=other_actor.id, target_user_id=target.id
+        )
+
+        page = await list_events(db_session, actor=str(actor.id))
+
+        assert page.total == 1
+        assert page.items[0].user_id == actor.id
+
+    async def test_actor_filter_by_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory(username="filteractor")
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_added", user_id=actor.id, target_user_id=target.id
+        )
+
+        page = await list_events(db_session, actor="filteractor")
+
+        assert page.total == 1
+
+    async def test_actor_filter_by_system_literal(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", user_id=None, target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="role_added", user_id=actor.id, target_user_id=target.id
+        )
+
+        page = await list_events(db_session, actor="system")
+
+        assert page.total == 1
+        assert page.items[0].user_id is None
+
+    async def test_actor_filter_unknown_uuid_returns_empty_page(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_events(db_session, actor=str(uuid.uuid4()))
+
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_actor_filter_unknown_username_returns_empty_page(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_events(db_session, actor="no-such-actor")
+
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_target_user_filter_by_uuid(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        other_target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=other_target.id
+        )
+
+        page = await list_events(db_session, target_user=str(target.id))
+
+        assert page.total == 1
+        assert page.items[0].target_user_id == target.id
+
+    async def test_target_user_filter_by_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory(username="filtertarget")
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id
+        )
+
+        page = await list_events(db_session, target_user="filtertarget")
+
+        assert page.total == 1
+
+    async def test_target_user_filter_unknown_returns_empty_page_not_error(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_events(db_session, target_user="no-such-target")
+
+        assert page.items == []
+        assert page.total == 0
+
+    async def test_date_range_is_inclusive(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        boundary = datetime(2026, 5, 13, 10, 0, 0, tzinfo=UTC)
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id, created_at=boundary
+        )
+
+        page = await list_events(db_session, from_date=boundary, to_date=boundary)
+
+        assert page.total == 1
+
+    async def test_combined_filters(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory(username="combinedactor")
+        target = await user_factory(username="combinedtarget")
+        await identity_audit_event_factory(
+            event_type="role_added", user_id=actor.id, target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="role_removed", user_id=actor.id, target_user_id=target.id
+        )
+
+        page = await list_events(
+            db_session,
+            event_types=[IdentityAuditEventType.ROLE_ADDED],
+            actor="combinedactor",
+            target_user="combinedtarget",
+        )
+
+        assert page.total == 1
+        assert page.items[0].event_type == "role_added"
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id
+        )
+
+        page = await list_events(db_session, page=2, per_page=20)
+
+        assert page.items == []
+        assert page.total == 1
+
+    async def test_fixed_ordering_newest_first(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        older = await identity_audit_event_factory(
+            event_type="user_created",
+            target_user_id=target.id,
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        newer = await identity_audit_event_factory(
+            event_type="username_changed",
+            target_user_id=target.id,
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        )
+
+        page = await list_events(db_session)
+
+        assert [event.id for event in page.items] == [newer.id, older.id]
+
+    async def test_tie_break_by_id_descending_for_equal_timestamps(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        same_time = datetime(2026, 5, 1, tzinfo=UTC)
+        first = await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id, created_at=same_time
+        )
+        second = await identity_audit_event_factory(
+            event_type="username_changed",
+            target_user_id=target.id,
+            created_at=same_time,
+        )
+        expected_order = sorted([first.id, second.id], reverse=True)
+
+        page = await list_events(db_session)
+
+        assert [event.id for event in page.items] == expected_order
+
+
+@pytest.mark.integration
+class TestListUserEvents:
+    """`list_user_events()` — the self-service identity audit log query
+    (`docs/features/identity/identity-audit-log.md`, List My Identity
+    Audit Events)."""
+
+    async def test_only_returns_events_targeting_the_given_user(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        other_user = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=user.id
+        )
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=other_user.id
+        )
+
+        page = await list_user_events(db_session, user_id=user.id)
+
+        assert page.total == 1
+        assert page.items[0].target_user_id == user.id
+
+    async def test_excludes_null_target_events(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=user.id
+        )
+        await identity_audit_event_factory(
+            event_type="role_mapping_created", target_user_id=None
+        )
+
+        page = await list_user_events(db_session, user_id=user.id)
+
+        assert page.total == 1
+
+    async def test_event_type_filter(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_added", target_user_id=user.id
+        )
+        await identity_audit_event_factory(
+            event_type="username_changed", target_user_id=user.id
+        )
+
+        page = await list_user_events(
+            db_session,
+            user_id=user.id,
+            event_types=[IdentityAuditEventType.ROLE_ADDED],
+        )
+
+        assert page.total == 1
+        assert page.items[0].event_type == "role_added"
+
+    async def test_date_range_is_inclusive(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        boundary = datetime(2026, 5, 13, 10, 0, 0, tzinfo=UTC)
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=user.id, created_at=boundary
+        )
+        outside = boundary - timedelta(days=1)
+        await identity_audit_event_factory(
+            event_type="username_changed",
+            target_user_id=user.id,
+            created_at=outside,
+        )
+
+        page = await list_user_events(
+            db_session, user_id=user.id, from_date=boundary, to_date=boundary
+        )
+
+        assert page.total == 1
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=user.id
+        )
+
+        page = await list_user_events(db_session, user_id=user.id, page=2, per_page=20)
+
+        assert page.items == []
+        assert page.total == 1
+
+    async def test_fixed_ordering_newest_first(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        user = await user_factory()
+        older = await identity_audit_event_factory(
+            event_type="user_created",
+            target_user_id=user.id,
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        newer = await identity_audit_event_factory(
+            event_type="username_changed",
+            target_user_id=user.id,
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        )
+
+        page = await list_user_events(db_session, user_id=user.id)
+
+        assert [event.id for event in page.items] == [newer.id, older.id]
