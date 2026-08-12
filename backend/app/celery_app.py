@@ -26,8 +26,8 @@ the `cleanup_sessions` non-fetcher periodic task — see
 `docs/features/platform/fetcher-infrastructure.md` (Non-Fetcher
 Periodic Tasks). This is a fixed maintenance-task schedule declared
 directly in code, distinct from the fetcher framework's
-PostgreSQL-backed, admin-configurable schedules (still deferred to
-Phase 3, see issue #27, P1-06). No `FETCHER_REGISTRY`, `FetcherConfig`,
+PostgreSQL-backed, admin-configurable schedules (still deferred, see
+issue #27). No `FETCHER_REGISTRY`, `FetcherConfig`,
 or `FetcherRun` machinery is introduced here.
 """
 

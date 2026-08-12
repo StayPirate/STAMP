@@ -3,14 +3,13 @@
 See `docs/features/identity/user-service.md` for the authoritative contract
 this module implements. `create_user()`, `update_user()`, and
 `reactivate_user()` are the ticket-independent core of the centralized user
-lifecycle service (P2-08). `reset_password()` and `unlock_user()` (P2-09)
-provide password reset and lockout-counter clearing. `update_roles()`,
-`deactivate_user()`, and the bulk role-mapping operations remain out of
-scope and are added when their owning work item is implemented.
-`resolve_user_identifier()` and `get_user_roles()` predate this piece
-(P2-06) and back the shared authentication/authorization dependencies.
-`list_users()` and `get_user()` (P2-10) provide the paginated directory
-and full profile reads.
+lifecycle service. `reset_password()` and `unlock_user()` provide password
+reset and lockout-counter clearing. `update_roles()`, `deactivate_user()`,
+and the bulk role-mapping operations remain out of scope and are added
+when their owning work item is implemented. `resolve_user_identifier()`
+and `get_user_roles()` back the shared authentication/authorization
+dependencies. `list_users()` and `get_user()` provide the paginated
+directory and full profile reads.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
 Completeness): every mutating function in this module participates in the

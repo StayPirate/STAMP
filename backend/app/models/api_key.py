@@ -2,10 +2,10 @@
 
 See `docs/data-model.md` (ApiKey) and
 `docs/features/identity/api-key-management.md` (API Key Contract) for
-the full specification. This model intentionally implements only the
-persistence root: key generation, hashing, and lifecycle management
-(revocation, last-used tracking) are out of scope for this piece (see
-`docs/drafts/implementation-plan.md`, P2-01).
+the full specification. This model implements the persistence root;
+`api_key_service` (see `docs/features/identity/api-key-service.md`)
+implements key generation, hashing, and lifecycle management
+(revocation, last-used tracking).
 """
 
 from __future__ import annotations

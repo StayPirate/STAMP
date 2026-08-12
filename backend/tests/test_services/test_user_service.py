@@ -2859,7 +2859,7 @@ class TestPiiAndSecretSafety:
 
 
 # ---------------------------------------------------------------------------
-# list_users() / get_user() — P2-10 read/query boundary
+# list_users() / get_user() — read/query boundary
 # ---------------------------------------------------------------------------
 
 

@@ -1223,7 +1223,7 @@ class TestMeasureAndCheckDetailSizeInternal:
 
 
 # ---------------------------------------------------------------------------
-# list_events() / list_user_events() — P2-10 read/query boundary
+# list_events() / list_user_events() — read/query boundary
 # ---------------------------------------------------------------------------
 
 

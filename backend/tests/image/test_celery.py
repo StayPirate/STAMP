@@ -1,4 +1,4 @@
-"""Image smoke assertions for the Celery application bootstrap (P1-06).
+"""Image smoke assertions for the Celery application bootstrap.
 
 Verifies container-observable outcomes of `backend/app/celery_app.py`
 that only manifest against the actual built artifact: `celery -A

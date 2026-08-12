@@ -1,10 +1,9 @@
 """User model — identity root.
 
 See `docs/data-model.md` (User) and `docs/features/identity/rbac.md` for
-the full specification. This model intentionally implements only the
-persistence root: authentication, session management, and user lifecycle
-services are out of scope for this piece (see `docs/drafts/implementation-plan.md`,
-P1-04).
+the full specification. This model implements the persistence root;
+`user_service` (see `docs/features/identity/user-service.md`) implements
+authentication, session management, and user lifecycle operations.
 """
 
 from __future__ import annotations
