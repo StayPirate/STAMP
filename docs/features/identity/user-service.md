@@ -121,6 +121,23 @@ sync always passes `acting_user_id = None`, its calls are unaffected.
 CLI commands add an additional pre-call guard for defense in depth
 (CLI also uses `acting_user_id = None`).
 
+**Evaluation point differs by function**: the two functions check this
+condition at different points relative to their idempotency (no-op) check,
+and this difference is intentional, not an inconsistency:
+
+- `reactivate_user()` evaluates the guard unconditionally, before the
+  already-active check — a human caller reactivating an external user is
+  rejected with `ExternalUserStatusReadOnlyError` regardless of the user's
+  current `active` value (see `reactivate_user()` below).
+- `deactivate_user()` evaluates the already-inactive no-op check first, and
+  the guard only for a currently-active user — a human caller deactivating
+  an already-inactive external user gets the same no-op response as for a
+  local user (see `deactivate_user()` below). This ordering keeps
+  `deactivate_user()` consistent with `GET .../deactivation-impact`
+  (`docs/features/identity/user-management.md`), whose preview must not be
+  stricter than the action it previews: both must treat an already-inactive
+  external user as a no-op, not a rejection.
+
 **If an external user must be blocked from Sentinel**: deactivate the
 user at the external identity provider. The next external sync cycle will propagate
 the change to Sentinel with all associated side effects.
@@ -838,20 +855,25 @@ Reactivates a previously deactivated user account.
 
 **Preconditions**:
 
-- User must be currently inactive. If already active, this is a no-op
-  (returns the user unchanged)
 - **External status guard**: if `user.external_id IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `ExternalUserStatusReadOnlyError`. Active status of external users is managed
-  exclusively by external sync (see External Active Status Ownership above)
+  `ExternalUserStatusReadOnlyError`, regardless of the user's current
+  `active` value. Active status of external users is managed exclusively
+  by external sync (see External Active Status Ownership above); a human
+  caller can never reactivate an external user, not even as a no-op. This
+  guard is evaluated first, before the idempotency check below, so it is
+  never bypassed by an already-active external user
+- User must be currently inactive. If already active — and the guard
+  above did not already reject the call — this is a no-op (returns the
+  user unchanged)
 
 **Behavior**:
 
 1. Acquire a `FOR UPDATE` lock on the User row by ID. If it does not exist,
    raise `UserNotFoundError`
-2. Evaluate the preconditions against the locked row. An already-active user
-   returns unchanged and creates no audit event. Only an inactive user is then
-   evaluated against the external-status guard
+2. Evaluate the preconditions against the locked row, in the order listed
+   above: the external-status guard first (unconditional on `active` for a
+   human caller), then the already-active no-op check
 3. Set `User.active = true`
 4. Create `IdentityAuditEvent` with `event_type = user_reactivated`
    via `IdentityAuditLog.log_event()`. External synchronization uses
@@ -865,8 +887,11 @@ observe the committed active state and return as no-ops. Reactivation also
 serializes with password reset, field updates, role operations that lock the
 same root, and deactivation.
 
-**Re-invocation**: idempotent. Once active, another call returns the unchanged
-user and creates no audit event.
+**Re-invocation**: idempotent for local users. Once active, another call
+returns the unchanged user and creates no audit event. For an external
+user, every human-caller invocation raises `ExternalUserStatusReadOnlyError`
+regardless of the current `active` value — there is no no-op path for a
+human caller on an external user.
 
 **Explicitly NOT restored**:
 

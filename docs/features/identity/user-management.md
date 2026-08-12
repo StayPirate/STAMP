@@ -671,6 +671,13 @@ when no administrator can authenticate.
 
 **`Capability: manage_users`**
 
+This endpoint additionally requires JWT session authentication — it mints a
+new credential (a password), so it must not be reachable with an API key.
+API-key authentication returns `403 AUTH_SESSION_REQUIRED` with detail
+`"This operation requires session authentication."` (see
+`docs/features/identity/authentication.md`, Session-Only Authentication
+Dependency).
+
 **Request body**:
 
 ```json
@@ -717,6 +724,7 @@ including the initial roles, wrapped in `{"data": {...}}`.
 
 | Status | Code | Condition |
 |---|---|---|
+| 403 | `AUTH_SESSION_REQUIRED` | Request is authenticated by API key instead of JWT session |
 | 409 | `USER_ALREADY_EXISTS` | Normalized username or email is already used, including a concurrent uniqueness race |
 | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password is outside the 16-128 character policy |
 
@@ -842,6 +850,13 @@ POST /api/v1/admin/users/{user}/password
 
 **`Capability: manage_users`**
 
+This endpoint additionally requires JWT session authentication — it mints a
+new credential (a password), so it must not be reachable with an API key.
+API-key authentication returns `403 AUTH_SESSION_REQUIRED` with detail
+`"This operation requires session authentication."` (see
+`docs/features/identity/authentication.md`, Session-Only Authentication
+Dependency).
+
 Reset the password for a local user. This endpoint operates on both
 active and inactive local users (see Inactive User Management Principle
 in `docs/features/identity/user-service.md`). Setting a password on an
@@ -871,6 +886,7 @@ inactive user prepares credentials for reactivation.
 
 | Status | Code | Condition |
 |--------|------|-----------|
+| 403 | `AUTH_SESSION_REQUIRED` | Request is authenticated by API key instead of JWT session |
 | 409 | `USER_EXTERNAL_PASSWORD_FORBIDDEN` | Cannot set password for external user |
 | 422 | `USER_PASSWORD_POLICY_VIOLATION` | Password does not meet policy requirements (see `docs/features/identity/local-authentication.md` § Password Validation) |
 | 404 | `USER_NOT_FOUND` | User not found |
@@ -914,9 +930,11 @@ revocation, session invalidation, ticket unassignment).
 - Self-deactivation is rejected by the service layer — returns HTTP 409
   with code `USER_SELF_DEACTIVATION`:
   `"Cannot deactivate your own account."`
-- External user deactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_EXTERNAL_STATUS_READONLY`:
-  `"Cannot deactivate external users."`
+- External user deactivation is rejected by the service layer for a
+  currently-active user — returns HTTP 409 with code
+  `USER_EXTERNAL_STATUS_READONLY`: `"Cannot deactivate external users."` An
+  already-inactive external user is a no-op (see Reactivate User below for
+  why this ordering differs from reactivation)
 
 See `docs/features/identity/user-service.md` for the full side effect contract
 (API key revocation, session invalidation, ticket unassignment on
@@ -948,9 +966,13 @@ Reactivate a previously deactivated user account.
    `{"data": ...}` envelope
 
 **Constraints**:
-- External user reactivation is rejected by the service layer — returns
-  HTTP 409 with code `USER_EXTERNAL_STATUS_READONLY`:
-  `"Cannot reactivate external users."`
+- External user reactivation is rejected by the service layer
+  unconditionally — returns HTTP 409 with code
+  `USER_EXTERNAL_STATUS_READONLY`: `"Cannot reactivate external users."`,
+  even when the user is already active. Unlike Deactivate User above, this
+  guard is evaluated before the idempotency check (see
+  `docs/features/identity/user-service.md`, External Active Status
+  Ownership, "Evaluation point differs by function")
 
 **Response**: user profile in `{"data": {...}}` envelope (see
 `GET /api/v1/users/{user}` in Public API endpoints above for the full

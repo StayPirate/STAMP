@@ -1163,5 +1163,5 @@ class TestRequireSessionAuthentication:
         assert response.status_code == 403
         assert response.json() == {
             "code": "AUTH_SESSION_REQUIRED",
-            "detail": "API key creation requires session authentication.",
+            "detail": "This operation requires session authentication.",
         }

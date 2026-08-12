@@ -1654,20 +1654,21 @@ class TestReactivateUser:
         assert updated.active is True
         assert await _audit_events_for(db_session, target.id) == []
 
-    async def test_already_active_external_user_with_human_caller_is_a_no_op(
+    async def test_already_active_external_user_with_human_caller_raises(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],
     ) -> None:
-        """The already-active short-circuit runs BEFORE the external-status
-        guard, so a human caller reactivating an already-active external
-        user does not raise."""
+        """The external-status guard runs BEFORE the already-active
+        short-circuit, so a human caller reactivating an already-active
+        external user is rejected -- there is no no-op path for a human
+        caller on an external user, active or not."""
         admin = await user_factory()
         target = await user_factory(external_id=uuid.uuid4(), active=True)
 
-        updated = await reactivate_user(db_session, target.id, acting_user_id=admin.id)
+        with pytest.raises(ExternalUserStatusReadOnlyError):
+            await reactivate_user(db_session, target.id, acting_user_id=admin.id)
 
-        assert updated.active is True
         assert await _audit_events_for(db_session, target.id) == []
 
     async def test_reactivates_inactive_local_user(

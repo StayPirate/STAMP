@@ -1,8 +1,9 @@
 """Unit tests for user directory/profile request/response/query schemas
+and the admin user mutation request/response schemas
 (`backend/app/schemas/user.py`).
 
-See `docs/features/identity/user-management.md` (List Users, Get User)
-for the authoritative contract under test.
+See `docs/features/identity/user-management.md` (List Users, Get User,
+Admin API endpoints) for the authoritative contract under test.
 """
 
 from __future__ import annotations
@@ -16,6 +17,11 @@ from pydantic import ValidationError
 from app.core.enums import SortOrder, UserSortField
 from app.schemas.common import PaginationMeta
 from app.schemas.user import (
+    AdminPasswordResetRequest,
+    AdminUserCreateRequest,
+    AdminUserUpdateRequest,
+    UserActionDetailData,
+    UserActionDetailResponse,
     UserData,
     UserListQuery,
     UserListResponse,
@@ -231,4 +237,184 @@ class TestResponseEnvelopes:
             meta=PaginationMeta(total=1, page=1, per_page=20),
         )
         assert len(response.data) == 1
-        assert response.meta.total == 1
+
+
+# ---------------------------------------------------------------------------
+# Admin mutation endpoint schemas
+# ---------------------------------------------------------------------------
+
+
+def _make_create_kwargs(**overrides: object) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "username": "jdoe",
+        "email": "jdoe@example.com",
+        "full_name": "John Doe",
+        "password": "a-fictional-password-value",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+@pytest.mark.unit
+class TestAdminUserCreateRequest:
+    def test_valid_payload_is_accepted(self) -> None:
+        request = AdminUserCreateRequest(**_make_create_kwargs())
+        assert request.username == "jdoe"
+
+    def test_username_is_trimmed_and_lowercased(self) -> None:
+        request = AdminUserCreateRequest(**_make_create_kwargs(username="  JDoe  "))
+        assert request.username == "jdoe"
+
+    def test_malformed_username_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(username="1-bad-start"))
+
+    def test_username_starting_with_uppercase_after_trim_is_accepted(self) -> None:
+        """Uppercase is valid pre-normalization — only the normalized
+        (lowercased) value must match the Username Format pattern."""
+        request = AdminUserCreateRequest(**_make_create_kwargs(username="JDoe"))
+        assert request.username == "jdoe"
+
+    def test_explicit_null_username_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(username=None))
+
+    def test_non_string_username_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(username=12345))
+
+    def test_email_is_trimmed_and_fully_lowercased(self) -> None:
+        request = AdminUserCreateRequest(
+            **_make_create_kwargs(email="  John.Doe@Example.COM  ")
+        )
+        assert request.email == "john.doe@example.com"
+
+    def test_malformed_email_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(email="not-an-email"))
+
+    def test_explicit_null_email_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(email=None))
+
+    def test_full_name_omitted_defaults_to_none(self) -> None:
+        kwargs = _make_create_kwargs()
+        del kwargs["full_name"]
+        request = AdminUserCreateRequest(**kwargs)
+        assert request.full_name is None
+
+    def test_full_name_explicit_null_is_accepted(self) -> None:
+        request = AdminUserCreateRequest(**_make_create_kwargs(full_name=None))
+        assert request.full_name is None
+
+    def test_missing_password_is_rejected(self) -> None:
+        kwargs = _make_create_kwargs()
+        del kwargs["password"]
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**kwargs)
+
+    def test_explicit_null_password_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(password=None))
+
+    def test_password_carries_no_length_constraint_at_schema_level(self) -> None:
+        """Length policy (16-128 chars) is domain validation owned by
+        `user_service.create_user()` — the schema must accept a
+        too-short value so the service can raise the domain-specific
+        `PasswordValidationError` instead of the generic
+        `VALIDATION_ERROR` a schema constraint would produce."""
+        request = AdminUserCreateRequest(**_make_create_kwargs(password="short"))
+        assert request.password == "short"
+
+    def test_roles_default_to_empty_list(self) -> None:
+        kwargs = _make_create_kwargs()
+        request = AdminUserCreateRequest(**kwargs)
+        assert request.roles == []
+
+    def test_valid_roles_are_accepted(self) -> None:
+        request = AdminUserCreateRequest(
+            **_make_create_kwargs(roles=["admin", "vulnerability_analyst"])
+        )
+        assert request.roles == ["admin", "vulnerability_analyst"]
+
+    def test_unknown_role_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(roles=["not-a-real-role"]))
+
+    def test_duplicate_role_values_are_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(roles=["admin", "admin"]))
+
+    def test_explicit_null_roles_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserCreateRequest(**_make_create_kwargs(roles=None))
+
+
+@pytest.mark.unit
+class TestAdminUserUpdateRequest:
+    def test_email_only_is_accepted(self) -> None:
+        request = AdminUserUpdateRequest(email="new@example.com")
+        assert request.email == "new@example.com"
+        assert request.full_name is None
+        assert "full_name" not in request.model_fields_set
+
+    def test_full_name_only_is_accepted(self) -> None:
+        request = AdminUserUpdateRequest(full_name="New Name")
+        assert request.full_name == "New Name"
+        assert "email" not in request.model_fields_set
+
+    def test_empty_body_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserUpdateRequest()
+
+    def test_explicit_null_email_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserUpdateRequest(email=None)
+
+    def test_explicit_null_full_name_is_accepted_and_tracked_as_set(self) -> None:
+        request = AdminUserUpdateRequest(full_name=None)
+        assert request.full_name is None
+        assert "full_name" in request.model_fields_set
+
+    def test_email_is_trimmed_and_fully_lowercased(self) -> None:
+        request = AdminUserUpdateRequest(email="  New.Email@Example.COM  ")
+        assert request.email == "new.email@example.com"
+
+    def test_malformed_email_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminUserUpdateRequest(email="not-an-email")
+
+    def test_both_fields_present_are_both_tracked_as_set(self) -> None:
+        request = AdminUserUpdateRequest(email="new@example.com", full_name="New Name")
+        assert request.model_fields_set == {"email", "full_name"}
+
+
+@pytest.mark.unit
+class TestAdminPasswordResetRequest:
+    def test_valid_password_is_accepted(self) -> None:
+        request = AdminPasswordResetRequest(password="a-fictional-password-value")
+        assert request.password == "a-fictional-password-value"
+
+    def test_missing_password_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AdminPasswordResetRequest()  # type: ignore[call-arg]
+
+    def test_carries_no_length_constraint_at_schema_level(self) -> None:
+        """Mirrors `AdminUserCreateRequest.password` — the 16-128 char
+        policy is domain validation owned by
+        `user_service.reset_password()`."""
+        request = AdminPasswordResetRequest(password="short")
+        assert request.password == "short"
+
+
+@pytest.mark.unit
+class TestUserActionDetailSchemas:
+    def test_detail_data_carries_the_message(self) -> None:
+        data = UserActionDetailData(detail="Account unlocked successfully.")
+        assert data.detail == "Account unlocked successfully."
+
+    def test_response_wraps_detail_data_in_the_standard_envelope(self) -> None:
+        response = UserActionDetailResponse(
+            data=UserActionDetailData(detail="Account unlocked successfully.")
+        )
+        assert response.data.detail == "Account unlocked successfully."

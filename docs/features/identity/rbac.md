@@ -487,10 +487,10 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/admin/identity/audit-log` | `manage_users` | [identity-audit-log](identity-audit-log.md#list-identity-audit-events) |
 | GET | `/api/v1/admin/api-keys` | `manage_users` | [api-key-management](api-key-management.md#list-all-api-keys) |
 | POST | `/api/v1/admin/api-keys/{key_id}/revoke` | `manage_users` | [api-key-management](api-key-management.md#revoke-api-key) |
-| POST | `/api/v1/admin/users` | `manage_users` | [user-management](user-management.md#create-user-admin) |
+| POST | `/api/v1/admin/users` | `manage_users` (JWT session only) | [user-management](user-management.md#create-user-admin) |
 | PATCH | `/api/v1/admin/users/{user}` | `manage_users` | [user-management](user-management.md#update-user-admin) |
 | POST | `/api/v1/admin/users/{user}/roles` | `manage_users` | [user-management](user-management.md#set-user-roles) |
-| POST | `/api/v1/admin/users/{user}/password` | `manage_users` | [user-management](user-management.md#reset-user-password) |
+| POST | `/api/v1/admin/users/{user}/password` | `manage_users` (JWT session only) | [user-management](user-management.md#reset-user-password) |
 | POST | `/api/v1/admin/users/{user}/deactivate` | `manage_users` | [user-management](user-management.md#deactivate-user) |
 | POST | `/api/v1/admin/users/{user}/reactivate` | `manage_users` | [user-management](user-management.md#reactivate-user) |
 | GET | `/api/v1/admin/users/{user}/deactivation-impact` | `manage_users` | [user-management](user-management.md#get-deactivation-impact) |

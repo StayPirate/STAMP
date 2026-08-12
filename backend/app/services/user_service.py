@@ -898,18 +898,21 @@ async def reactivate_user(
     (`None` for CLI/external-sync system callers).
 
     Q2 (guards, in this order): missing `user_id` raises
-    `UserNotFoundError`; an already-active user short-circuits as a no-op
-    (see Q3) before any further guard; a human caller
-    (`acting_user_id is not None`) targeting an inactive external user
-    (`external_id IS NOT NULL`) raises `ExternalUserStatusReadOnlyError`
-    (see External Active Status Ownership).
+    `UserNotFoundError`; a human caller (`acting_user_id is not None`)
+    targeting an external user (`external_id IS NOT NULL`) raises
+    `ExternalUserStatusReadOnlyError` regardless of the user's current
+    `active` value (see External Active Status Ownership) — this guard is
+    evaluated before the already-active no-op check, so it is never
+    bypassed by an already-active external user; only then does an
+    already-active user short-circuit as a no-op (see Q3).
 
     Q3: acquires `SELECT ... FOR UPDATE` on the target `User` as the first
-    database operation. An already-active user returns unchanged (with
-    `roles`/`manager` eagerly loaded) without evaluating the external-status
-    guard or creating an audit event. Otherwise evaluates the external-status
-    guard, sets `User.active = True`, flushes, creates one `user_reactivated`
-    event (`detail = {"source": "external_sync"}` when `external_id IS NOT
+    database operation. Evaluates the external-status guard first —
+    unconditional on `active` for a human caller. Only then does an
+    already-active user return unchanged (with `roles`/`manager` eagerly
+    loaded) without creating an audit event. Otherwise sets
+    `User.active = True`, flushes, creates one `user_reactivated` event
+    (`detail = {"source": "external_sync"}` when `external_id IS NOT
     NULL` — reaching the mutation for an external user is by construction
     performed by external sync, since the guard above already blocks every
     human caller — otherwise `detail = None`), and returns the updated
@@ -919,8 +922,11 @@ async def reactivate_user(
     Q4: creates exactly one `user_reactivated` event on the first effective
     reactivation; the idempotent no-op path creates none.
 
-    Q5: idempotent. Once active, another call returns the unchanged user
-    and creates no audit event.
+    Q5: idempotent for local users. Once active, another call returns the
+    unchanged user and creates no audit event. For an external user, every
+    human-caller invocation raises `ExternalUserStatusReadOnlyError`
+    regardless of the current `active` value — there is no no-op path for a
+    human caller on an external user.
 
     Q6: propagates `UserNotFoundError`, `ExternalUserStatusReadOnlyError`,
     and any underlying database or audit-service exception.
@@ -935,11 +941,11 @@ async def reactivate_user(
     if user is None:
         raise UserNotFoundError()
 
-    if user.active:
-        return await _load_user_profile(session, user.id)
-
     if user.external_id is not None and acting_user_id is not None:
         raise ExternalUserStatusReadOnlyError()
+
+    if user.active:
+        return await _load_user_profile(session, user.id)
 
     user.active = True
     await session.flush()
