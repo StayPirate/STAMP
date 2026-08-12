@@ -170,7 +170,7 @@ class AdminUserCreateRequest(BaseModel):
 
     username: str
     email: str
-    full_name: str | None = None
+    full_name: str | None = Field(default=None, max_length=255)
     password: str = Field(repr=False)
     roles: list[str] = Field(default_factory=list)
 
@@ -212,7 +212,7 @@ class AdminUserUpdateRequest(BaseModel):
     """
 
     email: str | None = None
-    full_name: str | None = None
+    full_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("email", mode="before")
     @classmethod

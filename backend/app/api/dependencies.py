@@ -464,12 +464,15 @@ async def require_session_authentication(
     See `docs/features/identity/authentication.md` (Session-Only
     Authentication Dependency). Relies entirely on the credential kind
     already resolved by `get_current_user` — does not re-parse the
-    request or duplicate the `stl_ak_` recognition rule.
+    request or duplicate the `stl_ak_` recognition rule. Shared by every
+    endpoint that must not be reachable with an API key (API key
+    creation, and the credential-minting admin user endpoints — see the
+    Endpoint Permission Map in `docs/features/identity/rbac.md`).
     """
     if principal.credential_kind is CredentialKind.API_KEY:
         raise AppError(
             status_code=status.HTTP_403_FORBIDDEN,
             code=ErrorCode.AUTH_SESSION_REQUIRED,
-            detail="API key creation requires session authentication.",
+            detail="This operation requires session authentication.",
         )
     return principal

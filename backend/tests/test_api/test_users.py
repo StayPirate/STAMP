@@ -595,6 +595,35 @@ class TestCreateUserAdmin:
         assert response.status_code == 403
         assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
 
+    async def test_admin_api_key_returns_403_session_required(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """This endpoint mints a new credential (a password), so it must
+        not be reachable with an API key even for an admin — see
+        `docs/features/identity/authentication.md` (Session-Only
+        Authentication Dependency)."""
+        admin = await user_factory(username="adminwithapikey")
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=admin.id, key_hash=digest)
+        monkeypatch.setattr(
+            api_key_service, "update_last_used_at", AsyncMock(return_value=True)
+        )
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_SESSION_REQUIRED"
+
     async def test_creates_local_user_and_returns_201(
         self, admin_user_and_client: tuple[User, AsyncClient]
     ) -> None:
@@ -925,6 +954,34 @@ class TestUpdateUserAdmin:
         assert events[0].event_type == "email_changed"
         assert events[0].user_id == admin.id
 
+    async def test_updates_both_email_and_full_name_together(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        """Exercises the route's `email_set and full_name_set` branch,
+        which forwards both values in a single `update_user()` call —
+        distinct from the email-only and full_name-only branches covered
+        by the other tests in this class."""
+        admin, client = admin_user_and_client
+        target = await user_factory(username="bothfieldstarget", full_name="Old Name")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}",
+            json={"email": "both.fields@example.com", "full_name": "New Name"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["email"] == "both.fields@example.com"
+        assert data["full_name"] == "New Name"
+        events = await _audit_events_for(db_session, target.id)
+        event_types = {event.event_type for event in events}
+        assert event_types == {"email_changed", "full_name_changed"}
+        assert len(events) == 2
+        assert all(event.user_id == admin.id for event in events)
+
     async def test_duplicate_email_returns_409(
         self,
         admin_user_and_client: tuple[User, AsyncClient],
@@ -1019,6 +1076,30 @@ class TestReactivateUserAdmin:
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
 
+    async def test_missing_username_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post("/api/v1/admin/users/no-such-user/reactivate")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_resolves_by_username(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="reactivatebyusername", active=False)
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.username}/reactivate"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["id"] == str(target.id)
+        assert response.json()["data"]["active"] is True
+
     async def test_reactivates_inactive_local_user_and_creates_audit_event(
         self,
         admin_user_and_client: tuple[User, AsyncClient],
@@ -1101,6 +1182,36 @@ class TestResetUserPasswordAdmin:
         )
         assert response.status_code == 403
 
+    async def test_admin_api_key_returns_403_session_required(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        user_role_factory: Callable[..., Awaitable[UserRole]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """This endpoint mints a new credential (a password), so it must
+        not be reachable with an API key even for an admin — see
+        `docs/features/identity/authentication.md` (Session-Only
+        Authentication Dependency)."""
+        admin = await user_factory(username="adminwithapikeypwd")
+        await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+        token, digest = _make_api_key_credential()
+        await api_key_factory(user_id=admin.id, key_hash=digest)
+        monkeypatch.setattr(
+            api_key_service, "update_last_used_at", AsyncMock(return_value=True)
+        )
+        target = await user_factory(username="passwordsessionreqtarget")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_SESSION_REQUIRED"
+
     async def test_missing_user_returns_404(
         self, admin_user_and_client: tuple[User, AsyncClient]
     ) -> None:
@@ -1111,6 +1222,36 @@ class TestResetUserPasswordAdmin:
         )
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_missing_username_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post(
+            "/api/v1/admin/users/no-such-user/password",
+            json={"password": "a-fictional-password-value"},
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_resolves_by_username(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetbyusername")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.username}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 200
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == "password_reset"
 
     async def test_resets_password_and_returns_documented_detail(
         self,
@@ -1294,6 +1435,29 @@ class TestUnlockUserAdmin:
         response = await client.post(f"/api/v1/admin/users/{uuid4()}/unlock")
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_missing_username_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post("/api/v1/admin/users/no-such-user/unlock")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_resolves_by_username(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="unlockbyusername")
+        await redis_client.set("login_attempts:unlockbyusername", "4")
+
+        response = await client.post(f"/api/v1/admin/users/{target.username}/unlock")
+
+        assert response.status_code == 200
+        assert await redis_client.get("login_attempts:unlockbyusername") is None
 
     async def test_clears_existing_lockout_key(
         self,

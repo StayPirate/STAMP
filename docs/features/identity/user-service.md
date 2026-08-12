@@ -121,6 +121,23 @@ sync always passes `acting_user_id = None`, its calls are unaffected.
 CLI commands add an additional pre-call guard for defense in depth
 (CLI also uses `acting_user_id = None`).
 
+**Evaluation point differs by function**: the two functions check this
+condition at different points relative to their idempotency (no-op) check,
+and this difference is intentional, not an inconsistency:
+
+- `reactivate_user()` evaluates the guard unconditionally, before the
+  already-active check — a human caller reactivating an external user is
+  rejected with `ExternalUserStatusReadOnlyError` regardless of the user's
+  current `active` value (see `reactivate_user()` below).
+- `deactivate_user()` evaluates the already-inactive no-op check first, and
+  the guard only for a currently-active user — a human caller deactivating
+  an already-inactive external user gets the same no-op response as for a
+  local user (see `deactivate_user()` below). This ordering keeps
+  `deactivate_user()` consistent with `GET .../deactivation-impact`
+  (`docs/features/identity/user-management.md`), whose preview must not be
+  stricter than the action it previews: both must treat an already-inactive
+  external user as a no-op, not a rejection.
+
 **If an external user must be blocked from Sentinel**: deactivate the
 user at the external identity provider. The next external sync cycle will propagate
 the change to Sentinel with all associated side effects.

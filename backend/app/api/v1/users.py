@@ -20,6 +20,7 @@ from app.api.dependencies import (
     AuthenticatedPrincipal,
     CurrentUser,
     require_capability,
+    require_session_authentication,
     user_not_found_error,
 )
 from app.core.enums import Capability, Role, SortOrder, UserSortField, UserType
@@ -340,7 +341,12 @@ async def get_user(user: str, db: DatabaseSession) -> UserResponse:
 # every endpoint requires `manage_users`; every `{user}` path parameter
 # is resolved through `user_service.resolve_user_identifier()` before
 # delegating to the owning lifecycle service, per the "route handlers
-# execute no ORM lookup directly" rule stated there.
+# execute no ORM lookup directly" rule stated there. Create User and
+# Reset User Password additionally require JWT session authentication
+# via `require_session_authentication()` — they mint credentials, so
+# they must not be reachable with an API key (mirrors API key creation
+# in `docs/features/identity/authentication.md`, Session-Only
+# Authentication Dependency).
 # ---------------------------------------------------------------------------
 
 
@@ -351,9 +357,14 @@ async def get_user(user: str, db: DatabaseSession) -> UserResponse:
     summary="Create user (admin)",
     description=(
         "Creates a new local user with a password and optional initial "
-        "manual roles. Requires the 'manage_users' capability."
+        "manual roles. Requires the 'manage_users' capability and JWT "
+        "session authentication — not reachable with an API key."
     ),
     responses={
+        403: {
+            "model": ErrorResponse,
+            "description": "Request authenticated by API key instead of JWT session.",
+        },
         409: {
             "model": ErrorResponse,
             "description": "Normalized username or email already in use.",
@@ -369,6 +380,10 @@ async def create_user_admin(
     principal: Annotated[
         AuthenticatedPrincipal,
         Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    _session_check: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_session_authentication),
     ],
     db: DatabaseSession,
 ) -> UserResponse:
@@ -553,9 +568,14 @@ async def reactivate_user_admin(
     description=(
         "Resets the password of a local user (active or inactive), "
         "invalidating all active sessions. Requires the 'manage_users' "
-        "capability."
+        "capability and JWT session authentication — not reachable with "
+        "an API key."
     ),
     responses={
+        403: {
+            "model": ErrorResponse,
+            "description": "Request authenticated by API key instead of JWT session.",
+        },
         404: {
             "model": ErrorResponse,
             "description": "No user found matching the given UUID or username.",
@@ -576,6 +596,10 @@ async def reset_user_password_admin(
     principal: Annotated[
         AuthenticatedPrincipal,
         Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    _session_check: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_session_authentication),
     ],
     db: DatabaseSession,
 ) -> UserActionDetailResponse:

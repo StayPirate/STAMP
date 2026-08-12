@@ -719,8 +719,11 @@ only use of an API key as an authentication credential.
 
 The `require_session_authentication()` dependency is a thin guard that
 enforces JWT-session authentication for endpoints that must not be
-accessible via API key credentials (e.g., API key creation — see
-`docs/features/identity/api-key-management.md`).
+accessible via API key credentials — endpoints that mint new
+credentials (API key creation — see
+`docs/features/identity/api-key-management.md` — and the admin Create
+User and Reset User Password endpoints — see
+`docs/features/identity/user-management.md`, Admin API endpoints).
 
 **Input**: the `AuthenticatedPrincipal` returned by `get_current_user`.
 
@@ -730,7 +733,7 @@ accessible via API key credentials (e.g., API key creation — see
    principal unchanged. The endpoint proceeds normally.
 2. If `principal.credential_kind` is `CredentialKind.API_KEY`: return
    HTTP 403 with code `AUTH_SESSION_REQUIRED` and detail
-   `"API key creation requires session authentication."`.
+   `"This operation requires session authentication."`.
 
 The dependency does not re-parse the request, duplicate the `stl_ak_`
 recognition rule, or perform any additional validation — it relies
@@ -738,7 +741,11 @@ entirely on the credential kind already resolved by `get_current_user`.
 
 This dependency is owned by the authentication boundary and is the
 single mechanism for session-only enforcement. Endpoint handlers must
-not implement their own credential-kind checks.
+not implement their own credential-kind checks. An endpoint that also
+requires a capability (e.g., `manage_users`) composes both dependencies
+independently — `require_session_authentication()` does not check
+capabilities, and `require_capability()` does not check credential
+kind.
 
 ## API Endpoints
 
