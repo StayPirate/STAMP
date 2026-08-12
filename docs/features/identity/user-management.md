@@ -335,26 +335,26 @@ sentinel manage-user set-password \
 3. Open a read-only session and resolve the user through
    `user_service.get_user()` using the normalized username. If not found,
    exit with error: `"Error: User '{username}' not found."` (exit code 1).
-5. If the resolved user is an external user (`external_id IS NOT NULL`),
+4. If the resolved user is an external user (`external_id IS NOT NULL`),
    exit with error: `"Error: Cannot set password for external user
    '{username}'. External users authenticate via SSO."` (exit code 1).
    This command is only valid for local users; it operates on both active
    and inactive local users — setting a password on an inactive user
    prepares credentials for reactivation, but the user cannot log in until
    reactivated.
-6. Close the read-only session before prompting — an interactive prompt
+5. Close the read-only session before prompting — an interactive prompt
    MUST NOT run while a database session is open (see
    `docs/features/platform/cli-infrastructure.md`, Database Session
    Management).
-7. Collect the new password interactively via a hidden prompt (input not
+6. Collect the new password interactively via a hidden prompt (input not
    echoed to the terminal, like `sudo`), asking twice for confirmation. If
    the two entries do not match, exit with error: `"Error: Passwords do
    not match."` (exit code 1).
-8. Validate the password length (16-128 characters). If it violates the
+7. Validate the password length (16-128 characters). If it violates the
    policy, exit with the same exact messages `create` uses for each
    boundary: `"Error: Password must be at least 16 characters."` or
    `"Error: Password must be at most 128 characters."` (exit code 1).
-9. Open a new session and delegate to `user_service.reset_password()` with
+8. Open a new session and delegate to `user_service.reset_password()` with
    `acting_user_id = None`. The service re-validates the user-not-found and
    external-user guards atomically against the locked row — a user deleted
    or converted between steps 3-4 and this step surfaces the same exact
@@ -362,12 +362,12 @@ sentinel manage-user set-password \
    `UserNotFoundError`/`ExternalUserPasswordError` exceptions. Commit
    exactly once after the service call succeeds; roll back on any
    exception or interruption before commit.
-10. After the commit succeeds, execute the session-cache purge and login
-    lockout-counter clear from the returned `PasswordResetResult`, in that
-    order, inside the same async workflow. Redis failure follows the
-    best-effort behavior in `user-service.md` and does not turn a committed
-    password reset into a command failure.
-11. Print to stdout: `"Password updated for user '{username}'. All active
+9. After the commit succeeds, execute the session-cache purge and login
+   lockout-counter clear from the returned `PasswordResetResult`, in that
+   order, inside the same async workflow. Redis failure follows the
+   best-effort behavior in `user-service.md` and does not turn a committed
+   password reset into a command failure.
+10. Print to stdout: `"Password updated for user '{username}'. All active
     sessions invalidated."`
 
 The prompt labels are the CLI infrastructure's shared defaults
