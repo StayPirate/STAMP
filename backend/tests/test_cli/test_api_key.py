@@ -585,6 +585,7 @@ def test_revoke_creates_exact_audit_event(
     assert event.user_id is None
     assert event.target_user_id == user.id
     assert event.old_value == "audit-key"
+    assert event.new_value is None
     assert event.detail == {"key_id": str(api_key.id)}
 
 

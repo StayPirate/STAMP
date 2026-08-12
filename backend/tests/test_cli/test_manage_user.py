@@ -1243,6 +1243,20 @@ def test_show_renders_roles_manager_and_absent_values(
 
 
 @pytest.mark.integration
+def test_set_password_invalid_username_exits_one_before_tty_check(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    # Deliberately do NOT allow TTY: if the command reached the TTY check
+    # (or the prompt), this test would fail on a different error message
+    # or hang, proving the format guard fires first.
+    result = _invoke(["manage-user", "set-password", "--username", "1bad"])
+    assert result.exit_code == 1
+    assert "Invalid username '1bad'" in result.stderr
+
+
+@pytest.mark.integration
 def test_set_password_non_tty_rejected_exits_one(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1677,6 +1691,17 @@ def test_set_password_redis_success_purges_session_and_lockout(
 # ---------------------------------------------------------------------------
 # Integration: unlock
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_unlock_invalid_username_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    result = _invoke(["manage-user", "unlock", "--username", "1bad"])
+    assert result.exit_code == 1
+    assert "Invalid username '1bad'" in result.stderr
 
 
 @pytest.mark.integration
