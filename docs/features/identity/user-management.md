@@ -460,7 +460,8 @@ olduser         Old User             old@example.com          local      inactiv
 ```
 
 Column alignment uses fixed-width spaces. The ROLES column shows a
-comma-separated list of roles, or `—` if the user has no roles.
+comma-separated list of roles, or `—` if the user has no roles. The FULL
+NAME column shows `—` if `full_name` is NULL.
 
 If no users match the filters, prints: `"No users found matching the
 specified criteria."` and exits with code 0.
@@ -513,7 +514,8 @@ The ROLES field shows each role with its origin in parentheses:
 derived from external sync. If a role has both origins, show both:
 `admin (manual, O SUSE Admins)`.
 
-If `Last login` is never, show `—`. If `Manager` is not set, show `—`.
+If `full_name` is NULL, show `—` for `Full name`. If `Last login` is
+never, show `—`. If `Manager` is not set, show `—`.
 
 **Idempotency**: Idempotent. Read-only command, no state changes.
 
