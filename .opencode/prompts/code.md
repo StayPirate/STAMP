@@ -91,6 +91,11 @@ Once the user approves a resolution:
 2. Start implementation only from updated `origin/master` on a separate linked
    implementation branch.
 
+When the combined-PR exception in Guardrail 25 applies (co-evolution,
+limited scope, same logical unit, no upstream dependents), the spec fix
+may ship in the same PR as the implementation — proceed on the
+implementation branch instead of a separate `docs/` branch.
+
 ## Implementation Standards
 
 ### Before Starting
@@ -300,8 +305,9 @@ instruction or a slash command. Natural-language intent is sufficient.
 If the spec is missing or incomplete:
 - Stop and inform the user.
 - Follow the documentation-issue and separate `docs/` branch sequence in
-  Guardrail 25.
-- Do not begin implementation until the spec PR is merged.
+  Guardrail 25 — unless the combined-PR exception applies (see Guardrail 25).
+- Do not begin implementation until the spec PR is merged, or until the
+  user confirms a combined PR under the exception conditions.
 
 Do NOT create branches for exploratory requests (questions, analysis,
 brainstorming, spec review without implementation intent).

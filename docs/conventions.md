@@ -858,7 +858,8 @@ If the upstream service is unreachable or credentials are unavailable, the PR
 MUST identify the unverified fields and state that verification was
 documentation-only. If the real response contradicts an owning specification,
 stop implementation and resolve the discrepancy in a documentation PR before
-continuing.
+continuing — unless the combined-PR exception in `AGENTS.md` (Guardrail 25)
+applies, in which case the spec fix and implementation ship together.
 
 ### Runtime Version
 
@@ -1303,7 +1304,8 @@ automated PRs (Dependabot, release-please) are exempt entirely. See
 Pull Request Requirements below for the accepted formats. If a
 specification gap blocks implementation, resolve it in a separate
 documentation issue, branch, and merged PR before creating or resuming
-the implementation branch.
+the implementation branch — unless the combined-PR exception in
+`AGENTS.md` (Guardrail 25) applies.
 
 **No direct pushes to `master`**: all changes arrive via squash merge
 of a reviewed PR. The pre-push hook enforces this locally.
