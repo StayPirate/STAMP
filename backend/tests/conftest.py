@@ -5,10 +5,11 @@ See docs/features/platform/testing-strategy.md for the full testing strategy.
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import itertools
 import os
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
@@ -18,12 +19,14 @@ import pytest_asyncio
 import redis.asyncio as redis_asyncio
 from httpx import ASGITransport, AsyncClient
 from redis.exceptions import RedisError
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 if TYPE_CHECKING:
     from testcontainers.community.postgres import PostgresContainer
@@ -280,6 +283,83 @@ async def db_session_factory(
             await session.close()
         for conn in connections:
             await conn.close()
+
+
+@pytest.fixture
+def cli_session_factory(
+    _engine: AsyncEngine,
+) -> Iterator[async_sessionmaker[AsyncSession]]:
+    """Provide the async session factory injected into synchronous CLI
+    command tests (`tests/test_cli/`).
+
+    See docs/features/platform/testing-strategy.md (Sync Entry-Point
+    Tests): a CLI command under test crosses the sync-to-async boundary
+    through its own `asyncio.run()` call, so this factory's engine uses
+    `NullPool` — every connection is opened and closed entirely within
+    that call's event loop, never reusing a connection acquired on
+    pytest-asyncio's session-scoped loop (unlike `db_session`/`_engine`
+    above). Tests inject this factory by monkeypatching
+    `app.cli.manage_user.get_session_factory` to return it.
+
+    Depends on `_engine` purely for its schema-creation side effect (the
+    session-scoped `Base.metadata.create_all()`) — this factory's own
+    engine is a separate `NullPool`-backed connection to the same test
+    database, not a reuse of `_engine`'s connection.
+
+    A successful mutating command commits durable rows that the ordinary
+    per-test savepoint rollback cannot undo — see
+    `cleanup_users_by_username` below for explicit cleanup. Teardown here
+    only disposes the engine itself (via its own transient event loop,
+    safe because `NullPool` never leaves a connection open across
+    `asyncio.run()` calls).
+    """
+    engine = create_async_engine(_database_url(), poolclass=NullPool)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        asyncio.run(engine.dispose())
+
+
+@pytest.fixture
+def cleanup_users_by_username(
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> Iterator[Callable[..., None]]:
+    """Return a function that marks usernames for FK-safe deletion.
+
+    CLI mutation tests (`manage-user create`) commit real `User`,
+    `UserRole`, and `IdentityAuditEvent` rows through
+    `cli_session_factory`, bypassing the ordinary per-test rollback.
+    Call the returned function with the usernames created during the
+    test; cleanup runs at teardown (even after an assertion failure),
+    using the same `NullPool` engine on its own transient event loop —
+    mirroring the black-box image-suite cleanup pattern in
+    `tests/image/test_admin_user_mutations.py`.
+    """
+    pending: set[str] = set()
+
+    def _mark(*usernames: str) -> None:
+        pending.update(usernames)
+
+    yield _mark
+
+    if not pending:
+        return
+
+    async def _cleanup() -> None:
+        async with cli_session_factory() as db:
+            target_ids = select(User.id).where(User.username.in_(pending))
+            await db.execute(
+                delete(IdentityAuditEvent).where(
+                    IdentityAuditEvent.target_user_id.in_(target_ids)
+                    | IdentityAuditEvent.user_id.in_(target_ids)
+                )
+            )
+            await db.execute(delete(UserRole).where(UserRole.user_id.in_(target_ids)))
+            await db.execute(delete(User).where(User.username.in_(pending)))
+            await db.commit()
+
+    asyncio.run(_cleanup())
 
 
 @pytest.fixture

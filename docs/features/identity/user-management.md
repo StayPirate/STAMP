@@ -440,17 +440,19 @@ provided, all users are shown regardless of status.
    `"Error: Invalid role '{value}'. Valid roles are: {list}."`
    The list of valid roles is derived from the system's role definitions
    at runtime
-2. If `--type` is provided, validate that the value is `local` or
+2. If both `--active` and `--inactive` are provided, exit with error:
+   `"Error: --active and --inactive cannot be used together."`
+3. If `--type` is provided, validate that the value is `local` or
    `external`. If invalid, exit with error:
    `"Error: Invalid type '{value}'. Valid types are: local, external."`
-3. Delegate the read to `user_service.list_users()`. When multiple
+4. Delegate the read to `user_service.list_users()`. When multiple
    `--role` values are provided, return users with at least one of the
    specified roles (OR semantics per `docs/conventions.md`, Repeatable
    filter semantics)
    The command iterates pages until `UserPage.total` is reached; it never
    silently truncates the operator-visible result
-4. Sort results alphabetically by username
-5. Print a table to stdout with columns:
+5. Sort results alphabetically by username
+6. Print a table to stdout with columns:
 
 ```
 USERNAME        FULL NAME            EMAIL                    TYPE       STATUS    ROLES
