@@ -838,20 +838,25 @@ Reactivates a previously deactivated user account.
 
 **Preconditions**:
 
-- User must be currently inactive. If already active, this is a no-op
-  (returns the user unchanged)
 - **External status guard**: if `user.external_id IS NOT NULL` AND
   `acting_user_id IS NOT NULL`, reject with
-  `ExternalUserStatusReadOnlyError`. Active status of external users is managed
-  exclusively by external sync (see External Active Status Ownership above)
+  `ExternalUserStatusReadOnlyError`, regardless of the user's current
+  `active` value. Active status of external users is managed exclusively
+  by external sync (see External Active Status Ownership above); a human
+  caller can never reactivate an external user, not even as a no-op. This
+  guard is evaluated first, before the idempotency check below, so it is
+  never bypassed by an already-active external user
+- User must be currently inactive. If already active — and the guard
+  above did not already reject the call — this is a no-op (returns the
+  user unchanged)
 
 **Behavior**:
 
 1. Acquire a `FOR UPDATE` lock on the User row by ID. If it does not exist,
    raise `UserNotFoundError`
-2. Evaluate the preconditions against the locked row. An already-active user
-   returns unchanged and creates no audit event. Only an inactive user is then
-   evaluated against the external-status guard
+2. Evaluate the preconditions against the locked row, in the order listed
+   above: the external-status guard first (unconditional on `active` for a
+   human caller), then the already-active no-op check
 3. Set `User.active = true`
 4. Create `IdentityAuditEvent` with `event_type = user_reactivated`
    via `IdentityAuditLog.log_event()`. External synchronization uses
@@ -865,8 +870,11 @@ observe the committed active state and return as no-ops. Reactivation also
 serializes with password reset, field updates, role operations that lock the
 same root, and deactivation.
 
-**Re-invocation**: idempotent. Once active, another call returns the unchanged
-user and creates no audit event.
+**Re-invocation**: idempotent for local users. Once active, another call
+returns the unchanged user and creates no audit event. For an external
+user, every human-caller invocation raises `ExternalUserStatusReadOnlyError`
+regardless of the current `active` value — there is no no-op path for a
+human caller on an external user.
 
 **Explicitly NOT restored**:
 

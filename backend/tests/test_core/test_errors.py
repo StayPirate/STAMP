@@ -69,3 +69,20 @@ class TestErrorCode:
         """See docs/api-spec.md (Date Range Interpretation, Inverted
         range validation)."""
         assert ErrorCode.DATE_RANGE_INVERTED == "DATE_RANGE_INVERTED"
+
+    def test_admin_user_mutation_error_codes_are_registered(self) -> None:
+        """See docs/features/identity/user-service.md (Service
+        Exceptions) and docs/features/identity/user-management.md
+        (Admin API endpoints, Error responses)."""
+        assert ErrorCode.USER_ALREADY_EXISTS == "USER_ALREADY_EXISTS"
+        assert (
+            ErrorCode.USER_EXTERNAL_STATUS_READONLY == "USER_EXTERNAL_STATUS_READONLY"
+        )
+        assert ErrorCode.USER_EXTERNAL_FIELD_READONLY == "USER_EXTERNAL_FIELD_READONLY"
+        assert (
+            ErrorCode.USER_EXTERNAL_PASSWORD_FORBIDDEN
+            == "USER_EXTERNAL_PASSWORD_FORBIDDEN"
+        )
+        assert (
+            ErrorCode.USER_PASSWORD_POLICY_VIOLATION == "USER_PASSWORD_POLICY_VIOLATION"
+        )

@@ -1,32 +1,44 @@
-"""End-to-end tests for public user directory/profile and current-user
-endpoints (`backend/app/api/v1/users.py`).
+"""End-to-end tests for public user directory/profile, current-user, and
+ticket-independent admin user mutation endpoints
+(`backend/app/api/v1/users.py`).
 
-See `docs/features/identity/user-management.md` (List Users, Get User)
-and `docs/features/identity/authentication.md` (Get Current User) for
-the authoritative endpoint contracts under test. Filter/sort/pagination
-combination coverage for the underlying query lives in
+See `docs/features/identity/user-management.md` (List Users, Get User,
+Admin API endpoints) and `docs/features/identity/authentication.md`
+(Get Current User) for the authoritative endpoint contracts under test.
+Filter/sort/pagination combination coverage and lifecycle/audit/rollback
+coverage for the underlying `user_service` functions already lives in
 `tests/test_services/test_user_service.py` — these tests focus on the
 HTTP/route contract (status codes, envelopes, error mapping,
-authentication, and response field shape).
+authentication/authorization, identifier resolution, and response field
+shape) and do not duplicate that service-level coverage.
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from httpx import AsyncClient
+import pytest_asyncio
+import redis.asyncio as redis_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1.users import _parse_role_filters, _parse_user_type
-from app.core.enums import Role, UserType
+from app.core.enums import Role, SessionCreationReason, UserType
+from app.database import get_db
+from app.main import app
 from app.models.api_key import ApiKey
+from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import api_key_service
+from app.services.session_service import create_session
 
 # ---------------------------------------------------------------------------
 # Shared helpers and fixtures
@@ -44,6 +56,21 @@ def _make_api_key_credential() -> tuple[str, str]:
     return token, digest
 
 
+async def _audit_events_for(
+    db_session: AsyncSession, target_user_id: object
+) -> list[IdentityAuditEvent]:
+    """All `IdentityAuditEvent` rows targeting `target_user_id`.
+
+    Mirrors the identical helper in `tests/test_api/test_api_keys.py`.
+    """
+    rows = await db_session.execute(
+        select(IdentityAuditEvent).where(
+            IdentityAuditEvent.target_user_id == target_user_id
+        )
+    )
+    return list(rows.scalars().all())
+
+
 @pytest.fixture
 def authenticated_user_and_client(
     _authenticated_user_and_client: tuple[User, AsyncClient],
@@ -52,6 +79,66 @@ def authenticated_user_and_client(
     `_authenticated_user_and_client`, mirroring
     `tests/test_api/test_api_keys.py`."""
     return _authenticated_user_and_client
+
+
+@pytest_asyncio.fixture
+async def admin_user_and_client(
+    _authenticated_user_and_client: tuple[User, AsyncClient],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+) -> tuple[User, AsyncClient]:
+    """Like `admin_client`, but also exposes the underlying admin
+    `User` — needed to assert actor identity in audit events.
+    Mirrors the identical fixture in `tests/test_api/test_api_keys.py`.
+    """
+    user, client = _authenticated_user_and_client
+    await user_role_factory(user_id=user.id, role=Role.ADMIN.value)
+    return user, client
+
+
+@pytest_asyncio.fixture
+async def admin_commit_client(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+    user_role_factory: Callable[..., Awaitable[UserRole]],
+    redis_client: redis_asyncio.Redis,
+) -> AsyncGenerator[tuple[User, AsyncClient]]:
+    """An admin-authenticated client whose `get_db` override performs a
+    real commit and executes post-commit callbacks.
+
+    The shared `client`/`admin_client` fixtures keep one rollback-owned
+    test transaction and never call `session.commit()`, so callbacks
+    registered via `register_post_commit_callback()` (the password-reset
+    endpoint's session-cache purge and lockout-counter clear) never run
+    under them. This fixture mirrors `test_api/test_auth.py`'s
+    `auth_client` to make those side effects observable. Depends on
+    `redis_client` so the cleared/purged keys are visible on the
+    test-isolated Redis database.
+    """
+    admin = await user_factory()
+    await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+    created = await create_session(db_session, admin, SessionCreationReason.LOCAL_LOGIN)
+
+    async def _override_get_db() -> AsyncGenerator[AsyncSession]:
+        try:
+            yield db_session
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()
+            raise
+        else:
+            callbacks = db_session.info.pop("post_commit_callbacks", [])
+            for callback in callbacks:
+                await callback()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as commit_client:
+            commit_client.cookies.set(SESSION_COOKIE_NAME, created.token)
+            yield admin, commit_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
@@ -474,3 +561,831 @@ class TestGetCurrentUserProfile:
         response = await client.get("/api/v1/users/me")
 
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/users
+# ---------------------------------------------------------------------------
+
+
+def _create_payload(**overrides: object) -> dict[str, object]:
+    defaults: dict[str, object] = {
+        "username": "newadminuser",
+        "email": "newadminuser@example.com",
+        "full_name": "New Admin User",
+        "password": "a-fictional-password-value",
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+@pytest.mark.e2e
+class TestCreateUserAdmin:
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post("/api/v1/admin/users", json=_create_payload())
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+
+    async def test_ordinary_user_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/api/v1/admin/users", json=_create_payload()
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_creates_local_user_and_returns_201(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="janedoe", email="Jane.Doe@Example.com  ".strip()
+            ),
+        )
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["username"] == "janedoe"
+        assert data["active"] is True
+        assert data["source"] == "local"
+        assert "password" not in data
+        assert "password_hash" not in data
+
+    async def test_omitted_full_name_and_roles_are_accepted(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        payload = _create_payload(username="minimalcreate", email="minimal@example.com")
+        del payload["full_name"]
+
+        response = await client.post("/api/v1/admin/users", json=payload)
+
+        assert response.status_code == 201
+        data = response.json()["data"]
+        assert data["full_name"] is None
+        assert data["roles"] == []
+
+    async def test_assigns_initial_manual_roles(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="withroles",
+                email="withroles@example.com",
+                roles=["admin", "vulnerability_analyst"],
+            ),
+        )
+
+        assert response.status_code == 201
+        roles = {entry["role"] for entry in response.json()["data"]["roles"]}
+        assert roles == {"admin", "vulnerability_analyst"}
+        assert all(
+            entry["group_name"] == "_manual"
+            for entry in response.json()["data"]["roles"]
+        )
+
+    async def test_creates_user_created_and_role_added_audit_events(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        db_session: AsyncSession,
+    ) -> None:
+        admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="audituser",
+                email="audituser@example.com",
+                roles=["admin"],
+            ),
+        )
+
+        created_id = response.json()["data"]["id"]
+        events = await _audit_events_for(db_session, created_id)
+        event_types = {event.event_type for event in events}
+        assert event_types == {"user_created", "role_added"}
+        for event in events:
+            assert event.user_id == admin.id
+
+    async def test_duplicate_username_returns_409(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        await user_factory(username="dupeusername")
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="dupeusername", email="uniqueemail@example.com"
+            ),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_ALREADY_EXISTS"
+
+    async def test_duplicate_email_returns_409(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        await user_factory(email="dupeemail@example.com")
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(
+                username="uniqueusername", email="dupeemail@example.com"
+            ),
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_ALREADY_EXISTS"
+
+    async def test_password_outside_policy_returns_domain_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users", json=_create_payload(password="short")
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "USER_PASSWORD_POLICY_VIOLATION"
+
+    async def test_missing_password_returns_generic_validation_error(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        payload = _create_payload()
+        del payload["password"]
+
+        response = await client.post("/api/v1/admin/users", json=payload)
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_explicit_null_username_returns_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users", json=_create_payload(username=None)
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_malformed_username_returns_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users", json=_create_payload(username="1-bad-start")
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_malformed_email_returns_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users", json=_create_payload(email="not-an-email")
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_unknown_role_returns_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(roles=["not-a-real-role"]),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_duplicate_role_values_returns_422(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+
+        response = await client.post(
+            "/api/v1/admin/users",
+            json=_create_payload(roles=["admin", "admin"]),
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/v1/admin/users/{user}
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestUpdateUserAdmin:
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.patch(
+            "/api/v1/admin/users/someuser", json={"email": "new@example.com"}
+        )
+        assert response.status_code == 401
+
+    async def test_ordinary_user_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.patch(
+            "/api/v1/admin/users/someuser", json={"email": "new@example.com"}
+        )
+        assert response.status_code == 403
+
+    async def test_missing_uuid_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.patch(
+            f"/api/v1/admin/users/{uuid4()}", json={"email": "new@example.com"}
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_missing_username_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.patch(
+            "/api/v1/admin/users/no-such-user", json={"email": "new@example.com"}
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_resolves_by_uuid_and_username_to_same_target(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="patchtargetuser")
+
+        by_uuid = await client.patch(
+            f"/api/v1/admin/users/{target.id}",
+            json={"full_name": "Updated By UUID"},
+        )
+        by_username = await client.patch(
+            f"/api/v1/admin/users/{target.username}",
+            json={"full_name": "Updated By Username"},
+        )
+
+        assert by_uuid.status_code == 200
+        assert by_username.status_code == 200
+        assert by_uuid.json()["data"]["id"] == by_username.json()["data"]["id"]
+
+    async def test_empty_body_returns_422(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="emptybodytarget")
+
+        response = await client.patch(f"/api/v1/admin/users/{target.id}", json={})
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_explicit_null_email_returns_422(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="nullemailtarget")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"email": None}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_explicit_null_full_name_clears_it(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="clearfullnametarget", full_name="Old Name"
+        )
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"full_name": None}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["full_name"] is None
+
+    async def test_updates_email_and_creates_audit_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        admin, client = admin_user_and_client
+        target = await user_factory(username="emailupdatetarget")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}",
+            json={"email": "Updated.Email@Example.com"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["email"] == "updated.email@example.com"
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == "email_changed"
+        assert events[0].user_id == admin.id
+
+    async def test_duplicate_email_returns_409(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        await user_factory(email="taken@example.com")
+        target = await user_factory(username="conflicttarget")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"email": "taken@example.com"}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_ALREADY_EXISTS"
+
+    async def test_external_user_returns_409(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="externalpatchtarget",
+            external_id=uuid4(),
+            password_hash=None,
+        )
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"email": "new@example.com"}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_EXTERNAL_FIELD_READONLY"
+
+    async def test_no_op_when_values_unchanged_creates_no_audit_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="noopupdatetarget", full_name="Same Name")
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"full_name": "Same Name"}
+        )
+
+        assert response.status_code == 200
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_operates_on_inactive_user(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="inactivepatchtarget", active=False)
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"full_name": "New Name"}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["active"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/users/{user}/reactivate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestReactivateUserAdmin:
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post("/api/v1/admin/users/someuser/reactivate")
+        assert response.status_code == 401
+
+    async def test_ordinary_user_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/api/v1/admin/users/someuser/reactivate"
+        )
+        assert response.status_code == 403
+
+    async def test_missing_user_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post(f"/api/v1/admin/users/{uuid4()}/reactivate")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_reactivates_inactive_local_user_and_creates_audit_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        admin, client = admin_user_and_client
+        target = await user_factory(username="reactivatetarget", active=False)
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/reactivate")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["active"] is True
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == "user_reactivated"
+        assert events[0].user_id == admin.id
+
+    async def test_already_active_local_user_is_idempotent_no_op(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="alreadyactivetarget", active=True)
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/reactivate")
+
+        assert response.status_code == 200
+        assert response.json()["data"]["active"] is True
+        assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_external_user_returns_409_even_if_already_active(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        """See `docs/features/identity/user-service.md`
+        (`reactivate_user()`): the external-status guard is evaluated
+        before the already-active no-op check, so a human caller can
+        never reactivate an external user through the API — active or
+        not."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="externalactivetarget",
+            external_id=uuid4(),
+            password_hash=None,
+            active=True,
+        )
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/reactivate")
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_EXTERNAL_STATUS_READONLY"
+        assert await _audit_events_for(db_session, target.id) == []
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/users/{user}/password
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestResetUserPasswordAdmin:
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/api/v1/admin/users/someuser/password",
+            json={"password": "a-fictional-password-value"},
+        )
+        assert response.status_code == 401
+
+    async def test_ordinary_user_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/api/v1/admin/users/someuser/password",
+            json={"password": "a-fictional-password-value"},
+        )
+        assert response.status_code == 403
+
+    async def test_missing_user_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post(
+            f"/api/v1/admin/users/{uuid4()}/password",
+            json={"password": "a-fictional-password-value"},
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_resets_password_and_returns_documented_detail(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resettarget")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == {
+            "detail": "Password updated. All active sessions have been invalidated."
+        }
+
+    async def test_creates_exactly_one_password_reset_audit_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        db_session: AsyncSession,
+    ) -> None:
+        admin, client = admin_user_and_client
+        target = await user_factory(username="resetaudittarget")
+
+        await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        events = await _audit_events_for(db_session, target.id)
+        assert len(events) == 1
+        assert events[0].event_type == "password_reset"
+        assert events[0].user_id == admin.id
+        assert events[0].old_value is None
+        assert events[0].new_value is None
+
+    async def test_works_for_inactive_user(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetinactivetarget", active=False)
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 200
+
+    async def test_external_user_returns_409(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="resetexternaltarget",
+            external_id=uuid4(),
+            password_hash=None,
+        )
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 409
+        assert response.json()["code"] == "USER_EXTERNAL_PASSWORD_FORBIDDEN"
+
+    async def test_password_outside_policy_returns_domain_422(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetshorttarget")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "short"},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "USER_PASSWORD_POLICY_VIOLATION"
+
+    async def test_missing_password_returns_generic_validation_error(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetnopasstarget")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password", json={}
+        )
+
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_response_never_exposes_password_material(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetnoleaktarget")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        body_text = response.text
+        assert "a-new-fictional-password" not in body_text
+        assert "password_hash" not in body_text
+
+    async def test_post_commit_callbacks_purge_sessions_and_clear_lockout(
+        self,
+        admin_commit_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        db_session: AsyncSession,
+    ) -> None:
+        """Proves the endpoint registers both post-commit callbacks (in
+        order: session-cache purge, then lockout-counter clear) and that
+        they actually execute against Redis — the shared `client`/
+        `admin_client` fixtures never commit, so they cannot observe
+        this (see `admin_commit_client`'s docstring)."""
+        _admin, client = admin_commit_client
+        target = await user_factory(username="resetcallbacktarget")
+        created = await create_session(
+            db_session, target, SessionCreationReason.LOCAL_LOGIN
+        )
+        await db_session.commit()
+        await redis_client.set("session_liveness:" + str(created.session.id), "1")
+        await redis_client.set("login_attempts:resetcallbacktarget", "3")
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 200
+        assert (
+            await redis_client.get("session_liveness:" + str(created.session.id))
+            is None
+        )
+        assert await redis_client.get("login_attempts:resetcallbacktarget") is None
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/admin/users/{user}/unlock
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestUnlockUserAdmin:
+    async def test_unauthenticated_returns_401(self, client: AsyncClient) -> None:
+        response = await client.post("/api/v1/admin/users/someuser/unlock")
+        assert response.status_code == 401
+
+    async def test_ordinary_user_returns_403(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.post(
+            "/api/v1/admin/users/someuser/unlock"
+        )
+        assert response.status_code == 403
+
+    async def test_missing_user_returns_404(
+        self, admin_user_and_client: tuple[User, AsyncClient]
+    ) -> None:
+        _admin, client = admin_user_and_client
+        response = await client.post(f"/api/v1/admin/users/{uuid4()}/unlock")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_clears_existing_lockout_key(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="unlockapitarget")
+        await redis_client.set("login_attempts:unlockapitarget", "5")
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/unlock")
+
+        assert response.status_code == 200
+        assert response.json()["data"] == {"detail": "Account unlocked successfully."}
+        assert await redis_client.get("login_attempts:unlockapitarget") is None
+
+    async def test_idempotent_when_no_lockout_key(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="unlocknokeytarget")
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/unlock")
+
+        assert response.status_code == 200
+        assert response.json()["data"] == {"detail": "Account unlocked successfully."}
+
+    async def test_works_for_external_and_inactive_users(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(
+            username="unlockexternaltarget",
+            external_id=uuid4(),
+            password_hash=None,
+            active=False,
+        )
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/unlock")
+
+        assert response.status_code == 200
+
+    async def test_creates_no_audit_event(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        redis_client: redis_asyncio.Redis,
+        db_session: AsyncSession,
+    ) -> None:
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="unlocknoaudittarget")
+        await redis_client.set("login_attempts:unlocknoaudittarget", "2")
+
+        await client.post(f"/api/v1/admin/users/{target.id}/unlock")
+
+        assert await _audit_events_for(db_session, target.id) == []
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI surface — no out-of-scope admin mutation endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAdminUserEndpointsOpenAPISurface:
+    def test_exactly_five_admin_mutation_endpoints_are_registered(self) -> None:
+        from app.main import app as fastapi_app
+
+        openapi_paths = fastapi_app.openapi()["paths"]
+        admin_user_paths = {
+            path: set(operations.keys())
+            for path, operations in openapi_paths.items()
+            if path.startswith("/api/v1/admin/users")
+        }
+        assert admin_user_paths == {
+            "/api/v1/admin/users": {"post"},
+            "/api/v1/admin/users/{user}": {"patch"},
+            "/api/v1/admin/users/{user}/reactivate": {"post"},
+            "/api/v1/admin/users/{user}/password": {"post"},
+            "/api/v1/admin/users/{user}/unlock": {"post"},
+        }
+
+    def test_out_of_scope_endpoints_are_absent(self) -> None:
+        from app.main import app as fastapi_app
+
+        openapi_paths = fastapi_app.openapi()["paths"]
+        assert "/api/v1/admin/users/{user}/roles" not in openapi_paths
+        assert "/api/v1/admin/users/{user}/deactivate" not in openapi_paths
+        assert "/api/v1/admin/users/{user}/deactivation-impact" not in openapi_paths

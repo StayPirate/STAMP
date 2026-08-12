@@ -1,30 +1,43 @@
-"""Public user directory, profile, and current-user endpoints.
+"""Public user directory, profile, and current-user endpoints, plus the
+ticket-independent admin user mutation endpoints.
 
-See `docs/features/identity/user-management.md` (List Users, Get User)
-and `docs/features/identity/authentication.md` (Get Current User) for
-the authoritative endpoint contracts this module implements. Handlers
-stay thin: they validate, delegate to `user_service`
-(`docs/features/identity/user-service.md`), and map the result or a
-typed service exception to the documented response — no business logic
-or database query lives here.
+See `docs/features/identity/user-management.md` (List Users, Get User,
+Admin API endpoints) and `docs/features/identity/authentication.md`
+(Get Current User) for the authoritative endpoint contracts this module
+implements. Handlers stay thin: they validate, delegate to
+`user_service` (`docs/features/identity/user-service.md`), and map the
+result or a typed service exception to the documented response — no
+business logic or database query lives here.
 """
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 
-from app.api.dependencies import CurrentUser, user_not_found_error
-from app.core.enums import Role, SortOrder, UserSortField, UserType
+from app.api.dependencies import (
+    AuthenticatedPrincipal,
+    CurrentUser,
+    require_capability,
+    user_not_found_error,
+)
+from app.core.enums import Capability, Role, SortOrder, UserSortField, UserType
+from app.core.errors import AppError, ErrorCode
 from app.core.exceptions import UserNotFoundError
+from app.core.passwords import PasswordValidationError
 from app.core.permissions import role_from_wire, role_to_wire
-from app.database import DatabaseSession
+from app.database import DatabaseSession, register_post_commit_callback
 from app.models.user import User
 from app.schemas.auth import CurrentUserData, CurrentUserResponse
 from app.schemas.common import PaginationMeta
 from app.schemas.errors import ErrorResponse
 from app.schemas.user import (
+    AdminPasswordResetRequest,
+    AdminUserCreateRequest,
+    AdminUserUpdateRequest,
+    UserActionDetailData,
+    UserActionDetailResponse,
     UserData,
     UserListQuery,
     UserListResponse,
@@ -33,6 +46,14 @@ from app.schemas.user import (
     UserRoleAssignmentData,
 )
 from app.services import user_service
+from app.services.local_auth_service import clear_login_attempts
+from app.services.session_service import purge_session_cache
+from app.services.user_service import (
+    ExternalUserFieldReadOnlyError,
+    ExternalUserPasswordError,
+    ExternalUserStatusReadOnlyError,
+    UserConflictError,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["Users"])
 
@@ -310,3 +331,340 @@ async def get_user(user: str, db: DatabaseSession) -> UserResponse:
     except UserNotFoundError:
         raise user_not_found_error() from None
     return UserResponse(data=_serialize_user(resolved))
+
+
+# ---------------------------------------------------------------------------
+# Admin mutation endpoints
+#
+# See `docs/features/identity/user-management.md` (Admin API endpoints):
+# every endpoint requires `manage_users`; every `{user}` path parameter
+# is resolved through `user_service.resolve_user_identifier()` before
+# delegating to the owning lifecycle service, per the "route handlers
+# execute no ORM lookup directly" rule stated there.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/admin/users",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create user (admin)",
+    description=(
+        "Creates a new local user with a password and optional initial "
+        "manual roles. Requires the 'manage_users' capability."
+    ),
+    responses={
+        409: {
+            "model": ErrorResponse,
+            "description": "Normalized username or email already in use.",
+        },
+        422: {
+            "model": ErrorResponse,
+            "description": "Password does not meet the 16-128 character policy.",
+        },
+    },
+)
+async def create_user_admin(
+    body: AdminUserCreateRequest,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    db: DatabaseSession,
+) -> UserResponse:
+    """Create user (admin) — see
+    `docs/features/identity/user-management.md` (Create User (Admin))."""
+    roles = [(role_from_wire(value), "_manual") for value in body.roles]
+    try:
+        created = await user_service.create_user(
+            db,
+            username=body.username,
+            email=body.email,
+            full_name=body.full_name,
+            active=True,
+            password=body.password,
+            roles=roles,
+            acting_user_id=principal.user.id,
+        )
+    except UserConflictError:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.USER_ALREADY_EXISTS,
+            detail="A user with this username or email already exists.",
+        ) from None
+    except PasswordValidationError:
+        raise AppError(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code=ErrorCode.USER_PASSWORD_POLICY_VIOLATION,
+            detail="Password must be between 16 and 128 characters.",
+        ) from None
+
+    return UserResponse(data=_serialize_user(created))
+
+
+@router.patch(
+    "/admin/users/{user}",
+    response_model=UserResponse,
+    summary="Update user (admin)",
+    description=(
+        "Updates a local user's email and/or full name. At least one field "
+        "must be provided. Requires the 'manage_users' capability."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "No user found matching the given UUID or username.",
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": (
+                "Normalized email already in use, or the target is an external user."
+            ),
+        },
+    },
+)
+async def update_user_admin(
+    user: str,
+    body: AdminUserUpdateRequest,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    db: DatabaseSession,
+) -> UserResponse:
+    """Update user (admin) — see
+    `docs/features/identity/user-management.md` (Update User (Admin))."""
+    try:
+        target_user = await user_service.resolve_user_identifier(db, user)
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    email_set = "email" in body.model_fields_set
+    full_name_set = "full_name" in body.model_fields_set
+
+    try:
+        if email_set and full_name_set:
+            # `AdminUserUpdateRequest._validate_email` rejects an explicit
+            # `null`, so a present `email` is always a validated string.
+            assert body.email is not None
+            updated = await user_service.update_user(
+                db,
+                target_user.id,
+                acting_user_id=principal.user.id,
+                email=body.email,
+                full_name=body.full_name,
+            )
+        elif email_set:
+            assert body.email is not None
+            updated = await user_service.update_user(
+                db,
+                target_user.id,
+                acting_user_id=principal.user.id,
+                email=body.email,
+            )
+        else:
+            # `AdminUserUpdateRequest` guarantees at least one of
+            # `email`/`full_name` is present, so `full_name_set` is True
+            # here — this branch also covers `full_name_set` explicitly
+            # for mypy's exhaustiveness, since both booleans cannot be
+            # False at the same time.
+            updated = await user_service.update_user(
+                db,
+                target_user.id,
+                acting_user_id=principal.user.id,
+                full_name=body.full_name,
+            )
+    except ExternalUserFieldReadOnlyError:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.USER_EXTERNAL_FIELD_READONLY,
+            detail=(
+                "Cannot modify identity fields for external users. These "
+                "fields are managed by the external identity provider."
+            ),
+        ) from None
+    except UserConflictError:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.USER_ALREADY_EXISTS,
+            detail="A user with this email already exists.",
+        ) from None
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    return UserResponse(data=_serialize_user(updated))
+
+
+@router.post(
+    "/admin/users/{user}/reactivate",
+    response_model=UserResponse,
+    summary="Reactivate user (admin)",
+    description=(
+        "Reactivates a previously deactivated local user. Idempotent for "
+        "an already-active local user. Requires the 'manage_users' "
+        "capability."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "No user found matching the given UUID or username.",
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": "Target is an external user.",
+        },
+    },
+)
+async def reactivate_user_admin(
+    user: str,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    db: DatabaseSession,
+) -> UserResponse:
+    """Reactivate user (admin) — see
+    `docs/features/identity/user-management.md` (Reactivate User)."""
+    try:
+        target_user = await user_service.resolve_user_identifier(db, user)
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    try:
+        updated = await user_service.reactivate_user(
+            db, target_user.id, acting_user_id=principal.user.id
+        )
+    except ExternalUserStatusReadOnlyError:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.USER_EXTERNAL_STATUS_READONLY,
+            detail="Cannot reactivate external users.",
+        ) from None
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    return UserResponse(data=_serialize_user(updated))
+
+
+@router.post(
+    "/admin/users/{user}/password",
+    response_model=UserActionDetailResponse,
+    summary="Reset user password (admin)",
+    description=(
+        "Resets the password of a local user (active or inactive), "
+        "invalidating all active sessions. Requires the 'manage_users' "
+        "capability."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "No user found matching the given UUID or username.",
+        },
+        409: {
+            "model": ErrorResponse,
+            "description": "Target is an external user.",
+        },
+        422: {
+            "model": ErrorResponse,
+            "description": "Password does not meet the 16-128 character policy.",
+        },
+    },
+)
+async def reset_user_password_admin(
+    user: str,
+    body: AdminPasswordResetRequest,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    db: DatabaseSession,
+) -> UserActionDetailResponse:
+    """Reset user password (admin) — see
+    `docs/features/identity/user-management.md` (Reset User Password)."""
+    try:
+        target_user = await user_service.resolve_user_identifier(db, user)
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    try:
+        result = await user_service.reset_password(
+            db, target_user.id, body.password, acting_user_id=principal.user.id
+        )
+    except ExternalUserPasswordError:
+        raise AppError(
+            status_code=status.HTTP_409_CONFLICT,
+            code=ErrorCode.USER_EXTERNAL_PASSWORD_FORBIDDEN,
+            detail=(
+                "Cannot set password for external user. External users "
+                "authenticate via SSO."
+            ),
+        ) from None
+    except PasswordValidationError:
+        raise AppError(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            code=ErrorCode.USER_PASSWORD_POLICY_VIOLATION,
+            detail="Password must be between 16 and 128 characters.",
+        ) from None
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    async def _purge_sessions() -> None:
+        await purge_session_cache(result.invalidated_session_ids)
+
+    async def _clear_lockout() -> None:
+        await clear_login_attempts(result.username)
+
+    # Order matters: session-cache purge before lockout-counter clear,
+    # matching `reset_password()`'s documented post-commit steps 8-9
+    # (`docs/features/identity/user-service.md`).
+    register_post_commit_callback(db, _purge_sessions)
+    register_post_commit_callback(db, _clear_lockout)
+
+    return UserActionDetailResponse(
+        data=UserActionDetailData(
+            detail="Password updated. All active sessions have been invalidated."
+        )
+    )
+
+
+@router.post(
+    "/admin/users/{user}/unlock",
+    response_model=UserActionDetailResponse,
+    summary="Unlock user (admin)",
+    description=(
+        "Clears the login lockout counter for a user. Idempotent — a user "
+        "who is not locked out returns the same success response. "
+        "Requires the 'manage_users' capability."
+    ),
+    responses={
+        404: {
+            "model": ErrorResponse,
+            "description": "No user found matching the given UUID or username.",
+        },
+    },
+)
+async def unlock_user_admin(
+    user: str,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_USERS)),
+    ],
+    db: DatabaseSession,
+) -> UserActionDetailResponse:
+    """Unlock user (admin) — see
+    `docs/features/identity/user-management.md` (Unlock User)."""
+    try:
+        target_user = await user_service.resolve_user_identifier(db, user)
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    try:
+        await user_service.unlock_user(
+            db, target_user.id, acting_user_id=principal.user.id
+        )
+    except UserNotFoundError:
+        raise user_not_found_error() from None
+
+    return UserActionDetailResponse(
+        data=UserActionDetailData(detail="Account unlocked successfully.")
+    )
