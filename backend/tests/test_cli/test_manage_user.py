@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import app.cli.manage_user as manage_user_module
 from app.cli import cli
 from app.core.enums import IdentityAuditEventType, Role
+from app.core.permissions import role_to_wire
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
@@ -64,6 +65,26 @@ async def _fetch_user(
             select(User).where(User.username == username)
         )
         return result
+
+
+async def _fetch_user_created_events(
+    factory: async_sessionmaker[AsyncSession], username: str
+) -> list[IdentityAuditEvent]:
+    """Find `user_created` events by `new_value` (the persisted username).
+
+    Used to prove the absence of a dangling audit event when the
+    creation transaction rolled back and no `User` row (hence no
+    `target_user_id`) exists to query by.
+    """
+    async with factory() as db:
+        result = await db.execute(
+            select(IdentityAuditEvent).where(
+                IdentityAuditEvent.event_type
+                == IdentityAuditEventType.USER_CREATED.value,
+                IdentityAuditEvent.new_value == username,
+            )
+        )
+        return list(result.scalars().all())
 
 
 async def _create_user_directly(
@@ -439,6 +460,40 @@ def test_create_success_with_no_roles(
 
 
 @pytest.mark.integration
+def test_create_persists_full_name(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    """`--full-name` is forwarded through `_create_flow` to
+    `user_service.create_user(full_name=...)` and persisted verbatim."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clicreatefullname"
+    cleanup_users_by_username(username)
+
+    result = _invoke(
+        [
+            "manage-user",
+            "create",
+            "--username",
+            username,
+            "--email",
+            f"{username}@example.com",
+            "--full-name",
+            "Alice Smith",
+        ],
+        input=_PASSWORD_INPUT,
+    )
+
+    assert result.exit_code == 0, result.output
+
+    user = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert user is not None
+    assert user.full_name == "Alice Smith"
+
+
+@pytest.mark.integration
 def test_create_success_with_roles_persists_user_roles_and_audit(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -509,6 +564,30 @@ def test_create_success_with_roles_persists_user_roles_and_audit(
             for event in events:
                 assert event.user_id is None
                 assert event.detail is None
+
+            # Per identity-audit-log.md's IdentityAuditEventType Enum
+            # table: user_created carries old_value=NULL, new_value=the
+            # created username; role_added carries old_value=NULL,
+            # new_value=the assigned role name.
+            created_event = next(
+                e
+                for e in events
+                if e.event_type == IdentityAuditEventType.USER_CREATED.value
+            )
+            assert created_event.old_value is None
+            assert created_event.new_value == username
+
+            role_events = [
+                e
+                for e in events
+                if e.event_type == IdentityAuditEventType.ROLE_ADDED.value
+            ]
+            assert {e.new_value for e in role_events} == {
+                role_to_wire(Role.ADMIN),
+                role_to_wire(Role.VULNERABILITY_ANALYST),
+            }
+            for role_event in role_events:
+                assert role_event.old_value is None
 
     asyncio.run(_verify())
 
@@ -806,6 +885,15 @@ def test_create_interrupted_before_commit_rolls_back(
     user = asyncio.run(_fetch_user(cli_session_factory, username))
     assert user is None
 
+    # Explicit per testing-strategy.md (CLI Commands): rollback leaves no
+    # partial mutation *or audit event*. `target_user_id` cannot be
+    # queried (no user row exists), so this checks by `new_value`
+    # (the username the `user_created` event would have carried).
+    audit_events = asyncio.run(
+        _fetch_user_created_events(cli_session_factory, username)
+    )
+    assert audit_events == []
+
 
 # ---------------------------------------------------------------------------
 # Integration: list
@@ -883,6 +971,39 @@ def test_list_invalid_type_exits_one(
     assert result.stderr.strip() == (
         "Error: Invalid type 'bogus'. Valid types are: local, external."
     )
+
+
+@pytest.mark.integration
+def test_list_type_filters_local_and_external_users(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    """`--type local`/`--type external` map to distinct `UserType` values
+    end to end: a swapped `UserType.LOCAL`/`UserType.EXTERNAL` constant
+    would cause one of these assertions to fail."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    prefix = "clilisttypefilter"
+    local_user = f"{prefix}local"
+    external_user = f"{prefix}external"
+    cleanup_users_by_username(local_user, external_user)
+
+    asyncio.run(_create_user_directly(cli_session_factory, username=local_user))
+    asyncio.run(
+        _create_user_directly(
+            cli_session_factory, username=external_user, external_id=uuid4()
+        )
+    )
+
+    local_result = _invoke(["manage-user", "list", "--type", "local"])
+    assert local_result.exit_code == 0, local_result.output
+    assert local_user in local_result.stdout
+    assert external_user not in local_result.stdout
+
+    external_result = _invoke(["manage-user", "list", "--type", "external"])
+    assert external_result.exit_code == 0, external_result.output
+    assert external_user in external_result.stdout
+    assert local_user not in external_result.stdout
 
 
 @pytest.mark.integration

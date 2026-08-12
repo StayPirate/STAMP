@@ -7,10 +7,10 @@ authoritative contract exercised here.
 
 from __future__ import annotations
 
+import select
 import signal
 import subprocess
 import sys
-import time
 from importlib.metadata import version as get_version
 from pathlib import Path
 
@@ -26,6 +26,7 @@ from app.cli._runtime import _load_settings, bootstrap
 from app.core.exceptions import ServiceError
 
 _BACKEND_DIR = Path(__file__).resolve().parents[2]
+_SIGNAL_PROBE = Path(__file__).with_name("_signal_probe.py")
 
 
 def _invoke(args: list[str], input: str | None = None) -> Result:
@@ -142,6 +143,77 @@ def test_bootstrap_succeeds_when_settings_valid() -> None:
     # must not raise or print anything.
     bootstrap()
     _load_settings()  # importing again is a cheap no-op (cached module)
+
+
+@pytest.mark.unit
+def test_bootstrap_sanitizes_validation_error_omitting_secrets(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real `pydantic.ValidationError` on `Settings` construction must
+    never leak credential-bearing values on stderr.
+
+    Pydantic's default rendering of a `missing`-type error embeds a repr
+    of the *entire* input mapping — including sibling fields such as
+    `DATABASE_URL` or `NVD_API_KEY`, which are still plain strings at
+    validation time. This reproduces that exact failure shape (a
+    required field missing alongside fictional credential-bearing
+    fields) and asserts the fictional secrets never reach stderr.
+    """
+    from pydantic import Field, SecretStr, ValidationError
+    from pydantic_settings import (
+        BaseSettings,
+        PydanticBaseSettingsSource,
+        SettingsConfigDict,
+    )
+
+    fake_db_secret = "fake-db-secret-987654"
+    fake_nvd_secret = "fake-nvd-secret-123456"
+
+    class _FakeSettings(BaseSettings):
+        model_config = SettingsConfigDict(env_file=None)
+        database_url: str = Field(default="unused", repr=False)
+        nvd_api_key: SecretStr = SecretStr("")
+        jwt_secret_key: SecretStr
+
+        @classmethod
+        def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+        ) -> tuple[PydanticBaseSettingsSource, ...]:
+            # Constructor kwargs only: isolates this reproduction from the
+            # real process environment (which has its own valid
+            # JWT_SECRET_KEY for the test session) so the missing-field
+            # failure below is deterministic regardless of ambient env vars.
+            return (init_settings,)
+
+    def _raise() -> None:
+        try:
+            _FakeSettings(
+                database_url=(
+                    f"postgresql+asyncpg://fakeuser:{fake_db_secret}@localhost/sentinel"
+                ),
+                nvd_api_key=fake_nvd_secret,
+            )
+        except ValidationError as exc:
+            raise exc from None
+
+    monkeypatch.setattr("app.cli._runtime._load_settings", _raise)
+
+    with pytest.raises(SystemExit) as exc_info:
+        bootstrap()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert fake_db_secret not in captured.err
+    assert fake_nvd_secret not in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.err.strip() == (
+        "Error: Invalid configuration - jwt_secret_key: Field required"
+    )
 
 
 @pytest.mark.unit
@@ -290,24 +362,37 @@ def test_main_maps_unhandled_exception_with_empty_message_to_class_name(
 def test_signal_produces_documented_exit_code(signum: int, expected_exit: int) -> None:
     """A long-running command reacts to SIGINT/SIGTERM with exit 130/143.
 
-    Uses `manage-user list` (read-only) against the real dev-env
-    PostgreSQL as an observable, slow-enough-to-signal invocation. If no
-    PostgreSQL is reachable the process exits 2 before the signal is
-    delivered, which would falsify `expected_exit` and fail the
-    assertion below rather than silently pass.
+    Spawns `_signal_probe.py`, a thin test-only wrapper that installs the
+    real signal handlers and immediately prints an unbuffered "READY"
+    marker before dispatching to the real, unmodified `app.cli.main()`
+    invoked as `manage-user list` against the real dev-env PostgreSQL.
+    Waiting for that marker on the child's stdout is the observable
+    readiness point required by
+    docs/features/platform/testing-strategy.md (CLI Commands) instead of
+    guessing with a fixed sleep. If no PostgreSQL is reachable the
+    process exits 2 before the signal is delivered, which would falsify
+    `expected_exit` and fail the assertion below rather than silently
+    pass.
     """
     proc = subprocess.Popen(
-        [sys.executable, "-m", "app.cli", "manage-user", "list"],
+        [sys.executable, str(_SIGNAL_PROBE)],
         cwd=str(_BACKEND_DIR),
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        text=True,
     )
     try:
-        time.sleep(0.5)  # let the process install its handlers and start
+        assert proc.stdout is not None
+        readable, _, _ = select.select([proc.stdout], [], [], 5.0)
+        assert readable, "signal probe produced no output within 5s"
+        ready_line = proc.stdout.readline()
+        assert ready_line.strip() == "READY", ready_line
         proc.send_signal(signum)
         exit_code = proc.wait(timeout=10)
     finally:
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=10)
+        if proc.stdout is not None:
+            proc.stdout.close()
     assert exit_code == expected_exit

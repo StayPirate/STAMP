@@ -12,6 +12,7 @@ from types import FrameType
 from typing import TYPE_CHECKING
 
 import click
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -48,6 +49,26 @@ def _load_settings() -> None:
     import app.config  # noqa: F401  (import alone validates Settings)
 
 
+def _format_validation_error(exc: ValidationError) -> str:
+    """Render a `pydantic.ValidationError` without leaking input values.
+
+    Pydantic's default `str(exc)`/error rendering embeds a repr of the
+    entire input mapping for some error types (e.g. a required field
+    that is `missing`), which can include other, unrelated
+    credential-bearing settings (`DATABASE_URL`, `NVD_API_KEY`,
+    `IBS_PASSWORD`) that are still plain strings at validation time —
+    before `SecretStr`/`repr=False` masking would otherwise apply. This
+    renders only the failing field path and the validator's own message
+    (`errors(include_input=False)`), which is exactly the safe subset
+    already used by every custom validator in `app.config`.
+    """
+    parts = []
+    for error in exc.errors(include_url=False, include_input=False):
+        loc = ".".join(str(part) for part in error["loc"])
+        parts.append(f"{loc}: {error['msg']}" if loc else error["msg"])
+    return "; ".join(parts)
+
+
 def bootstrap() -> None:
     """Fail-fast `Settings` load plus minimal CLI logging configuration.
 
@@ -69,10 +90,19 @@ def bootstrap() -> None:
     Raises `SystemExit(2)` directly (bypassing the shared exception
     mapper in `app.cli.main()`) when `Settings` fails to load, printing a
     plain `Error: ...` message with no traceback — see
-    cli-infrastructure.md, Root Command Group & Bootstrap, step 2.
+    cli-infrastructure.md, Root Command Group & Bootstrap, step 2. A
+    `pydantic.ValidationError` is rendered via `_format_validation_error()`
+    to avoid leaking credential-bearing settings values (see that
+    function's docstring); any other exception is rendered via `str()`,
+    which is safe because no other exception raised during `Settings`
+    construction carries raw input values.
     """
     try:
         _load_settings()
+    except ValidationError as exc:
+        message = _format_validation_error(exc)
+        click.echo(f"Error: Invalid configuration - {message}", err=True)
+        raise SystemExit(2) from None
     except Exception as exc:  # fail-fast boundary, exits directly (see above)
         click.echo(f"Error: {exc}", err=True)
         raise SystemExit(2) from None
