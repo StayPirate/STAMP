@@ -198,15 +198,26 @@ deterministic for a fixed database snapshot.
 
 Accepts the typed filters, pagination values, and sorting selection defined by
 `user-management.md` (List Users). Return `UserPage(items: list[User], total:
-int)` with deterministic secondary ordering by `User.id`. The function applies
-every documented filter and loads the role and manager data required by the
-response; API handlers perform no ORM query or filtering themselves.
+int)` with deterministic secondary ordering by `User.id`. When sorting by
+`full_name`, rows with `NULL` sort last per `api-spec.md` (Nullable Sort
+Field Ordering). The function applies every documented filter and loads
+the role and manager data required by the response; API handlers perform
+no ORM query or filtering themselves.
 
 #### `get_user(session, identifier)`
 
 Resolves the UUID or username through `resolve_user_identifier()` and returns
 the complete profile data defined by `user-management.md` (Get User), including
 roles and manager. Unknown users raise `UserNotFoundError`.
+
+#### `get_user_roles(session, user_id)`
+
+Accepts `session: AsyncSession` and `user_id: UUID`. Return the distinct
+set of `Role` values held by the user across all origins (direct + group
+mappings). Unknown or role-less `user_id` yields an empty list (does not
+raise `UserNotFoundError`). Ordering is not guaranteed by the service —
+response formatters apply the deterministic ordering rule from `rbac.md`
+(Deterministic ordering).
 
 #### `get_deactivation_impact(session, user_id)`
 

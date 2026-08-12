@@ -183,3 +183,31 @@ class CredentialKind(StrEnum):
 
     JWT = "jwt"
     API_KEY = "api_key"
+
+
+class UserType(StrEnum):
+    """Local vs external authentication origin filter for user queries.
+
+    Category B — classification (Python Enum only; never stored in the
+    database — `User.source` is a derived field, never a persisted
+    column). See `docs/features/identity/user-management.md` (List
+    Users).
+    """
+
+    LOCAL = "local"
+    EXTERNAL = "external"
+
+
+class UserSortField(StrEnum):
+    """Sortable fields for the public user directory list query.
+
+    Category B — classification (Python Enum only; never stored in the
+    database). See `docs/features/identity/user-management.md` (List
+    Users) for the supported fields and NULL-placement rule for
+    `full_name`.
+    """
+
+    USERNAME = "username"
+    FULL_NAME = "full_name"
+    EMAIL = "email"
+    CREATED_AT = "created_at"

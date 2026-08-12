@@ -33,13 +33,18 @@ _MAX_QUERY_STRING_LENGTH = 500
 def _is_string_like(annotation: Any) -> bool:
     """Whether `annotation` denotes a string-shaped query field.
 
-    Covers `str`, `str | None`, and `StrEnum` subclasses (which are
-    `str` subclasses) — the only shapes the 500-character limit
-    applies to per `docs/api-spec.md` ("Every **string** query
-    parameter..."). Numeric, boolean, and UUID fields are exempt: a
-    legitimate value for those types is never close to 500 characters,
-    and an out-of-range value already fails its own type validation
-    with a more specific, more useful error.
+    Covers `str`, `str | None`, `StrEnum` subclasses (which are `str`
+    subclasses), and `list[X]`/`list[X] | None` where `X` itself is
+    string-shaped — the shapes the 500-character limit applies to per
+    `docs/api-spec.md` ("Every **string** query parameter..."). A
+    repeatable filter (e.g. `role: list[str]`, `event_type:
+    list[IdentityAuditEventType]`) is declared as a `list[...]`
+    annotation by FastAPI's `Query()` mechanism; each raw occurrence is
+    still checked individually by `enforce_query_parameter_length_limit()`
+    via `request.query_params.getlist(name)`. Numeric, boolean, and UUID
+    fields are exempt: a legitimate value for those types is never close
+    to 500 characters, and an out-of-range value already fails its own
+    type validation with a more specific, more useful error.
     """
     origin = get_origin(annotation)
     if origin in (Union, UnionType):
@@ -48,6 +53,9 @@ def _is_string_like(annotation: Any) -> bool:
             for arg in get_args(annotation)
             if arg is not type(None)
         )
+    if origin is list:
+        args = get_args(annotation)
+        return bool(args) and _is_string_like(args[0])
     return isinstance(annotation, type) and issubclass(annotation, str)
 
 

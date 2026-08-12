@@ -158,9 +158,10 @@ because the filter has only one value, produce an empty result per
 | `sort_by` | string | `created_at` | `created_at` or `last_used_at` |
 | `sort_order` | string | `desc` | `asc` or `desc` |
 
-When `sort_by=last_used_at`, keys with `last_used_at = NULL` sort last in
-both directions. Non-NULL values follow `sort_order`. The primary-key
-tiebreaker required by `api-spec.md` makes pagination deterministic.
+When `sort_by=last_used_at`, NULL ordering per `api-spec.md` (Nullable
+Sort Field Ordering). Non-NULL values follow `sort_order`. The
+primary-key tiebreaker required by `api-spec.md` makes pagination
+deterministic.
 
 All non-creation responses omit the plaintext key and hash. `revoked_by` is
 either NULL for a CLI or automated revocation or the standard User Reference

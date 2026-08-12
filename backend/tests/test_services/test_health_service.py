@@ -118,7 +118,7 @@ class TestAggregateRedisStatus:
     def test_unreachable_outranks_timeout_in_mixed_case(self) -> None:
         """The resolved precedence for the mixed failure case — see
         docs/features/platform/health-endpoints.md (Readiness — GET
-        /ready) and issue SG-01."""
+        /ready)."""
         result = aggregate_redis_status(
             [HealthCheckStatus.TIMEOUT, HealthCheckStatus.UNREACHABLE]
         )

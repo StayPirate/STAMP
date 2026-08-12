@@ -1,4 +1,4 @@
-"""Image smoke assertions for the identity schema migrations (P1-04, P2-01, P2-02).
+"""Image smoke assertions for the identity schema migrations.
 
 Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the

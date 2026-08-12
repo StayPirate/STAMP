@@ -496,8 +496,8 @@ def session_factory(
       the production calculation at login time (see
       `docs/features/identity/authentication.md`, Session Management).
       This is a test-time default only — the model itself never computes
-      `expires_at`; login-time calculation is out of scope for this
-      persistence-only piece (P2-01).
+      `expires_at`; login-time calculation is owned by
+      `app.services.session_service`.
     """
 
     async def _create(**overrides: Any) -> Session:

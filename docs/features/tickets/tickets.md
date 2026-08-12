@@ -951,7 +951,7 @@ full visibility rules.
 #### Shared Sub-Schemas
 
 **UserSummary** — inline representation of a user reference. Fields:
-`id` (UUID), `username` (string), `full_name` (string), `active`
+`id` (UUID), `username` (string), `full_name` (string | null), `active`
 (boolean). See `docs/api-spec.md`, "User References in Responses" for
 the canonical definition.
 

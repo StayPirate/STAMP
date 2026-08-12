@@ -220,9 +220,8 @@ class TestSessionExpiresAtImmutability:
 
     This is a persistence-level guarantee test: it verifies that a
     session's persisted `expires_at` is unaffected by a later change to
-    the setting. The actual login-time calculation is out of scope for
-    this model (P2-01) and belongs to a future authentication service
-    (P2-03).
+    the setting. The login-time calculation itself is owned by
+    `app.services.session_service`, not by this model.
     """
 
     async def test_persisted_deadline_unaffected_by_later_setting_change(

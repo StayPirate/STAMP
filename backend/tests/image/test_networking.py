@@ -1,4 +1,4 @@
-"""Image smoke assertions for the shared networking/TLS client (P1-02).
+"""Image smoke assertions for the shared networking/TLS client.
 
 Verifies container-observable outcomes that only manifest inside the
 built image: the SUSE CA certificate file is present at the

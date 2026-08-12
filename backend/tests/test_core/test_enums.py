@@ -15,6 +15,8 @@ from app.core.enums import (
     IdentityAuditEventType,
     Role,
     Scope,
+    UserSortField,
+    UserType,
 )
 
 
@@ -118,3 +120,26 @@ class TestCredentialKindEnum:
     def test_values(self) -> None:
         assert CredentialKind.JWT.value == "jwt"
         assert CredentialKind.API_KEY.value == "api_key"
+
+
+@pytest.mark.unit
+class TestUserTypeEnum:
+    """UserType must have exactly the two members defined in
+    user-management.md (List Users)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in UserType} == {"local", "external"}
+
+
+@pytest.mark.unit
+class TestUserSortFieldEnum:
+    """UserSortField must have exactly the four members defined in
+    user-management.md (List Users)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in UserSortField} == {
+            "username",
+            "full_name",
+            "email",
+            "created_at",
+        }

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -37,3 +38,26 @@ class LoginResponse(BaseModel):
     """Response body for a successful `POST /api/v1/auth/login` call."""
 
     data: LoginData
+
+
+class CurrentUserData(BaseModel):
+    """The concise current-user profile object for `GET /api/v1/users/me`
+    (`authentication.md`, Get Current User). Deliberately narrower than
+    the full profile (`app.schemas.user.UserData`): no `source`,
+    `external_id`, `manager`, or role assignment metadata — only the
+    fields needed to render the authenticated user's own identity.
+    `roles` is the distinct, alphabetically wire-sorted set of current
+    role values (see `rbac.md`, Deterministic ordering)."""
+
+    id: UUID
+    username: str
+    email: str
+    full_name: str | None
+    roles: list[str]
+    active: bool
+
+
+class CurrentUserResponse(BaseModel):
+    """Response body for `GET /api/v1/users/me`."""
+
+    data: CurrentUserData
