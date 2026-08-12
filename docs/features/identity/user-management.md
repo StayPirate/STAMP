@@ -572,9 +572,8 @@ Filters of different kinds combine with AND semantics (e.g., `type=local`
 and `active=true` together return only active local users); repeated
 values of the same filter combine with OR semantics as stated above.
 
-`full_name` is nullable (see Field notes below). When sorting by
-`sort_by=full_name`, users with `full_name IS NULL` are always ordered
-last, regardless of `sort_order`.
+`full_name` is nullable (see Field notes below). Sorting by `full_name`
+follows `api-spec.md` (Nullable Sort Field Ordering).
 
 Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as

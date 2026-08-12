@@ -18,6 +18,8 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 
+from app.api.v1.identity_audit import _parse_event_types
+from app.core.enums import IdentityAuditEventType
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 
@@ -35,6 +37,33 @@ def authenticated_user(
     `tests/test_api/test_api_keys.py`, adapted to expose only the user.
     """
     return _authenticated_user_and_client[0]
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (`app.api.v1.identity_audit`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestParseEventTypes:
+    def test_absent_is_valid_with_no_filter(self) -> None:
+        assert _parse_event_types([]) == (True, [])
+
+    def test_all_valid_values_are_kept(self) -> None:
+        is_valid, event_types = _parse_event_types(["role_added", "role_removed"])
+        assert is_valid is True
+        assert set(event_types) == {
+            IdentityAuditEventType.ROLE_ADDED,
+            IdentityAuditEventType.ROLE_REMOVED,
+        }
+
+    def test_mixed_valid_and_invalid_keeps_only_valid(self) -> None:
+        is_valid, event_types = _parse_event_types(["role_added", "not-a-real-type"])
+        assert is_valid is True
+        assert event_types == [IdentityAuditEventType.ROLE_ADDED]
+
+    def test_all_invalid_is_rejected(self) -> None:
+        assert _parse_event_types(["not-a-real-type"]) == (False, [])
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +267,22 @@ class TestListMyIdentityAuditEvents:
         assert response.status_code == 200
         assert response.json()["meta"]["total"] == 0
 
+    async def test_page_below_one_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/users/me/audit-log", params={"page": 0}
+        )
+        assert response.status_code == 422
+
+    async def test_per_page_out_of_range_returns_422(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get(
+            "/api/v1/users/me/audit-log", params={"per_page": 101}
+        )
+        assert response.status_code == 422
+
     async def test_malformed_date_returns_422(
         self, authenticated_client: AsyncClient
     ) -> None:
@@ -295,6 +340,29 @@ class TestListMyIdentityAuditEvents:
 
         ids = [item["id"] for item in response.json()["data"]]
         assert ids == [str(newer.id), str(older.id)]
+
+    async def test_self_event_exact_item_shape(
+        self,
+        authenticated_client: AsyncClient,
+        authenticated_user: User,
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=authenticated_user.id
+        )
+
+        response = await authenticated_client.get("/api/v1/users/me/audit-log")
+
+        item = response.json()["data"][0]
+        assert set(item.keys()) == {
+            "id",
+            "event_type",
+            "old_value",
+            "new_value",
+            "detail",
+            "created_at",
+            "actor",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +521,7 @@ class TestListIdentityAuditEvents:
         assert response.json()["meta"]["total"] == 1
         assert response.json()["data"][0]["actor"] is None
 
-    async def test_target_user_filter(
+    async def test_target_user_filter_by_username(
         self,
         admin_client: AsyncClient,
         user_factory: Callable[..., Awaitable[User]],
@@ -471,6 +539,28 @@ class TestListIdentityAuditEvents:
         response = await admin_client.get(
             "/api/v1/admin/identity/audit-log",
             params={"target_user": "filtertargetadmin"},
+        )
+
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_target_user_filter_by_uuid(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        other_target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id
+        )
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=other_target.id
+        )
+
+        response = await admin_client.get(
+            "/api/v1/admin/identity/audit-log",
+            params={"target_user": str(target.id)},
         )
 
         assert response.json()["meta"]["total"] == 1
@@ -493,6 +583,20 @@ class TestListIdentityAuditEvents:
         )
         assert response.status_code == 200
         assert response.json()["meta"]["total"] == 0
+
+    async def test_page_below_one_returns_422(self, admin_client: AsyncClient) -> None:
+        response = await admin_client.get(
+            "/api/v1/admin/identity/audit-log", params={"page": 0}
+        )
+        assert response.status_code == 422
+
+    async def test_per_page_out_of_range_returns_422(
+        self, admin_client: AsyncClient
+    ) -> None:
+        response = await admin_client.get(
+            "/api/v1/admin/identity/audit-log", params={"per_page": 101}
+        )
+        assert response.status_code == 422
 
     async def test_malformed_date_returns_422(self, admin_client: AsyncClient) -> None:
         response = await admin_client.get(
@@ -551,6 +655,35 @@ class TestListIdentityAuditEvents:
 
         ids = [item["id"] for item in response.json()["data"]]
         assert ids == [str(newer.id), str(older.id)]
+
+    async def test_admin_event_exact_item_shape(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="role_added",
+            user_id=actor.id,
+            target_user_id=target.id,
+            new_value="admin",
+        )
+
+        response = await admin_client.get("/api/v1/admin/identity/audit-log")
+
+        item = response.json()["data"][0]
+        assert set(item.keys()) == {
+            "id",
+            "event_type",
+            "old_value",
+            "new_value",
+            "detail",
+            "created_at",
+            "actor",
+            "target_user",
+        }
 
     async def test_no_mutation_methods_are_exposed(
         self, admin_client: AsyncClient

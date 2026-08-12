@@ -230,7 +230,7 @@ When `sort_by` references a field with domain-defined ordinal semantics
 
 `None` is the resolved severity label for CVSS score 0.0 (rank 0 in the
 semantic ordering). `NULL` (severity not yet resolved) is not part of the
-ranking — NULL values sort last regardless of sort direction.
+ranking — NULL values sort last (see Nullable Sort Field Ordering below).
 
 Endpoints that support sorting by semantic fields MUST note this in
 their query parameter specification: "semantic ordering (see Sorting)".
@@ -264,6 +264,15 @@ implementation-level concern — the `id` tiebreaker is NOT exposed as a
 client-visible query parameter and is not documented in per-endpoint
 query parameter tables. Per-endpoint specifications reference this
 cross-cutting rule instead of repeating the secondary sort detail.
+
+#### Nullable Sort Field Ordering
+
+When `sort_by` references a nullable column, rows with `NULL` in that
+column sort last regardless of `sort_order`. This ensures that missing
+data never displaces meaningful values at the top of a result set,
+independent of whether the client requested ascending or descending
+order. Per-endpoint specifications reference this rule instead of
+restating it.
 
 ### Request Tracing
 
@@ -696,16 +705,19 @@ relationships.
 
 When a response payload includes a reference to a user (e.g., `actor`,
 `assignee`, `target_user`, `created_by`), it is serialized as an object
-with `id`, `username`, `full_name`, and `active` — populated via JOIN to
-the **current** User record. These values reflect the user's current
-profile data, not a historical snapshot at the time of the event or
-action.
+with `id`, `username`, `full_name` (nullable), and `active` — populated
+via JOIN to the **current** User record. These values reflect the
+user's current profile data, not a historical snapshot at the time of
+the event or action.
 
 Historical values, where relevant, are preserved in dedicated fields of
 the owning entity (e.g., `old_value` / `new_value` in audit events).
 The `id` (UUID) is the stable, immutable identifier; `username`,
 `full_name`, and `active` are display conveniences that may change over
-time (e.g., via external sync or deactivation).
+time (e.g., via external sync or deactivation). The `full_name` field
+is nullable — it is returned as `null` when the user has no display
+name set, with no substitution of `username` or any other fallback
+value.
 
 Users are never physically deleted from the database — all foreign keys
 referencing the User table use `ON DELETE RESTRICT`. Deactivated users
@@ -713,7 +725,9 @@ referencing the User table use `ON DELETE RESTRICT`. Deactivated users
 `full_name`, `active`) populated from current data. Consequently, a user
 reference object is never null or partial when `user_id` is non-null — if
 a `user_id` foreign key is present, the referenced user record is
-guaranteed to exist and the serialized object will always be complete.
+guaranteed to exist and the serialized object will always be complete
+(`full_name` may itself be `null`, but the object's presence and its
+other fields are always populated).
 
 This convention applies to:
 

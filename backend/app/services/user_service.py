@@ -9,6 +9,8 @@ provide password reset and lockout-counter clearing. `update_roles()`,
 scope and are added when their owning work item is implemented.
 `resolve_user_identifier()` and `get_user_roles()` predate this piece
 (P2-06) and back the shared authentication/authorization dependencies.
+`list_users()` and `get_user()` (P2-10) provide the paginated directory
+and full profile reads.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
 Completeness): every mutating function in this module participates in the

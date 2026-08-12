@@ -1189,7 +1189,7 @@ bugowner matching.
 | id               | UUID        | PK                       | Internal identifier              |
 | username         | VARCHAR(64)  | UNIQUE, NOT NULL         | Login username. Updated by external sync if changed at the provider |
 | email            | VARCHAR(255) | UNIQUE, NOT NULL         | Email address (stored as lowercase) |
-| full_name        | VARCHAR(255) |                          | Display name                     |
+| full_name        | VARCHAR(255) | nullable                 | Display name                     |
 | active           | BOOLEAN     | NOT NULL, DEFAULT true   | Whether the account is active. For external users, synced from the identity provider |
 | password_hash    | VARCHAR(72)  | nullable                 | bcrypt hash of password (with SHA-256 pre-hash). NULL for external users. See `docs/features/identity/local-authentication.md` |
 | external_id      | UUID        | UNIQUE, nullable         | Stable external identifier from the identity provider (immutable after creation). Used as the matching key during external sync. NULL for local users |

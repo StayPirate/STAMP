@@ -474,6 +474,3 @@ class TestGetCurrentUserProfile:
         response = await client.get("/api/v1/users/me")
 
         assert response.status_code == 401
-
-        response = await client.get("/api/v1/users/me", params={})
-        assert response.status_code == 401

@@ -2,11 +2,8 @@
 
 See `docs/data-model.md` (IdentityAuditEvent) and
 `docs/features/identity/identity-audit-log.md` (Data Model) for the
-full specification. This model intentionally implements only the
-persistence root and `IdentityAuditLog.log_event()` validation: no
-producer identity mutation and no identity audit API endpoint are in
-scope for this piece (see `docs/drafts/implementation-plan.md`,
-P2-02).
+full specification. This model implements the persistence root;
+`IdentityAuditLog.log_event()` handles validation and write.
 """
 
 from __future__ import annotations
@@ -53,12 +50,12 @@ class IdentityAuditEvent(Base, AuditEventMixin):
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
-    # Read-only convenience relationships for future API consumers
-    # (e.g., P2-10). Deliberately unidirectional and NOT back-populated:
-    # User gets no reverse collection for either FK, mirroring
-    # ApiKey.revoking_user. `viewonly=True` because this model is
-    # append-only and these relationships must never be used to persist
-    # changes through ORM cascade.
+    # Read-only convenience relationships for API consumers. Deliberately
+    # unidirectional and NOT back-populated: User gets no reverse
+    # collection for either FK, mirroring ApiKey.revoking_user.
+    # `viewonly=True` because this model is append-only and these
+    # relationships must never be used to persist changes through ORM
+    # cascade.
     actor: Mapped[User | None] = relationship(
         "User", foreign_keys="IdentityAuditEvent.user_id", viewonly=True
     )
