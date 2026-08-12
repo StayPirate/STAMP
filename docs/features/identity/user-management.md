@@ -321,40 +321,65 @@ sentinel manage-user set-password \
   --username <username>
 ```
 
-The new password is collected interactively via a hidden prompt (input is
-not echoed to the terminal, like `sudo`). The prompt asks for the
-password twice for confirmation. If the two entries do not match, the
-command exits with error: `"Error: Passwords do not match."` (exit
-code 1). This command cannot be used non-interactively — a TTY is
-required. If no TTY is detected, prints to stderr `Error: This command
-requires an interactive terminal (password input).` and exits with code 1.
+**Behavior** (in this order):
 
-This command is only valid for local users (`external_id = NULL`). The
-username is normalized (trim whitespace, lowercase) before lookup. If
-invoked on an external user, exits with error:
-`"Error: Cannot set password for external user '{username}'. External users
-authenticate via SSO."` (exit code 1)
+1. Validate the username format (see `docs/conventions.md`, Username
+   Format), trimming whitespace and lowercasing. If invalid, exit with
+   error: `"Error: Invalid username '{value}'. Username must be 1-64
+   characters, start with a letter, and contain only lowercase letters,
+   numbers, dots, hyphens, and underscores."` (exit code 1) — before the
+   TTY check and before any database access.
+2. If no TTY is detected, print to stderr `Error: This command requires an
+   interactive terminal (password input).` and exit with code 1 — before
+   any database access.
+3. Open a read-only session and resolve the user through
+   `user_service.get_user()` using the normalized username. If not found,
+   exit with error: `"Error: User '{username}' not found."` (exit code 1).
+4. If the resolved user is an external user (`external_id IS NOT NULL`),
+   exit with error: `"Error: Cannot set password for external user
+   '{username}'. External users authenticate via SSO."` (exit code 1).
+   This command is only valid for local users; it operates on both active
+   and inactive local users — setting a password on an inactive user
+   prepares credentials for reactivation, but the user cannot log in until
+   reactivated.
+5. Close the read-only session before prompting — an interactive prompt
+   MUST NOT run while a database session is open (see
+   `docs/features/platform/cli-infrastructure.md`, Database Session
+   Management).
+6. Collect the new password interactively via a hidden prompt (input not
+   echoed to the terminal, like `sudo`), asking twice for confirmation. If
+   the two entries do not match, exit with error: `"Error: Passwords do
+   not match."` (exit code 1).
+7. Validate the password length (16-128 characters). If it violates the
+   policy, exit with the same exact messages `create` uses for each
+   boundary: `"Error: Password must be at least 16 characters."` or
+   `"Error: Password must be at most 128 characters."` (exit code 1).
+8. Open a new session and delegate to `user_service.reset_password()` with
+   `acting_user_id = None`. The service re-validates the user-not-found and
+   external-user guards atomically against the locked row — a user deleted
+   or converted between steps 3-4 and this step surfaces the same exact
+   messages as steps 3-4, since `reset_password()` raises the same
+   `UserNotFoundError`/`ExternalUserPasswordError` exceptions. Commit
+   exactly once after the service call succeeds; roll back on any
+   exception or interruption before commit.
+9. After the commit succeeds, execute the session-cache purge and login
+   lockout-counter clear from the returned `PasswordResetResult`, in that
+   order, inside the same async workflow. Redis failure follows the
+   best-effort behavior in `user-service.md` and does not turn a committed
+   password reset into a command failure.
+10. Print to stdout: `"Password updated for user '{username}'. All active
+    sessions invalidated."`
 
-This command operates on both active and inactive local users. Setting a
-password on an inactive user prepares credentials for reactivation — the
-user will not be able to log in until reactivated.
-
-The command delegates to `user_service.reset_password()` with
-`acting_user_id = None` inside the command's single async workflow. After the
-workflow commits, it executes the session-cache purge and login lockout-counter
-clear from the returned `PasswordResetResult`. Redis failure follows the
-best-effort behavior in `user-service.md` and does not turn a committed password
-reset into a command failure.
-
-On success, prints to stdout:
-`"Password updated for user '{username}'. All active sessions invalidated."`
+The prompt labels are the CLI infrastructure's shared defaults
+(`docs/features/platform/cli-infrastructure.md`, Interactive Input
+Helpers): `Password` and `Confirm password`.
 
 **Idempotency**: Not idempotent (interactive). Each invocation collects a
 new password interactively; the operation inherently changes state.
 
-**Exit codes**: 0 on success, 1 on validation error (user not found,
-external user, passwords don't match, password policy violation), 2 on system
-error (database unreachable).
+**Exit codes**: 0 on success, 1 on validation error (invalid username
+format, user not found, external user, passwords don't match, password
+policy violation), 2 on system error (database unreachable).
 
 **Output channels**: confirmation message to stdout. All `"Error: ..."`
 messages to stderr.
@@ -377,7 +402,12 @@ sentinel manage-user unlock \
 
 **Behavior**:
 
-1. Normalize the username (trim whitespace, lowercase)
+1. Validate the username format (see `docs/conventions.md`, Username
+   Format), trimming whitespace and lowercasing. If invalid, exit with
+   error: `"Error: Invalid username '{value}'. Username must be 1-64
+   characters, start with a letter, and contain only lowercase letters,
+   numbers, dots, hyphens, and underscores."` (exit code 1) — before any
+   database access.
 2. Resolve the user through `user_service.get_user()` using the normalized
    username — if not
    found, exit with error:
@@ -405,7 +435,8 @@ locked), it succeeds silently.
 succeeds with a no-op and exits with code 0.
 
 **Exit codes**: 0 on success (including no-op), 1 on validation error
-(user not found), 2 on system error (database unreachable).
+(invalid username format, user not found), 2 on system error (database
+unreachable).
 
 **Output channels**: confirmation to stdout. `"Warning: ..."` messages
 to stderr. `"Error: ..."` messages to stderr.
@@ -1206,5 +1237,7 @@ handling is required.
   update, deactivate, reactivate
 - `docs/features/identity/rbac.md` — role definitions and permission model
 - `docs/features/identity/identity-provisioning.md` — external sync (manages external users)
+- `docs/features/platform/cli-infrastructure.md` — CLI entry point, session
+  management, interactive input helpers
 - `docs/api-spec.md` — global API conventions (envelope format, error codes,
   pagination, shared 422 responses)

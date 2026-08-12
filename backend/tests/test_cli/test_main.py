@@ -20,6 +20,7 @@ from click.testing import CliRunner, Result
 from redis.exceptions import RedisError
 from sqlalchemy.exc import OperationalError
 
+import app.cli.api_key as api_key_module
 import app.cli.manage_user as manage_user_module
 from app.cli import cli, main
 from app.cli._runtime import _load_settings, bootstrap
@@ -49,6 +50,7 @@ def _forbid_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("bootstrap() must not run for --help/--version")
 
     monkeypatch.setattr(manage_user_module, "bootstrap", _fail)
+    monkeypatch.setattr(api_key_module, "bootstrap", _fail)
 
 
 @pytest.mark.unit
@@ -59,6 +61,8 @@ def test_root_help_exits_zero_without_bootstrap(
     result = _invoke(["--help"])
     assert result.exit_code == 0
     assert "Sentinel command-line interface" in result.output
+    assert "manage-user" in result.output
+    assert "api-key" in result.output
 
 
 @pytest.mark.unit
@@ -81,15 +85,42 @@ def test_group_help_exits_zero_without_bootstrap(
     assert "create" in result.output
     assert "list" in result.output
     assert "show" in result.output
+    assert "set-password" in result.output
+    assert "unlock" in result.output
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("command", ["create", "list", "show"])
+def test_api_key_group_help_exits_zero_without_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["api-key", "--help"])
+    assert result.exit_code == 0
+    assert "list" in result.output
+    assert "revoke" in result.output
+    assert "create" not in result.output
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "command", ["create", "list", "show", "set-password", "unlock"]
+)
 def test_command_help_exits_zero_without_bootstrap(
     monkeypatch: pytest.MonkeyPatch, command: str
 ) -> None:
     _forbid_bootstrap(monkeypatch)
     result = _invoke(["manage-user", command, "--help"])
+    assert result.exit_code == 0
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ["list", "revoke"])
+def test_api_key_command_help_exits_zero_without_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["api-key", command, "--help"])
     assert result.exit_code == 0
     assert "Traceback" not in result.output
 
