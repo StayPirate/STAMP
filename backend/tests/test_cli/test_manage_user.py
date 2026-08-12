@@ -23,20 +23,41 @@ from uuid import UUID, uuid4
 
 import click
 import pytest
+import redis.asyncio as redis_asyncio
 from click.testing import CliRunner, Result
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.cli.manage_user as manage_user_module
 from app.cli import cli
 from app.core.enums import IdentityAuditEventType, Role
+from app.core.passwords import verify_password
 from app.core.permissions import role_to_wire
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.session import Session
 from app.models.user import User
 from app.models.user_role import UserRole
+from app.services import local_auth_service, session_service
+from tests.support.redis import redis_url_from_client
 
 _STRONG_PASSWORD = "a-very-strong-password-1"
 _PASSWORD_INPUT = f"{_STRONG_PASSWORD}\n{_STRONG_PASSWORD}\n"
+_NEW_STRONG_PASSWORD = "a-new-very-strong-password-2"
+_NEW_PASSWORD_INPUT = f"{_NEW_STRONG_PASSWORD}\n{_NEW_STRONG_PASSWORD}\n"
+
+
+class _FailingRedisClient:
+    """A Redis client double whose relevant methods always raise
+    `RedisError` — mirrors `test_local_auth_service.py`'s
+    `_FailingRedisClient` (see docs/features/platform/testing-strategy.md,
+    Redis Strategy)."""
+
+    async def delete(self, key: str) -> None:
+        raise RedisError("simulated outage")
+
+    async def aclose(self) -> None:
+        return None
 
 
 def _invoke(args: list[str], input: str | None = None, **extra: Any) -> Result:
@@ -121,6 +142,72 @@ async def _create_user_directly(
             db.add(UserRole(user_id=user.id, role=role.value, group_name=group_name))
         await db.commit()
         return user
+
+
+async def _create_session_directly(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    user_id: UUID,
+    is_active: bool = True,
+) -> Session:
+    """Insert and commit a `Session` row directly through
+    `cli_session_factory`, bypassing `session_service` entirely — used to
+    set up fixtures for `set-password` session-invalidation tests."""
+    async with factory() as db:
+        session = Session(
+            user_id=user_id,
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            is_active=is_active,
+        )
+        db.add(session)
+        await db.commit()
+        return session
+
+
+async def _fetch_session_is_active(
+    factory: async_sessionmaker[AsyncSession], session_id: UUID
+) -> bool:
+    async with factory() as db:
+        result: bool | None = await db.scalar(
+            select(Session.is_active).where(Session.id == session_id)
+        )
+        assert result is not None
+        return result
+
+
+async def _fetch_password_reset_events(
+    factory: async_sessionmaker[AsyncSession], target_user_id: UUID
+) -> list[IdentityAuditEvent]:
+    async with factory() as db:
+        result = await db.execute(
+            select(IdentityAuditEvent).where(
+                IdentityAuditEvent.event_type
+                == IdentityAuditEventType.PASSWORD_RESET.value,
+                IdentityAuditEvent.target_user_id == target_user_id,
+            )
+        )
+        return list(result.scalars().all())
+
+
+async def _redis_set_key(url: str, key: str, value: str) -> None:
+    """Set one Redis key via a client created and closed entirely within
+    this call's own event loop — never shared across `asyncio.run()`
+    boundaries (see docs/features/platform/testing-strategy.md, Redis
+    Strategy)."""
+    client = redis_asyncio.Redis.from_url(url, decode_responses=True)
+    try:
+        await client.set(key, value)
+    finally:
+        await client.aclose()
+
+
+async def _redis_get_key(url: str, key: str) -> str | None:
+    client = redis_asyncio.Redis.from_url(url, decode_responses=True)
+    try:
+        result: str | None = await client.get(key)
+        return result
+    finally:
+        await client.aclose()
 
 
 # ---------------------------------------------------------------------------
@@ -1148,3 +1235,697 @@ def test_show_renders_roles_manager_and_absent_values(
     )
     assert "Last login:   —" in output
     assert f"Manager:      {manager_username}" in output
+
+
+# ---------------------------------------------------------------------------
+# Integration: set-password
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_set_password_non_tty_rejected_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    monkeypatch.setattr(manage_user_module, "is_interactive_terminal", lambda: False)
+
+    result = _invoke(["manage-user", "set-password", "--username", "someuser"])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == (
+        "Error: This command requires an interactive terminal (password input)."
+    )
+
+
+@pytest.mark.integration
+def test_set_password_user_not_found_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+
+    result = _invoke(["manage-user", "set-password", "--username", "doesnotexistatall"])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Error: User 'doesnotexistatall' not found."
+
+
+@pytest.mark.integration
+def test_set_password_external_user_rejected_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdexternal"
+    cleanup_users_by_username(username)
+    asyncio.run(
+        _create_user_directly(
+            cli_session_factory, username=username, external_id=uuid4()
+        )
+    )
+
+    result = _invoke(["manage-user", "set-password", "--username", username])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == (
+        f"Error: Cannot set password for external user '{username}'. "
+        "External users authenticate via SSO."
+    )
+
+
+@pytest.mark.integration
+def test_set_password_mismatch_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdmismatch"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=f"{_STRONG_PASSWORD}\na-different-password-2\n",
+    )
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Error: Passwords do not match."
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.password_hash == user.password_hash
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("password", "expected_message"),
+    [
+        ("short-pw-1", "Error: Password must be at least 16 characters."),
+        ("x" * 129, "Error: Password must be at most 128 characters."),
+    ],
+)
+def test_set_password_length_boundaries_exit_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    password: str,
+    expected_message: str,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdlength"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=f"{password}\n{password}\n",
+    )
+    assert result.exit_code == 1
+    assert result.stderr.strip() == expected_message
+
+
+@pytest.mark.integration
+def test_set_password_success_active_user(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdsuccess"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+    old_hash = user.password_hash
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        result.stdout.strip().splitlines()[-1]
+        == f"Password updated for user '{username}'. All active sessions invalidated."
+    )
+    assert _NEW_STRONG_PASSWORD not in result.output
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.password_hash != old_hash
+    assert refreshed.password_hash is not None
+    assert verify_password(_NEW_STRONG_PASSWORD, refreshed.password_hash)
+
+    log_text = "\n".join(record.getMessage() for record in caplog.records)
+    assert _NEW_STRONG_PASSWORD not in log_text
+    assert refreshed.password_hash not in log_text
+
+
+@pytest.mark.integration
+def test_set_password_inactive_user_succeeds_and_stays_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdinactive"
+    cleanup_users_by_username(username)
+    asyncio.run(
+        _create_user_directly(cli_session_factory, username=username, active=False)
+    )
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.active is False
+    assert refreshed.password_hash is not None
+    assert verify_password(_NEW_STRONG_PASSWORD, refreshed.password_hash)
+
+
+@pytest.mark.integration
+def test_set_password_invalidates_only_active_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdsessions"
+    other_username = "clisetpwdsessionsother"
+    cleanup_users_by_username(username, other_username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+    other_user = asyncio.run(
+        _create_user_directly(cli_session_factory, username=other_username)
+    )
+
+    active_session = asyncio.run(
+        _create_session_directly(cli_session_factory, user_id=user.id, is_active=True)
+    )
+    already_inactive_session = asyncio.run(
+        _create_session_directly(cli_session_factory, user_id=user.id, is_active=False)
+    )
+    other_user_session = asyncio.run(
+        _create_session_directly(
+            cli_session_factory, user_id=other_user.id, is_active=True
+        )
+    )
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+
+    assert (
+        asyncio.run(_fetch_session_is_active(cli_session_factory, active_session.id))
+        is False
+    )
+    assert (
+        asyncio.run(
+            _fetch_session_is_active(cli_session_factory, already_inactive_session.id)
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            _fetch_session_is_active(cli_session_factory, other_user_session.id)
+        )
+        is True
+    )
+
+
+@pytest.mark.integration
+def test_set_password_creates_exact_audit_event(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdaudit"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+
+    events = asyncio.run(_fetch_password_reset_events(cli_session_factory, user.id))
+    assert len(events) == 1
+    event = events[0]
+    assert event.user_id is None
+    assert event.target_user_id == user.id
+    assert event.old_value is None
+    assert event.new_value is None
+    assert event.detail is None
+
+
+@pytest.mark.integration
+def test_set_password_audit_failure_rolls_back_password_and_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdauditfail"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+    old_hash = user.password_hash
+    active_session = asyncio.run(
+        _create_session_directly(cli_session_factory, user_id=user.id, is_active=True)
+    )
+
+    from app.services import identity_audit_log as audit_module
+
+    original_log_event = audit_module.IdentityAuditLog.log_event
+    call_count = {"n": 0}
+
+    async def _flaky_log_event(*args: Any, **kwargs: Any) -> Any:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("simulated audit failure")
+        return await original_log_event(*args, **kwargs)
+
+    monkeypatch.setattr(audit_module.IdentityAuditLog, "log_event", _flaky_log_event)
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code != 0
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.password_hash == old_hash
+    assert (
+        asyncio.run(_fetch_session_is_active(cli_session_factory, active_session.id))
+        is True
+    )
+    assert asyncio.run(_fetch_password_reset_events(cli_session_factory, user.id)) == []
+
+
+@pytest.mark.integration
+def test_set_password_interrupted_before_commit_rolls_back(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdinterrupt"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+    old_hash = user.password_hash
+
+    from app.services import user_service as user_service_module
+
+    original_reset_password = user_service_module.reset_password
+
+    async def _reset_then_interrupt(*args: Any, **kwargs: Any) -> Any:
+        await original_reset_password(*args, **kwargs)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(user_service_module, "reset_password", _reset_then_interrupt)
+
+    with pytest.raises(click.Abort):
+        _invoke(
+            ["manage-user", "set-password", "--username", username],
+            input=_NEW_PASSWORD_INPUT,
+            catch_exceptions=False,
+        )
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.password_hash == old_hash
+    assert asyncio.run(_fetch_password_reset_events(cli_session_factory, user.id)) == []
+
+
+@pytest.mark.integration
+def test_set_password_commits_exactly_once_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdcommitcount"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    commit_calls = {"n": 0}
+    original_commit = AsyncSession.commit
+
+    async def _counting_commit(self: AsyncSession) -> None:
+        commit_calls["n"] += 1
+        await original_commit(self)
+
+    monkeypatch.setattr(AsyncSession, "commit", _counting_commit)
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+
+    assert result.exit_code == 0, result.output
+    assert commit_calls["n"] == 1
+
+
+@pytest.mark.integration
+def test_set_password_redis_failure_is_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    """A `RedisError` during the post-commit session-cache purge or
+    lockout-counter clear does not turn an already-committed password
+    reset into a command failure — see `user-service.md`'s best-effort
+    contract."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdredisfail"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    monkeypatch.setattr(
+        session_service, "_new_redis_client", lambda: _FailingRedisClient()
+    )
+    monkeypatch.setattr(
+        local_auth_service, "_new_redis_client", lambda: _FailingRedisClient()
+    )
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+
+    refreshed = asyncio.run(_fetch_user(cli_session_factory, username))
+    assert refreshed is not None
+    assert refreshed.password_hash is not None
+    assert verify_password(_NEW_STRONG_PASSWORD, refreshed.password_hash)
+
+
+@pytest.mark.integration
+def test_set_password_redis_success_purges_session_and_lockout(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    redis_client: redis_asyncio.Redis,
+) -> None:
+    """Uses the `redis_client` fixture only for its URL and its
+    `get_session_redis_url`/`get_lockout_redis_url` monkeypatch side
+    effects — never awaited directly from this sync test's own
+    `asyncio.run()` calls, which each create and close their own client
+    (see `_redis_set_key`/`_redis_get_key`), consistent with never
+    sharing a live async client across event loops."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    redis_url = redis_url_from_client(redis_client)
+    username = "clisetpwdredissuccess"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+    active_session = asyncio.run(
+        _create_session_directly(cli_session_factory, user_id=user.id, is_active=True)
+    )
+
+    liveness_key = f"session_liveness:{active_session.id}"
+    lockout_key = f"login_attempts:{username}"
+    asyncio.run(_redis_set_key(redis_url, liveness_key, "1"))
+    asyncio.run(_redis_set_key(redis_url, lockout_key, "3"))
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+    assert result.exit_code == 0, result.output
+
+    assert asyncio.run(_redis_get_key(redis_url, liveness_key)) is None
+    assert asyncio.run(_redis_get_key(redis_url, lockout_key)) is None
+
+
+# ---------------------------------------------------------------------------
+# Integration: unlock
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_unlock_user_not_found_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    result = _invoke(["manage-user", "unlock", "--username", "doesnotexistatall"])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == "Error: User 'doesnotexistatall' not found."
+
+
+@pytest.mark.integration
+def test_unlock_normalizes_username_before_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlocknormalize"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(["manage-user", "unlock", "--username", f"  {username.upper()}  "])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_active_local_user_no_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlockactive"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_inactive_user_warns_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlockinactive"
+    cleanup_users_by_username(username)
+    asyncio.run(
+        _create_user_directly(cli_session_factory, username=username, active=False)
+    )
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == (
+        f"Warning: User '{username}' is inactive. Unlock has no practical "
+        "effect until the user is reactivated."
+    )
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_external_user_warns_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlockexternal"
+    cleanup_users_by_username(username)
+    asyncio.run(
+        _create_user_directly(
+            cli_session_factory, username=username, external_id=uuid4()
+        )
+    )
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert result.stderr.strip() == (
+        f"Warning: User '{username}' is an external user. Local login "
+        "lockout does not apply to SSO authentication."
+    )
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_inactive_external_user_both_warnings(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlockbothwarn"
+    cleanup_users_by_username(username)
+    asyncio.run(
+        _create_user_directly(
+            cli_session_factory,
+            username=username,
+            active=False,
+            external_id=uuid4(),
+        )
+    )
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    stderr_lines = result.stderr.strip().splitlines()
+    assert stderr_lines == [
+        f"Warning: User '{username}' is inactive. Unlock has no practical "
+        "effect until the user is reactivated.",
+        f"Warning: User '{username}' is an external user. Local login "
+        "lockout does not apply to SSO authentication.",
+    ]
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_deletes_existing_lockout_key(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    redis_client: redis_asyncio.Redis,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    redis_url = redis_url_from_client(redis_client)
+    username = "cliunlockdeleteskey"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    lockout_key = f"login_attempts:{username}"
+    asyncio.run(_redis_set_key(redis_url, lockout_key, "3"))
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert asyncio.run(_redis_get_key(redis_url, lockout_key)) is None
+
+
+@pytest.mark.integration
+def test_unlock_zero_counter_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    redis_client: redis_asyncio.Redis,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    redis_url = redis_url_from_client(redis_client)
+    username = "cliunlockzerocounter"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    lockout_key = f"login_attempts:{username}"
+    asyncio.run(_redis_set_key(redis_url, lockout_key, "0"))
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert asyncio.run(_redis_get_key(redis_url, lockout_key)) is None
+
+
+@pytest.mark.integration
+def test_unlock_missing_key_is_idempotent_noop(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+    redis_client: redis_asyncio.Redis,
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlocknokey"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_redis_failure_still_exits_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlockredisfail"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    monkeypatch.setattr(
+        local_auth_service, "_new_redis_client", lambda: _FailingRedisClient()
+    )
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == f"Unlocked user '{username}'."
+
+
+@pytest.mark.integration
+def test_unlock_creates_no_audit_event(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlocknoaudit"
+    cleanup_users_by_username(username)
+    user = asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+
+    async def _fetch_all_events() -> list[IdentityAuditEvent]:
+        async with cli_session_factory() as db:
+            events = await db.execute(
+                select(IdentityAuditEvent).where(
+                    IdentityAuditEvent.target_user_id == user.id
+                )
+            )
+            return list(events.scalars().all())
+
+    assert asyncio.run(_fetch_all_events()) == []
+
+
+@pytest.mark.integration
+def test_unlock_issues_no_database_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    username = "cliunlocknocommit"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    original_commit = AsyncSession.commit
+
+    async def _fail_commit(self: AsyncSession) -> None:
+        raise AssertionError("unlock must not commit")
+
+    monkeypatch.setattr(AsyncSession, "commit", _fail_commit)
+
+    result = _invoke(["manage-user", "unlock", "--username", username])
+    assert result.exit_code == 0, result.output
+
+    # Restore explicitly before the `cleanup_users_by_username` fixture's
+    # own teardown runs its own real commit — fixture teardown order is
+    # not guaranteed to happen after monkeypatch's own automatic undo.
+    monkeypatch.setattr(AsyncSession, "commit", original_commit)

@@ -357,10 +357,18 @@ by `created_at` descending, then `id` descending. Inactive users are accepted;
 the command reports retained keys regardless of owner lifecycle state.
 
 **Output:** a fixed-width table on stdout with columns `ID`, `PREFIX`,
-`NAME`, `STATUS`, `CREATED AT`, `LAST USED AT`, and `EXPIRES AT`. UUIDs are
-included so the operator can pass a selected value to `api-key revoke`.
-Timestamps use the CLI UTC format. A user with no keys produces the header and
-no data rows. NULL `LAST USED AT` and `EXPIRES AT` values display as `—`.
+`NAME`, `STATUS`, `CREATED AT`, `LAST USED AT`, and `EXPIRES AT`, in that
+order. UUIDs are included so the operator can pass a selected value to
+`api-key revoke`. Each column's width is the maximum length across its
+header and every rendered value in the result set (no truncation, no
+wrapping); columns are separated by two spaces and each row's trailing
+spaces are stripped, matching the rendering already used by `manage-user
+list`/`show` (`docs/conventions.md`, Human-Readable Format). Timestamps
+use the exact format `YYYY-MM-DD HH:MM:SS UTC` (`strftime("%Y-%m-%d
+%H:%M:%S UTC")` after converting to UTC), with no sub-second precision. A
+user with no keys produces the header and no data rows — no alternative
+"no keys found" message. NULL `LAST USED AT` and `EXPIRES AT` values
+display as `—`.
 
 **Errors and exit codes:**
 

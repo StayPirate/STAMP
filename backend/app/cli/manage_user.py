@@ -1,4 +1,5 @@
-"""`sentinel manage-user` command group: create, list, and show.
+"""`sentinel manage-user` command group: create, list, show, set-password,
+and unlock.
 
 See `docs/features/identity/user-management.md` for the authoritative
 per-command contract (parameters, exact messages, exit codes) this module
@@ -437,3 +438,184 @@ def _render_user_detail(user: User) -> str:
         ("Manager:", manager),
     )
     return "\n".join(f"{label:<{_SHOW_LABEL_WIDTH}}{value}" for label, value in fields)
+
+
+# ---------------------------------------------------------------------------
+# set-password
+# ---------------------------------------------------------------------------
+
+
+def _external_user_password_error_message(username: str) -> str:
+    """Exact error text shared by the pre-check and the mutating call —
+    both `set-password`'s own guard and a re-validation failure inside
+    `user_service.reset_password()` produce this identical message."""
+    return (
+        f"Error: Cannot set password for external user '{username}'. "
+        "External users authenticate via SSO."
+    )
+
+
+@manage_user_group.command("set-password")
+@click.option("--username", required=True)
+def set_password(username: str) -> None:
+    """Set or reset the password for a local user.
+
+    See `docs/features/identity/user-management.md`
+    (`sentinel manage-user set-password`) for the full behavioral contract.
+    """
+    bootstrap()
+
+    normalized_username = _normalize_username_or_exit(username)
+
+    if not is_interactive_terminal():
+        click.echo(
+            "Error: This command requires an interactive terminal (password input).",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    asyncio.run(_set_password_flow(get_session_factory(), username=normalized_username))
+
+
+async def _set_password_flow(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    username: str,
+) -> None:
+    """Resolve the user, prompt for a new password, and delegate the reset.
+
+    Single async workflow (`docs/features/platform/cli-infrastructure.md`,
+    Database Session Management): a read-only session resolves the user
+    and rejects an external target before the hidden password prompt runs
+    — an interactive prompt MUST NOT run while a database session is
+    open. A second session then delegates the mutation to
+    `user_service.reset_password()`, committing exactly once on success
+    and rolling back on any exception or interruption before commit.
+    `UserNotFoundError`/`ExternalUserPasswordError` are also caught around
+    the mutating call because `reset_password()` re-validates both guards
+    atomically against the locked row — a user deleted or converted to
+    external between the pre-check and the mutation surfaces the exact
+    same messages as the pre-check. After the commit succeeds, runs the
+    session-cache purge and login lockout-counter clear from the returned
+    `PasswordResetResult`, in that order, inside this same workflow.
+    """
+    from app.core.exceptions import UserNotFoundError
+    from app.services import local_auth_service, session_service, user_service
+    from app.services.user_service import ExternalUserPasswordError
+
+    async with session_factory() as db:
+        try:
+            user = await user_service.get_user(db, username)
+        except UserNotFoundError:
+            click.echo(f"Error: User '{username}' not found.", err=True)
+            raise SystemExit(1) from None
+        if user.external_id is not None:
+            click.echo(_external_user_password_error_message(username), err=True)
+            raise SystemExit(1)
+
+    password = prompt_password_with_confirmation()
+    if password is None:
+        click.echo("Error: Passwords do not match.", err=True)
+        raise SystemExit(1)
+
+    if len(password) < MIN_PASSWORD_LENGTH:
+        click.echo(
+            f"Error: Password must be at least {MIN_PASSWORD_LENGTH} characters.",
+            err=True,
+        )
+        raise SystemExit(1)
+    if len(password) > MAX_PASSWORD_LENGTH:
+        click.echo(
+            f"Error: Password must be at most {MAX_PASSWORD_LENGTH} characters.",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    async with session_factory() as db:
+        try:
+            result = await user_service.reset_password(
+                db, user.id, password, acting_user_id=None
+            )
+            await db.commit()
+        except UserNotFoundError:
+            await db.rollback()
+            click.echo(f"Error: User '{username}' not found.", err=True)
+            raise SystemExit(1) from None
+        except ExternalUserPasswordError:
+            await db.rollback()
+            click.echo(_external_user_password_error_message(username), err=True)
+            raise SystemExit(1) from None
+        except BaseException:
+            await db.rollback()
+            raise
+
+    await session_service.purge_session_cache(result.invalidated_session_ids)
+    await local_auth_service.clear_login_attempts(result.username)
+
+    click.echo(
+        f"Password updated for user '{username}'. All active sessions invalidated."
+    )
+
+
+# ---------------------------------------------------------------------------
+# unlock
+# ---------------------------------------------------------------------------
+
+
+@manage_user_group.command("unlock")
+@click.option("--username", required=True)
+def unlock(username: str) -> None:
+    """Clear the login lockout counter for a user.
+
+    See `docs/features/identity/user-management.md`
+    (`sentinel manage-user unlock`) for the full behavioral contract.
+    """
+    bootstrap()
+
+    normalized_username = _normalize_username_or_exit(username)
+
+    asyncio.run(_unlock_flow(get_session_factory(), username=normalized_username))
+
+
+async def _unlock_flow(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    username: str,
+) -> None:
+    """Resolve the user, emit independent lifecycle warnings, and delegate
+    to `user_service.unlock_user()`.
+
+    Read-only for PostgreSQL: `unlock_user()` mutates only ephemeral,
+    best-effort Redis state and creates no audit event, so this workflow
+    issues no database commit — see
+    `docs/features/platform/cli-infrastructure.md` (Database Session
+    Management). Both the inactive and external warnings are independent:
+    an inactive external user receives both, and neither aborts the
+    command.
+    """
+    from app.core.exceptions import UserNotFoundError
+    from app.services import user_service
+
+    async with session_factory() as db:
+        try:
+            user = await user_service.get_user(db, username)
+        except UserNotFoundError:
+            click.echo(f"Error: User '{username}' not found.", err=True)
+            raise SystemExit(1) from None
+
+        if not user.active:
+            click.echo(
+                f"Warning: User '{username}' is inactive. Unlock has no "
+                "practical effect until the user is reactivated.",
+                err=True,
+            )
+        if user.external_id is not None:
+            click.echo(
+                f"Warning: User '{username}' is an external user. Local "
+                "login lockout does not apply to SSO authentication.",
+                err=True,
+            )
+
+        await user_service.unlock_user(db, user.id, acting_user_id=None)
+
+    click.echo(f"Unlocked user '{username}'.")

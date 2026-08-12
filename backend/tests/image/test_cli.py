@@ -4,16 +4,22 @@ Verifies — via `compose exec` against the running `api` container — that
 the built image exposes the console script (`sentinel = "app.cli:main"`)
 and the module invocation (`python -m app.cli`), that both reach the
 same command surface, and that the P2-12 bootstrap command group
-(`manage-user create/list/show`) is discoverable. See
-docs/features/platform/testing-strategy.md (Image / Container Smoke
-Testing, Growth Rule) and docs/features/platform/cli-infrastructure.md.
+(`manage-user create/list/show`) plus the P2-13 remaining local identity
+commands (`manage-user set-password/unlock`, `api-key list/revoke`) are
+discoverable. See docs/features/platform/testing-strategy.md (Image /
+Container Smoke Testing, Growth Rule) and
+docs/features/platform/cli-infrastructure.md.
 
 No destructive/interactive invocation is exercised here — creating a
-user requires a TTY and a hidden password prompt, which a
-`compose exec -T` (non-interactive) call cannot supply. The full
-create/list/show behavioral contract is already covered by the
-in-process integration suite (`tests/test_cli/test_manage_user.py`),
-which runs far faster and does not need a running container.
+user or resetting a password requires a TTY and a hidden password
+prompt, which a `compose exec -T` (non-interactive) call cannot supply.
+The full create/list/show/set-password/unlock/api-key behavioral
+contract is already covered by the in-process integration suite
+(`tests/test_cli/test_manage_user.py`, `tests/test_cli/test_api_key.py`),
+which runs far faster and does not need a running container. This suite
+proves command discovery and representative non-destructive paths
+(unknown-user/unknown-key errors, non-TTY rejection) against the actual
+built artifact.
 """
 
 from __future__ import annotations
@@ -91,7 +97,7 @@ def test_console_script_and_module_invocation_are_equivalent(
 def test_manage_user_group_is_discoverable(
     compose_exec: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """`sentinel manage-user --help` lists all three bootstrap commands."""
+    """`sentinel manage-user --help` lists all five subcommands."""
     result = compose_exec("api", "sentinel", "manage-user", "--help")
     assert result.returncode == 0, (
         f"manage-user --help failed (rc={result.returncode}): "
@@ -100,6 +106,8 @@ def test_manage_user_group_is_discoverable(
     assert "create" in result.stdout
     assert "list" in result.stdout
     assert "show" in result.stdout
+    assert "set-password" in result.stdout
+    assert "unlock" in result.stdout
 
 
 @pytest.mark.image
@@ -118,3 +126,151 @@ def test_manage_user_create_help_shows_bootstrap_surface(
     assert "--username" in result.stdout
     assert "--email" in result.stdout
     assert "--role" in result.stdout
+
+
+@pytest.mark.image
+def test_manage_user_set_password_help_shows_username_option(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "manage-user", "set-password", "--help")
+    assert result.returncode == 0, (
+        f"manage-user set-password --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "--username" in result.stdout
+    # No password option exists — the password is always collected via
+    # an interactive hidden prompt, never as a command-line argument.
+    assert "--password" not in result.stdout
+
+
+@pytest.mark.image
+def test_manage_user_set_password_non_tty_rejected(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """`compose exec -T` has no TTY attached to stdin, so the command
+    must reject the invocation before ever reaching the hidden password
+    prompt — proving the built image enforces this guard without
+    performing any mutation."""
+    result = compose_exec(
+        "api", "sentinel", "manage-user", "set-password", "--username", "jdoe"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 (non-TTY), got rc={result.returncode}: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "interactive terminal" in result.stderr
+
+
+@pytest.mark.image
+def test_manage_user_unlock_help_shows_username_option(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "manage-user", "unlock", "--help")
+    assert result.returncode == 0, (
+        f"manage-user unlock --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "--username" in result.stdout
+
+
+@pytest.mark.image
+def test_manage_user_unlock_unknown_user_exits_one(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """A username certain not to exist proves the command reaches the
+    real database and reports the not-found error, with no destructive
+    effect (there is nothing to unlock)."""
+    result = compose_exec(
+        "api",
+        "sentinel",
+        "manage-user",
+        "unlock",
+        "--username",
+        "image-smoke-nonexistent-user",
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 (user not found), got rc={result.returncode}: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "not found" in result.stderr
+
+
+@pytest.mark.image
+def test_api_key_group_is_discoverable(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """`sentinel api-key --help` lists `list` and `revoke` only — no
+    `create` command exists (API keys are self-service only)."""
+    result = compose_exec("api", "sentinel", "api-key", "--help")
+    assert result.returncode == 0, (
+        f"api-key --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "list" in result.stdout
+    assert "revoke" in result.stdout
+    assert "create" not in result.stdout
+
+
+@pytest.mark.image
+def test_api_key_list_help_shows_username_option(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "api-key", "list", "--help")
+    assert result.returncode == 0, (
+        f"api-key list --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "--username" in result.stdout
+
+
+@pytest.mark.image
+def test_api_key_list_unknown_user_exits_one(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec(
+        "api",
+        "sentinel",
+        "api-key",
+        "list",
+        "--username",
+        "image-smoke-nonexistent-user",
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 (user not found), got rc={result.returncode}: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "not found" in result.stderr
+
+
+@pytest.mark.image
+def test_api_key_revoke_help_shows_key_id_option(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "api-key", "revoke", "--help")
+    assert result.returncode == 0, (
+        f"api-key revoke --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "--key-id" in result.stdout
+    assert "--username" not in result.stdout
+
+
+@pytest.mark.image
+def test_api_key_revoke_missing_key_exits_one(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """A syntactically valid but certainly-nonexistent UUID proves the
+    command reaches the real database without performing any mutation."""
+    result = compose_exec(
+        "api",
+        "sentinel",
+        "api-key",
+        "revoke",
+        "--key-id",
+        "00000000-0000-0000-0000-000000000000",
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 (key not found), got rc={result.returncode}: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "not found" in result.stderr

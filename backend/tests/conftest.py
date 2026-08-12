@@ -327,14 +327,20 @@ def cleanup_users_by_username(
 ) -> Iterator[Callable[..., None]]:
     """Return a function that marks usernames for FK-safe deletion.
 
-    CLI mutation tests (`manage-user create`) commit real `User`,
-    `UserRole`, and `IdentityAuditEvent` rows through
+    CLI mutation tests (`manage-user create/set-password/unlock`,
+    `api-key list/revoke`) commit real `User`, `UserRole`, `ApiKey`,
+    `Session`, and `IdentityAuditEvent` rows through
     `cli_session_factory`, bypassing the ordinary per-test rollback.
     Call the returned function with the usernames created during the
     test; cleanup runs at teardown (even after an assertion failure),
     using the same `NullPool` engine on its own transient event loop —
     mirroring the black-box image-suite cleanup pattern in
     `tests/image/test_admin_user_mutations.py`.
+
+    Deletion order respects foreign-key dependencies: `ApiKey` (matched
+    by either `user_id` or `revoked_by`, since a revoker may be a
+    different pending user) and `Session` first, then
+    `IdentityAuditEvent`, then `UserRole`, then `User` itself.
     """
     pending: set[str] = set()
 
@@ -349,6 +355,12 @@ def cleanup_users_by_username(
     async def _cleanup() -> None:
         async with cli_session_factory() as db:
             target_ids = select(User.id).where(User.username.in_(pending))
+            await db.execute(
+                delete(ApiKey).where(
+                    ApiKey.user_id.in_(target_ids) | ApiKey.revoked_by.in_(target_ids)
+                )
+            )
+            await db.execute(delete(Session).where(Session.user_id.in_(target_ids)))
             await db.execute(
                 delete(IdentityAuditEvent).where(
                     IdentityAuditEvent.target_user_id.in_(target_ids)
