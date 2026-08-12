@@ -196,8 +196,13 @@ project conventions. Should I proceed with the correct location?"
 ### 3. Coherent spec-code updates
 
 When modifying code that changes the behavior of a feature, verify whether the
-corresponding specification needs to be updated. If it does, propose the
-specification update BEFORE modifying the code.
+corresponding specification needs to be updated. If it does, resolve the
+specification update before the code change is considered complete. The default
+is a separate documentation PR merged first (per Guardrail 25, Spec-first
+sequencing). When the combined-PR exception in Guardrail 25 applies, the spec
+and code changes may ship in the same PR — the spec delta must still be
+authored before or concurrently with the code, never retrofitted after the
+implementation is merged.
 
 After significant documentation or code changes, evaluate whether a docs review
 is needed — see Guardrail 9 for details.
@@ -963,7 +968,38 @@ without implementation intent).
    issue (if none suitable exists) and a new implementation branch from
    the updated `origin/master`.
 4. Never mixes unmerged spec changes with implementation on the
-   same branch.
+   same branch — unless the combined-PR exception below applies.
+
+**Combined spec-code PR exception**: a single PR MAY include both
+specification changes and implementation when ALL of the following
+conditions hold:
+
+1. **Co-evolution**: the spec change is a refinement, correction, or
+   incremental addition discovered during implementation — not a new
+   feature or contract that was absent when the work started.
+2. **Limited scope**: the spec delta is small relative to the
+   implementation (e.g., adding an error code, clarifying a boundary
+   condition, documenting a field). Substantial new contracts (new
+   state machines, new entities, new security models) still require a
+   separate PR.
+3. **Same logical unit**: the spec change and the code change are
+   incomprehensible in isolation — reviewing one without the other
+   would leave the reviewer without context.
+4. **No upstream dependents**: no other in-flight branch or component
+   depends on the spec change landing first to proceed with its own
+   work.
+
+When the exception applies, the agent proceeds on the implementation
+branch (not a `docs/` branch). The PR title uses the implementation
+type prefix (e.g., `feat:`, `fix:`). The PR description explicitly
+notes which spec files were modified and why the combined approach was
+chosen.
+
+When the user explicitly requests a combined PR and the agent believes
+the conditions above are not met, the agent MUST state which condition
+fails and ask for confirmation rather than refusing outright. The user's
+explicit instruction overrides the default separation after
+acknowledgment of the trade-off.
 
 ### 26. Reviewer proportionality and design simplicity
 
