@@ -767,6 +767,16 @@ GET /api/v1/users/me
 }
 ```
 
+`roles` contains the distinct current role values held by the
+authenticated user (a role held from multiple origins — manual and one
+or more external groups — appears once), rendered in the wire format
+defined in `rbac.md` (Role Wire Format) and ordered alphabetically by
+that wire value. The route obtains the deduplicated `Role` set from
+`user_service.get_user_roles()` (see
+`docs/features/identity/user-service.md`) and performs no ORM query
+directly; converting to wire format and sorting is response formatting,
+not a database operation.
+
 ### Logout
 
 Invalidates the current session.

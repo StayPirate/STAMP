@@ -198,7 +198,9 @@ deterministic for a fixed database snapshot.
 
 Accepts the typed filters, pagination values, and sorting selection defined by
 `user-management.md` (List Users). Return `UserPage(items: list[User], total:
-int)` with deterministic secondary ordering by `User.id`. The function applies
+int)` with deterministic secondary ordering by `User.id`. When sorting by
+`full_name`, rows with `full_name IS NULL` sort last regardless of
+`sort_order` (see `user-management.md`, List Users). The function applies
 every documented filter and loads the role and manager data required by the
 response; API handlers perform no ORM query or filtering themselves.
 

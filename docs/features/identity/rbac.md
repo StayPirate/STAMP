@@ -700,6 +700,15 @@ This applies to all endpoints that accept or return role values:
 `POST /api/v1/admin/users/{user}/roles`, `GET /api/v1/users/{user}`,
 CLI `--role` parameter, and `RoleMapping` API payloads.
 
+**Deterministic ordering**: any response array of role values (e.g.,
+`GET /api/v1/users/me`'s `roles`) is ordered alphabetically by the
+wire-format string. Any response array of role *assignment* objects
+that additionally carries an origin (e.g., `GET /api/v1/users/{user}`'s
+`roles`, each with `role`, `group_name`, `assigned_by`, `created_at`) is
+ordered alphabetically by the wire-format role value, then by
+`group_name`, then by `id` — deterministic regardless of assignment
+order or database physical order.
+
 ## Role Origins and Coexistence
 
 A user can acquire a role from two independent sources (origins):

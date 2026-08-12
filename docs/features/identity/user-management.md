@@ -568,6 +568,14 @@ Query parameters:
 
 Default `sort_order` is `asc`, producing alphabetical username ordering.
 
+Filters of different kinds combine with AND semantics (e.g., `type=local`
+and `active=true` together return only active local users); repeated
+values of the same filter combine with OR semantics as stated above.
+
+`full_name` is nullable (see Field notes below). When sorting by
+`sort_by=full_name`, users with `full_name IS NULL` are always ordered
+last, regardless of `sort_order`.
+
 Response uses the standard paginated envelope (`data` array + `meta`
 object). Each user object follows the same schema as
 `GET /api/v1/users/{user}` (see below).
@@ -591,14 +599,14 @@ The route delegates UUID-or-username resolution and relationship loading to
     "id": "uuid",
     "username": "string",
     "email": "string",
-    "full_name": "string",
+    "full_name": "string | null",
     "active": true,
     "source": "external | local",
     "external_id": "uuid | null",
     "manager": {
       "id": "uuid",
       "username": "string",
-      "full_name": "string",
+      "full_name": "string | null",
       "active": true,
       "email": "string"
     } | null,
@@ -620,9 +628,17 @@ Field notes:
 - `source`: derived field — `"external"` if `external_id IS NOT NULL`,
   otherwise `"local"`
 - `external_id`: unique identifier from the external identity provider. NULL for local users
-- `manager`: resolved manager object or `null`
+- `full_name`: nullable. A user record (local or external) may have no
+  display name on file. The API returns `null` verbatim — it does not
+  substitute `username` or any other fallback value. Consumers that need
+  a display fallback (e.g., a UI showing `full_name ?? username`) apply
+  it at presentation time
+- `manager`: resolved manager object or `null`. `manager.full_name`
+  follows the same nullability as above
 - `roles`: array of all roles from both external group mappings and manual
-  assignments. `group_name` is `'_manual'` for manually assigned roles
+  assignments. `group_name` is `'_manual'` for manually assigned roles.
+  See `rbac.md` (Role Wire Format, Deterministic ordering) for the
+  array's sort order
 
 **Error responses**:
 
