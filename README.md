@@ -178,19 +178,16 @@ every release: **[API Docs](https://staypirate.github.io/sentinel/)**
 
 ## Contributing
 
-Contributions are welcome! Please read the [Contributing
-Guide](CONTRIBUTING.md) for details on how to get started, coding
-standards, and the pull request process.
+Contributions are welcome!
+Please read the [Contributing Guide](CONTRIBUTING.md) for details on how to get started, coding standards, and the pull request process.
 
 ## Security
 
-To report a security vulnerability, please follow our [Security
-Policy](SECURITY.md). **Do not open a public issue for security
-vulnerabilities.**
+To report a security vulnerability, please follow our [Security Policy](SECURITY.md).
+**Do not open a public issue for security vulnerabilities.**
 
 ## License
 
-This project is licensed under the Apache License 2.0 — see the
-[LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
 
 Copyright 2025-2026 SUSE LLC

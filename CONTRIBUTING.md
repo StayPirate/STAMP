@@ -1,33 +1,28 @@
 # Contributing to Sentinel
 
-Thank you for your interest in contributing to Sentinel! This guide
-covers everything you need to get started.
+Thank you for your interest in contributing to Sentinel!
+This guide covers everything you need to get started.
 
 ## Code of Conduct
 
-This project follows the [Contributor Covenant Code of
-Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to
-uphold this code. Please report unacceptable behavior to
-security@suse.com.
+This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+By participating, you are expected to uphold this code.
+Please report unacceptable behavior to security@suse.com.
 
 ## How to Contribute
 
 ### Reporting Bugs
 
-1. Check the [existing issues](https://github.com/StayPirate/sentinel/issues)
-   to avoid duplicates
+1. Check the [existing issues](https://github.com/StayPirate/sentinel/issues) to avoid duplicates
 2. Open a new issue using the **Bug Report** template
 3. Include steps to reproduce, expected behavior, and actual behavior
 4. Add the Sentinel version and your environment details
 
 ### Suggesting Features
 
-1. Check the [existing issues](https://github.com/StayPirate/sentinel/issues)
-   and [feature specifications](docs/features/) to see if it has been
-   discussed
+1. Check the [existing issues](https://github.com/StayPirate/sentinel/issues) and [feature specifications](docs/features/) to see if it has been discussed
 2. Open a new issue using the **Feature Request** template
-3. Describe the problem you are trying to solve and the proposed
-   solution
+3. Describe the problem you are trying to solve and the proposed solution
 
 ### Submitting Code Changes
 
@@ -35,8 +30,7 @@ security@suse.com.
 2. Follow the [branch naming conventions](#branch-naming)
 3. Make your changes following the [coding standards](#coding-standards)
 4. Write tests for your changes (see [Testing](#testing))
-5. Ensure all checks pass locally (see [Pre-Submission
-   Checklist](#pre-submission-checklist))
+5. Ensure all checks pass locally (see [Pre-Submission Checklist](#pre-submission-checklist))
 6. Open a **pull request** against `master`
 
 ## Development Setup
@@ -68,21 +62,18 @@ uv run pytest
 
 ## Coding Standards
 
-Sentinel follows strict coding conventions documented in
-[docs/conventions.md](docs/conventions.md). The key points are:
+Sentinel follows strict coding conventions documented in [docs/conventions.md](docs/conventions.md).
+The key points are:
 
 ### Language
 
-- All code, comments, docstrings, and documentation **must be in
-  English**
+- All code, comments, docstrings, and documentation **must be in English**
 
 ### Python Style
 
-- **Formatter**: ruff format (black-compatible, 88-character line
-  length)
+- **Formatter**: ruff format (black-compatible, 88-character line length)
 - **Linter**: ruff check
-- **Type hints**: required on all function signatures (mypy strict
-  mode)
+- **Type hints**: required on all function signatures (mypy strict mode)
 - **Imports**: sorted by ruff (isort-compatible)
 
 ### Architecture
@@ -91,8 +82,7 @@ Sentinel follows strict coding conventions documented in
 - **Business logic in services**: all logic lives in `app/services/`
 - **Validation in schemas**: use Pydantic schemas in `app/schemas/`
 
-See the full [Architecture](docs/architecture.md) document for the
-layer structure and dependency rules.
+See the full [Architecture](docs/architecture.md) document for the layer structure and dependency rules.
 
 ## Branch Naming
 
@@ -127,13 +117,12 @@ docs: update data model with Product table
 test: add integration tests for CVE sync service
 ```
 
-Pull request titles follow the same format and must stay under 72
-characters (validated by CI).
+Pull request titles follow the same format and must stay under 72 characters (validated by CI).
 
 ## Testing
 
-Every code change **must** include tests. The project uses pytest with
-async support.
+Every code change **must** include tests.
+The project uses pytest with async support.
 
 ### Running Tests
 
@@ -155,8 +144,7 @@ uv run pytest -k "test_create_user"
 
 ### Test Requirements
 
-- **New API endpoints**: test happy path, validation errors,
-  auth/permissions
+- **New API endpoints**: test happy path, validation errors, auth/permissions
 - **New models**: test creation, constraints, relationships
 - **New services**: test business logic, edge cases, error handling
 - **Bug fixes**: add a regression test that reproduces the bug
@@ -169,8 +157,7 @@ uv run pytest -k "test_create_user"
 @pytest.mark.e2e           # Full HTTP request/response cycle
 ```
 
-See [Testing Strategy](docs/features/platform/testing-strategy.md) for
-the full testing conventions.
+See [Testing Strategy](docs/features/platform/testing-strategy.md) for the full testing conventions.
 
 ## Pre-Submission Checklist
 
@@ -195,24 +182,19 @@ All four checks run in CI and must pass for a PR to be merged.
 ## Pull Request Process
 
 1. Fill in the PR template completely
-2. Link the PR to a tracking issue using `Closes #<issue>` in the
-   description
+2. Link the PR to a tracking issue using `Closes #<issue>` in the description
 3. Ensure CI passes on your branch
 4. Request review from a maintainer
-5. PRs are **squash-merged** — the PR title becomes the commit
-   message on `master`
+5. PRs are **squash-merged** — the PR title becomes the commit message on `master`
 
 ## Specifications
 
-Sentinel follows a **specs-first** development model. Feature
-specifications live in `docs/features/` and define behavioral
-contracts before implementation begins. If you are proposing a
-significant new feature, consider drafting a specification first.
+Sentinel follows a **specs-first** development model.
+Feature specifications live in `docs/features/` and define behavioral contracts before implementation begins.
+If you are proposing a significant new feature, consider drafting a specification first.
 
-See the [existing specifications](docs/features/) for examples of the
-expected format and level of detail.
+See the [existing specifications](docs/features/) for examples of the expected format and level of detail.
 
 ## License
 
-By contributing to Sentinel, you agree that your contributions will be
-licensed under the [Apache License 2.0](LICENSE).
+By contributing to Sentinel, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
