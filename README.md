@@ -1,10 +1,12 @@
 <p align="center"><img src=".github/assets/logo.png" alt="Sentinel — Linux Vulnerability Management" width="500"></p>
 
-[![CI](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg)](https://codecov.io/gh/StayPirate/sentinel)
-[![Release](https://img.shields.io/github/v/release/StayPirate/sentinel)](https://github.com/StayPirate/sentinel/releases)
-[![Python](https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+<p align="center">
+<a href="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+<a href="https://codecov.io/gh/StayPirate/sentinel"><img src="https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg" alt="codecov"></a>
+<a href="https://github.com/StayPirate/sentinel/releases"><img src="https://img.shields.io/github/v/release/StayPirate/sentinel" alt="Release"></a>
+<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+</p>
 
 Security update management platform for SUSE and openSUSE-based Linux
 distributions. Sentinel automates CVE tracking, impact analysis, and
