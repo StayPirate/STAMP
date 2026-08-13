@@ -349,25 +349,24 @@ enabling one requires the other to be absent.
 
 ### Workflow Conventions
 
-**Pinned action references.** Every `uses:` reference MUST resolve to an
-immutable or version-stable reference. Mutable references (`@main`,
-`@master`, or any branch name) MUST NOT be used. Three pin styles are in
-use:
-
-| Style | When to use | Example |
-|-------|-------------|---------|
-| Major version tag | Default for first-party and widely used actions | `actions/checkout@v7` |
-| Exact release tag | Actions whose minor releases have changed behavior in ways that affected this repository | `astral-sh/setup-uv@v9.0.0` |
-| Full commit SHA with a trailing `# vX.Y.Z` comment | Actions performing destructive or release-critical operations | `googleapis/release-please-action@<sha> # v5.0.0` |
-
-An action pinned by commit SHA MUST carry an inline comment naming the
-version the SHA corresponds to, and SHOULD state why the stricter pin is
-required when that reason is not evident from the surrounding comments.
+**Pinned action references.** Every `uses:` reference MUST be pinned by
+full commit SHA, with a trailing `# vX.Y.Z` comment naming the version
+the SHA corresponds to (e.g. `actions/checkout@<sha> # v7.0.1`). Mutable
+references (`@main`, `@master`, any branch name) and tag references
+(major-version tags such as `@v7`, or exact release tags such as
+`@v9.0.0`) MUST NOT be used — a tag, even an exact release tag, can be
+force-moved by the upstream maintainer to point at different content
+without the repository owner's action; a commit SHA cannot.
 
 The same principle applies to tools a workflow installs itself — whether
 downloaded directly or requested through an action's `version:` input.
 Their versions MUST be pinned explicitly and MUST NOT be left to resolve
 to the latest available release.
+
+Dependabot (`.github/dependabot.yml`, `github-actions` ecosystem) tracks
+the SHA-pinned actions and opens a PR bumping both the SHA and the
+trailing version comment when a new release is published — no
+additional Dependabot configuration is required for this pinning style.
 
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
@@ -433,6 +432,21 @@ Per-role image variants MUST NOT be introduced.
 global `ARG PYTHON_VERSION`. See `docs/conventions.md` (Runtime Version)
 for the source-of-truth rules, the build-argument pass-through, and the
 CI drift check.
+
+**Base image pinning.** The `python:${PYTHON_VERSION}-slim` base image
+is pinned by digest (`python:3.13-slim@sha256:...`) in both Dockerfile
+stages, in addition to the tag — the tag documents the intent (Python
+3.13, slim variant) while the digest guarantees immutability. Dependabot
+does NOT track this reference: both the tag and the digest are supplied
+through Dockerfile `ARG` values (`PYTHON_VERSION`, `PYTHON_BASE_DIGEST`),
+and Dependabot's `docker` ecosystem parser only recognizes literal tag
+and digest text in a `FROM` line — a well-known upstream limitation
+(`dependabot/dependabot-core#2057`, open since 2020). This was already
+true before digest pinning (the tag alone was equally untracked); pinning
+the digest does not regress anything Dependabot previously provided for
+this Dockerfile. Base image freshness is monitored instead by the weekly
+Trivy scan — see Image Vulnerability Monitoring below for the resulting
+manual remediation step.
 
 ---
 
@@ -1147,9 +1161,11 @@ on-demand checks between scheduled runs.
 **Why the OS layer needs its own visibility.** `pip-audit` (see
 Pipeline Chain above) gates Python dependencies on every merge, but the
 image is Debian-based (`python:3.13-slim`) and the OS package layer is
-not covered by any dependency scanner. Dependabot cannot help here
-either: `python:3.13-slim` is a moving tag whose string never changes,
-so it never triggers a Dependabot update PR.
+not covered by any dependency scanner. Dependabot cannot help here: the
+base image reference is `ARG`-templated (see Container Build
+Conventions, Base image pinning), which its `docker` ecosystem parser
+does not resolve. Trivy's weekly scan is therefore the only mechanism
+that detects known vulnerabilities in this layer.
 
 **Deliberately non-blocking.** This scan never fails the workflow run
 and is not part of the publish path (`build-images.yml` is untouched).
@@ -1172,11 +1188,16 @@ pipeline without a corresponding way to resolve it.
 the existing open one if a prior run already opened it — the workflow
 never creates a duplicate issue for the same ongoing condition.
 
-**Remediation path.** Because the scan does not trigger a rebuild,
-fixable findings are remediated on the next merge to `master` that
-produces a new image (which pulls the then-current `python:3.13-slim`
-base layer). This is intended behavior, not an oversight: the platform
-has no separate mechanism to force an out-of-band base image rebuild.
+**Remediation path.** Because the base image is pinned by digest (see
+Container Build Conventions, Base image pinning) and Dependabot cannot
+refresh it automatically, a fixable finding requires a maintainer to
+manually resolve the current digest for `python:3.13-slim` (e.g. `docker
+buildx imagetools inspect python:3.13-slim` or an equivalent registry
+query) and update `PYTHON_BASE_DIGEST` in `backend/Dockerfile` in a
+dedicated PR. This is intended behavior, not an oversight: the platform
+has no automated mechanism to refresh an `ARG`-templated digest, and the
+scan's non-blocking design assumes this manual step as its remediation
+trigger rather than an automatic rebuild.
 
 ### Python Forward-Compatibility Check
 
