@@ -329,12 +329,15 @@ they feed in [Environments](#environments).
 | `image-scan.yml` | Weekly schedule, manual | Scans the published image for OS-level vulnerabilities and opens or updates a tracking issue | No |
 | `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and opens or updates a tracking issue | No |
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
+| `scorecard.yml` | Push to `master`, weekly schedule, manual | Runs the official OpenSSF Scorecard action and publishes results to Code Scanning and the public Scorecard dataset | No |
 
 **Blocking** means a failure prevents the merge, release, or publication
 that the workflow gates. Non-blocking workflows never fail a merge and
 never touch the publish path: `image-scan.yml` and
-`python-forward-compat.yml` are early-warning mechanisms, and
-`cleanup-images.yml` is scheduled registry maintenance.
+`python-forward-compat.yml` are early-warning mechanisms,
+`cleanup-images.yml` is scheduled registry maintenance, and
+`scorecard.yml` is an external security-posture scan that never fails
+the run because of scan findings.
 
 ### Workflow Conventions
 
