@@ -12,7 +12,7 @@
 
 <p align="center">
 <a href="https://securityscorecards.dev/viewer/?uri=github.com/StayPirate/sentinel"><img src="https://api.securityscorecards.dev/projects/github.com/StayPirate/sentinel/badge" alt="OpenSSF Scorecard"></a>
-<a href="https://www.bestpractices.dev/en/projects/new?url=https%3A%2F%2Fgithub.com%2FStayPirate%2Fsentinel">OpenSSF Best Practices (pending registration)</a>
+<a href="https://www.bestpractices.dev/projects/14063"><img src="https://www.bestpractices.dev/projects/14063/badge" alt="OpenSSF Best Practices"></a>
 </p>
 
 Security update management platform for SUSE and openSUSE-based Linux
