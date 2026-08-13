@@ -330,16 +330,22 @@ they feed in [Environments](#environments).
 | `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and opens or updates a tracking issue | No |
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
 | `scorecard.yml` | Push to `master`, weekly schedule, manual | Runs the official OpenSSF Scorecard action and publishes results to Code Scanning and the public Scorecard dataset | No |
-| `codeql.yml` | Push to `master`, pull request, weekly schedule, manual | Runs CodeQL static analysis (Python and GitHub Actions languages) and publishes findings to Code Scanning | No |
 
 **Blocking** means a failure prevents the merge, release, or publication
 that the workflow gates. Non-blocking workflows never fail a merge and
 never touch the publish path: `image-scan.yml` and
 `python-forward-compat.yml` are early-warning mechanisms,
-`cleanup-images.yml` is scheduled registry maintenance, `scorecard.yml`
-is an external security-posture scan that never fails the run because
-of scan findings, and `codeql.yml` surfaces findings exclusively as Code
-Scanning alerts rather than as a failing status check.
+`cleanup-images.yml` is scheduled registry maintenance, and
+`scorecard.yml` is an external security-posture scan that never fails
+the run because of scan findings.
+
+**Static Application Security Testing (SAST).** CodeQL is enabled via
+GitHub's repository-level Default Setup (Settings → Code security →
+Code scanning), not a custom workflow in this repository. GitHub
+manages the trigger schedule, language detection, and query suite
+directly; there is no `.github/workflows/codeql.yml` file to maintain.
+Default Setup and a custom CodeQL workflow are mutually exclusive —
+enabling one requires the other to be absent.
 
 ### Workflow Conventions
 
