@@ -330,14 +330,16 @@ they feed in [Environments](#environments).
 | `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and opens or updates a tracking issue | No |
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
 | `scorecard.yml` | Push to `master`, weekly schedule, manual | Runs the official OpenSSF Scorecard action and publishes results to Code Scanning and the public Scorecard dataset | No |
+| `codeql.yml` | Push to `master`, pull request, weekly schedule, manual | Runs CodeQL static analysis (Python and GitHub Actions languages) and publishes findings to Code Scanning | No |
 
 **Blocking** means a failure prevents the merge, release, or publication
 that the workflow gates. Non-blocking workflows never fail a merge and
 never touch the publish path: `image-scan.yml` and
 `python-forward-compat.yml` are early-warning mechanisms,
-`cleanup-images.yml` is scheduled registry maintenance, and
-`scorecard.yml` is an external security-posture scan that never fails
-the run because of scan findings.
+`cleanup-images.yml` is scheduled registry maintenance, `scorecard.yml`
+is an external security-posture scan that never fails the run because
+of scan findings, and `codeql.yml` surfaces findings exclusively as Code
+Scanning alerts rather than as a failing status check.
 
 ### Workflow Conventions
 
@@ -373,8 +375,18 @@ outside CI. No CI job performs secret scanning — the optional local
 enforced by review.
 
 **Least-privilege permissions.** Every workflow MUST declare an explicit
-`permissions:` block scoped to what its jobs actually require, rather
-than relying on the repository default.
+top-level `permissions:` block, set to fully restrictive (`{}`) or to a
+read-only scope, rather than relying on the repository default. The
+top-level block MUST NOT grant write access to a sensitive scope —
+`actions`, `checks`, `contents`, `deployments`, `packages`,
+`security-events`, or `statuses` (the scopes the OpenSSF Scorecard
+Token-Permissions check treats as sensitive, since each one enables a
+concrete escalation such as committing unreviewed code or publishing a
+package). A job that needs write access to one of these declares it in
+its own `permissions:` block instead, scoped to that job only. Other
+write scopes (for example `issues` or `pull-requests`) are not
+security-sensitive in this sense and MAY remain at the top level on a
+single-job workflow.
 
 **Concurrency.** Workflows that create a release or publish an artifact
 — those marked `Yes (release path)` or `Yes (publish gate)` in the

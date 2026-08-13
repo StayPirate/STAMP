@@ -8,6 +8,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# Top-level permissions are fully restrictive by default (principle of
+# least privilege — see docs/deployment.md, Least-privilege permissions).
+# Each job below declares the specific scopes it needs.
+permissions: {}
+
 jobs:
   build:
     name: Build API Docs
