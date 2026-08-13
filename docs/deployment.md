@@ -431,7 +431,7 @@ process is driven entirely by Conventional Commit messages on the
    (`.github/workflows/release-please.yml`) analyzes new commits and
    creates (or updates) a **Release PR** with:
    - Version bump in `backend/pyproject.toml`
-   - Updated `backend/CHANGELOG.md`
+   - Updated `CHANGELOG.md`
    - Summary of all changes since the last release
 3. The Release PR stays open and is updated automatically as more
    commits land on `master`
@@ -472,9 +472,13 @@ Conventions).
 
 ### Changelog
 
-`backend/CHANGELOG.md` is maintained automatically by
+`CHANGELOG.md` (repository root) is maintained automatically by
 release-please. Do not edit it manually. It groups changes by type
-(Features, Bug Fixes, etc.) and links to commits and PRs.
+(Features, Bug Fixes, etc.) and links to commits and PRs. It lives at
+the repository root while the version bump it accompanies
+(`backend/pyproject.toml`, `backend/uv.lock`) stays scoped to the
+`backend` release-please package — see `changelog-path` in
+`release-please-config.json`.
 
 ### Pipeline Chain
 
@@ -509,7 +513,7 @@ manual deployment from tag (staging/production)
 | Git tag | Created by release-please (`v1.2.3`) |
 | Docker image tag | Derived from git tag by `build-images.yml` |
 | GitHub Release | Created by release-please with changelog |
-| `backend/CHANGELOG.md` | Updated by release-please |
+| `CHANGELOG.md` (repository root) | Updated by release-please |
 | `backend/uv.lock` | Updated by release-please |
 
 ### Image Tag Semantics
