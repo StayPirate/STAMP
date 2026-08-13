@@ -48,7 +48,15 @@ from app.main import app
 # tables — including ones only referenced via TYPE_CHECKING forward
 # refs, like UserRole — are registered on Base.metadata before
 # _engine's create_all runs.
-from app.models import ApiKey, IdentityAuditEvent, Session, User, UserRole
+from app.models import (
+    ApiKey,
+    IdentityAuditEvent,
+    Session,
+    SettingAuditEvent,
+    SystemSetting,
+    User,
+    UserRole,
+)
 from app.services import local_auth_service, session_service
 from app.services.session_service import create_session
 from tests.support.audit_models import SampleAuditEvent
@@ -678,6 +686,85 @@ def identity_audit_event_factory(
         defaults: dict[str, Any] = {"event_type": "user_created"}
         defaults.update(overrides)
         instance = IdentityAuditEvent(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def system_setting_factory(
+    db_session: AsyncSession,
+) -> Callable[..., Awaitable[SystemSetting]]:
+    """Factory fixture for `SystemSetting` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `key`: a per-fixture-counter-derived unique key
+      (`test_setting_<n>`), so multiple calls within one test don't
+      collide on the string primary key.
+    - `value`: a fictional placeholder value derived from the same
+      counter.
+    """
+
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> SystemSetting:
+        n = next(counter)
+        defaults: dict[str, Any] = {
+            "key": f"test_setting_{n}",
+            "value": f"test-value-{n}",
+        }
+        defaults.update(overrides)
+        instance = SystemSetting(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def setting_audit_event_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+    system_setting_factory: Callable[..., Awaitable[SystemSetting]],
+) -> Callable[..., Awaitable[SettingAuditEvent]]:
+    """Factory fixture for `SettingAuditEvent` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Bypasses `SettingAuditLog.log_event()` validation on purpose —
+    model-layer tests (`tests/test_models/test_setting_audit_event.py`)
+    exercise the raw persistence contract (columns, constraints,
+    indexes) independently of the service-layer validation rules,
+    which are covered by `tests/test_services/test_settings.py`.
+
+    Defaults:
+    - `event_type`: `"setting_changed"` (a fictional, valid string
+      value; not validated against `SettingAuditEventType` at this
+      layer).
+    - `setting_key`: a freshly created `SystemSetting` row's key, when
+      not overridden.
+    - `user_id`: a freshly created user, when not overridden.
+    - `new_value`: a fictional placeholder value.
+    """
+
+    async def _create(**overrides: Any) -> SettingAuditEvent:
+        if "setting_key" not in overrides:
+            overrides["setting_key"] = (await system_setting_factory()).key
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
+        defaults: dict[str, Any] = {
+            "event_type": "setting_changed",
+            "new_value": "4.0",
+        }
+        defaults.update(overrides)
+        instance = SettingAuditEvent(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

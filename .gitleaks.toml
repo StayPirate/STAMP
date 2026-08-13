@@ -17,3 +17,12 @@ title = "Sentinel gitleaks config"
 
 [extend]
 useDefault = true
+
+# False positive: the default `generic-api-key` rule occasionally flags
+# SQLAlchemy's `populate_existing=True` execution option/kwarg (used
+# throughout `app/services/` and `tests/` to force a refresh from the
+# database) due to its entropy. Confirmed safe — this is a well-known
+# SQLAlchemy keyword argument, never a credential.
+[[allowlists]]
+description = "SQLAlchemy populate_existing kwarg (not a secret)"
+regexes = ['''populate_existing=True''']

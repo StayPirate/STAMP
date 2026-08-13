@@ -106,6 +106,18 @@ class IdentityAuditEventType(StrEnum):
     MANAGER_CHANGED = "manager_changed"
 
 
+class SettingAuditEventType(StrEnum):
+    """Classifies the action recorded in a `SettingAuditEvent`.
+
+    Category B — classification (Python Enum only, no CHECK constraint;
+    adding a value requires only a code change). See
+    `docs/features/platform/system-settings.md` (Setting Audit Log) for
+    the full event type contract.
+    """
+
+    SETTING_CHANGED = "setting_changed"
+
+
 class SessionCreationReason(StrEnum):
     """The login provider that created a `Session`.
 

@@ -16,8 +16,9 @@ project-wide, one of which (`chk_user_auth_exclusive`) is a legitimate
 exception to the enum-check pattern — a case better served by human
 review in each rare PR that adds one than by a hard-coded rule (see
 issue #58 for the full rationale). The three invariants below apply
-universally, with zero per-table exceptions, which is what makes them
-good structural-test candidates.
+universally, with a small, explicit per-table exception list for the
+primary key type invariant (see `_NON_UUID_PRIMARY_KEY_TABLES`), which
+is what makes them good structural-test candidates.
 """
 
 from __future__ import annotations
@@ -39,12 +40,26 @@ def _mapped_tables() -> Iterable[Table]:
     return Base.metadata.tables.values()
 
 
+# Explicit, per-table exception list for the UUID primary key invariant
+# below. `docs/data-model.md` (Notes) documents these as deliberate
+# exceptions: a natural business identifier makes a more meaningful
+# primary key than a surrogate UUID for small, key-value-shaped
+# configuration tables. Maps table name -> the set of primary key
+# column names allowed to be non-UUID on that table. A table not
+# listed here still requires every primary key column to be UUID.
+_NON_UUID_PRIMARY_KEY_TABLES: dict[str, frozenset[str]] = {
+    "system_setting": frozenset({"key"}),
+}
+
+
 @pytest.mark.unit
 class TestPrimaryKeyType:
-    """Every mapped table uses a UUID primary key.
+    """Every mapped table uses a UUID primary key, except the small,
+    explicit set of natural-key tables in `_NON_UUID_PRIMARY_KEY_TABLES`.
 
     See `docs/conventions.md` (SQLAlchemy Conventions): "Use UUID
-    primary keys."
+    primary keys," and `docs/data-model.md` (Notes) for the documented
+    per-table exceptions.
     """
 
     def test_every_table_has_a_uuid_primary_key(self) -> None:
@@ -54,7 +69,10 @@ class TestPrimaryKeyType:
             if not pk_columns:
                 violations.append(f"Table '{table.name}' has no primary key")
                 continue
+            allowed_non_uuid = _NON_UUID_PRIMARY_KEY_TABLES.get(table.name, frozenset())
             for column in pk_columns:
+                if column.name in allowed_non_uuid:
+                    continue
                 if not isinstance(column.type, UUID):
                     violations.append(
                         f"Table '{table.name}' primary key column "
