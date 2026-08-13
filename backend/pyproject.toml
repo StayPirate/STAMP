@@ -2,7 +2,24 @@
 name = "sentinel"
 version = "0.3.0"
 description = "Security update management platform for SUSE/openSUSE distributions"
+license = "Apache-2.0"
 requires-python = ">=3.13"
+authors = [
+    { name = "SUSE LLC" },
+]
+keywords = ["security", "cve", "vulnerability", "suse", "opensuse", "linux"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+    "Typing :: Typed",
+]
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.1",
@@ -26,6 +43,13 @@ dependencies = [
 
 [project.scripts]
 sentinel = "app.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/StayPirate/sentinel"
+Documentation = "https://github.com/StayPirate/sentinel/tree/master/docs"
+Repository = "https://github.com/StayPirate/sentinel"
+Issues = "https://github.com/StayPirate/sentinel/issues"
+Changelog = "https://github.com/StayPirate/sentinel/blob/master/backend/CHANGELOG.md"
 
 [dependency-groups]
 dev = [

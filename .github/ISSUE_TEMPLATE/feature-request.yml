@@ -1,0 +1,52 @@
+name: Feature Request
+description: Suggest a new feature or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Thank you for suggesting a feature. Please fill in the details
+        below so we can evaluate the request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: >-
+        Describe the problem you are trying to solve, or the gap in
+        current functionality. A clear problem statement helps us
+        understand the context.
+      placeholder: "I'm always frustrated when ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: >-
+        Describe your proposed solution or feature. Be as specific as
+        possible about the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: >-
+        Describe any alternative solutions or features you have
+        considered, and why the proposed solution is preferred.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: >-
+        Any additional context, screenshots, or references that support
+        the request. If this relates to an existing specification in
+        docs/features/, please link it.
+    validations:
+      required: false

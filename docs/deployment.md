@@ -33,7 +33,7 @@ For architectural decisions and design constraints, see
   - [API Documentation Publication](#api-documentation-publication)
   - [Container Image Retention](#container-image-retention)
   - [Configuration Files](#configuration-files)
-  - [Repository Secret](#repository-secret)
+  - [Repository Secrets](#repository-secrets)
 - [Process Architecture](#process-architecture)
   - [Container Images](#container-images)
   - [Singleton Processes](#singleton-processes)
@@ -570,7 +570,7 @@ manually except during initial setup, to force a version via
 `release-please-config.json` (see Version Locations above,
 `backend/uv.lock`).
 
-### Repository Secret
+### Repository Secrets
 
 The `release-please.yml` workflow requires a repository secret named
 `RELEASE_TOKEN` containing a Fine-Grained Personal Access Token (or
@@ -578,6 +578,13 @@ GitHub App token) with `contents: write`, `issues: write`, and
 `pull-requests: write` permissions. The default `GITHUB_TOKEN` cannot
 be used because tags created by it do not trigger downstream workflows
 (a GitHub Actions limitation to prevent recursive runs).
+
+The `ci.yml` workflow optionally uses a repository secret named
+`CODECOV_TOKEN` for uploading test coverage reports to Codecov. The
+upload step is non-blocking (`fail_ci_if_error: false`) — if the
+secret is not configured, coverage will silently not be uploaded but
+CI will still pass. Obtain the token from
+[codecov.io](https://codecov.io) after linking the repository.
 
 ---
 
