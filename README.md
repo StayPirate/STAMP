@@ -5,6 +5,9 @@
 <a href="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml/badge.svg" alt="Image Scan"></a>
 <a href="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml/badge.svg" alt="Python Forward-Compat"></a>
 <a href="https://codecov.io/gh/StayPirate/sentinel"><img src="https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg" alt="codecov"></a>
+</p>
+
+<p align="center">
 <a href="https://github.com/StayPirate/sentinel/releases"><img src="https://img.shields.io/github/v/release/StayPirate/sentinel" alt="Release"></a>
 <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
@@ -13,6 +16,7 @@
 <p align="center">
 <a href="https://securityscorecards.dev/viewer/?uri=github.com/StayPirate/sentinel"><img src="https://api.securityscorecards.dev/projects/github.com/StayPirate/sentinel/badge" alt="OpenSSF Scorecard"></a>
 <a href="https://www.bestpractices.dev/projects/14063"><img src="https://www.bestpractices.dev/projects/14063/badge" alt="OpenSSF Best Practices"></a>
+<a href="https://www.bestpractices.dev/projects/14063"><img src="https://www.bestpractices.dev/projects/14063/baseline" alt="OpenSSF Baseline"></a>
 </p>
 
 Security update management platform for SUSE and openSUSE-based Linux
@@ -85,7 +89,7 @@ run from a single Docker image with different entrypoints. See
 ![Open PRs](https://img.shields.io/github/issues-pr/StayPirate/sentinel?label=PRs%20open&color=orange)
 ![Closed PRs](https://img.shields.io/github/issues-pr-closed/StayPirate/sentinel?label=PRs%20closed&color=green)
 
-Sentinel is in **active pre-1.0 development** (current version: `0.3.0`).
+Sentinel is in **active pre-1.0 development**.
 The API is not yet considered stable — breaking changes may occur in minor
 version bumps.
 
