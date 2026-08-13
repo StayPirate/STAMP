@@ -60,6 +60,27 @@ cd backend && uv run alembic upgrade head
 uv run pytest
 ```
 
+### Enable Git Hooks
+
+The repository ships local git hooks in `.githooks/`.
+Activating them gives you fast pre-commit feedback before CI runs:
+
+```bash
+git config --local core.hooksPath .githooks
+```
+
+What the hooks do:
+
+| Hook | Checks |
+|------|--------|
+| `pre-commit` | ruff lint, ruff format, mypy, unit tests, shellcheck/shfmt (if installed), gitleaks secret scanning |
+| `commit-msg` | Validates Conventional Commits format and 72-character subject limit |
+| `pre-push` | Full test suite; blocks direct pushes to `master` and local tag pushes |
+| `post-checkout` / `post-merge` / `post-rewrite` | Auto-syncs the Python virtualenv when `uv.lock` changes |
+
+The hooks degrade gracefully: optional tools (`shellcheck`, `shfmt`, `gitleaks`) produce a warning if missing, but do not block the operation.
+CI remains the authoritative gate.
+
 ## Coding Standards
 
 Sentinel follows strict coding conventions documented in [docs/conventions.md](docs/conventions.md).
@@ -187,13 +208,48 @@ All four checks run in CI and must pass for a PR to be merged.
 4. Request review from a maintainer
 5. PRs are **squash-merged** — the PR title becomes the commit message on `master`
 
-## Specifications
+## Spec-First Workflow
 
-Sentinel follows a **specs-first** development model.
-Feature specifications live in `docs/features/` and define behavioral contracts before implementation begins.
-If you are proposing a significant new feature, consider drafting a specification first.
+Sentinel follows a **specs-first** development model: feature specifications in `docs/features/` define behavioral contracts before implementation begins.
 
-See the [existing specifications](docs/features/) for examples of the expected format and level of detail.
+### When does this affect you?
+
+| Change type | Spec required? |
+|-------------|---------------|
+| Bug fix that corrects a deviation from an existing spec | No — fix directly |
+| Infrastructure, CI, dependencies, cosmetic changes | No |
+| New feature or behavioral change covered by an existing spec | No new spec, but the implementation must conform to it |
+| New feature or behavioral change **not** covered by any spec | Yes — spec PR first, then implementation |
+
+### In practice
+
+- **Opening an issue** (bug or feature request) never requires a spec.
+  Describe the problem or idea; the maintainers will help determine whether a specification is needed.
+- **Submitting a code PR** that changes observable behavior requires either an existing spec that covers it, or a preceding documentation PR that adds one.
+- When in doubt, open the issue first and discuss the approach with the maintainers.
+
+See [docs/conventions.md](docs/conventions.md) (Function Specification Completeness) for the full rules on what specifications cover and what remains an implementation choice.
+
+## Working with OpenCode
+
+This project includes first-class [OpenCode](https://opencode.ai) configuration.
+Using OpenCode is entirely optional — you can contribute with any editor or workflow — but it provides a streamlined experience for this repository.
+
+### What it provides
+
+- **`AGENTS.md`** contains the operational rules that guide the AI agents (guardrails, gap protocol, reviewer invocation, git workflow).
+- **`.opencode/`** defines subagents (automated reviewers), commands, and skills.
+- When working in OpenCode, the agents automatically:
+  - verify that a specification exists before implementing a feature;
+  - invoke the applicable reviewer subagents based on the type of change (security, data model, API parity, test quality, etc.);
+  - enforce the project's git and commit conventions.
+
+### Reviewer subagents
+
+The project defines 15+ read-only reviewer subagents that analyze code or specifications and report findings without modifying files.
+They are invoked automatically by the primary agents when their trigger conditions are met.
+
+See [`.opencode/README.md`](.opencode/README.md) for the full inventory of agents, their triggers, and model tiering.
 
 ## License
 

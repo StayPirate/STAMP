@@ -117,46 +117,6 @@ for detailed progress tracking.
 | CLI | Click |
 | HTTP Client | httpx |
 
-## Getting Started
-
-### Prerequisites
-
-- **Python 3.13** (managed via [uv](https://docs.astral.sh/uv/))
-- **Podman** or **Docker** (for local infrastructure)
-
-### Setup
-
-```bash
-# Clone the repository
-git clone git@github.com:StayPirate/sentinel.git
-cd sentinel
-
-# Install Python dependencies
-cd backend && uv sync
-
-# Start local infrastructure (PostgreSQL + Redis)
-cd .. && ./scripts/dev-env.sh up
-
-# Run database migrations
-cd backend && uv run alembic upgrade head
-
-# Start the API server
-uv run uvicorn app.main:app --reload
-
-# Run the test suite
-uv run pytest
-```
-
-### Running with Docker
-
-```bash
-# Build the image
-docker build -t sentinel-backend backend/
-
-# Run the full stack (API + Worker + Beat + migrations)
-docker compose -f docker-compose.smoke.yml up
-```
-
 ## Documentation
 
 | Document | Description |
