@@ -90,6 +90,10 @@ def _prehash(password: str) -> bytes:
     normalizes any password length to a fixed 44-byte ASCII input,
     avoiding bcrypt's native 72-byte input limit.
     """
+    # codeql[py/weak-sensitive-data-hashing]: false positive -- SHA-256 is
+    # only a length-normalizing pre-hash step (see docstring above); the
+    # actual computationally-expensive password hash is bcrypt(cost=12),
+    # applied afterwards in hash_password(). Dismissed as alert #45.
     digest = hashlib.sha256(password.encode("utf-8")).digest()
     return base64.b64encode(digest)
 
