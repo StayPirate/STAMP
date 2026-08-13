@@ -12,6 +12,11 @@ concurrency:
   group: build-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
+# Top-level permissions are fully restrictive by default (principle of
+# least privilege — see docs/deployment.md, Least-privilege permissions).
+# The job below declares the specific read/write scopes it needs.
+permissions: {}
+
 env:
   REGISTRY: ghcr.io
   SMOKE_IMAGE: sentinel-backend:smoke

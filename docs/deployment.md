@@ -339,6 +339,14 @@ never touch the publish path: `image-scan.yml` and
 `scorecard.yml` is an external security-posture scan that never fails
 the run because of scan findings.
 
+**Static Application Security Testing (SAST).** CodeQL is enabled via
+GitHub's repository-level Default Setup (Settings → Code security →
+Code scanning), not a custom workflow in this repository. GitHub
+manages the trigger schedule, language detection, and query suite
+directly; there is no `.github/workflows/codeql.yml` file to maintain.
+Default Setup and a custom CodeQL workflow are mutually exclusive —
+enabling one requires the other to be absent.
+
 ### Workflow Conventions
 
 **Pinned action references.** Every `uses:` reference MUST resolve to an
@@ -373,8 +381,18 @@ outside CI. No CI job performs secret scanning — the optional local
 enforced by review.
 
 **Least-privilege permissions.** Every workflow MUST declare an explicit
-`permissions:` block scoped to what its jobs actually require, rather
-than relying on the repository default.
+top-level `permissions:` block, set to fully restrictive (`{}`) or to a
+read-only scope, rather than relying on the repository default. The
+top-level block MUST NOT grant write access to a sensitive scope —
+`actions`, `checks`, `contents`, `deployments`, `packages`,
+`security-events`, or `statuses` (the scopes the OpenSSF Scorecard
+Token-Permissions check treats as sensitive, since each one enables a
+concrete escalation such as committing unreviewed code or publishing a
+package). A job that needs write access to one of these declares it in
+its own `permissions:` block instead, scoped to that job only. Other
+write scopes (for example `issues` or `pull-requests`) are not
+security-sensitive in this sense and MAY remain at the top level on a
+single-job workflow.
 
 **Concurrency.** Workflows that create a release or publish an artifact
 — those marked `Yes (release path)` or `Yes (publish gate)` in the
