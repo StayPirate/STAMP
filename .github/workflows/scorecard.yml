@@ -17,15 +17,9 @@ name: Scorecard Analysis
 # steps from an approved action allow-list (checkout, upload-artifact,
 # codeql-action/upload-sarif, scorecard-action, harden-runner).
 #
-# Pinning deviation: every action below is pinned by full commit SHA,
-# including actions/checkout and actions/upload-artifact — which use
-# major-version tags (`@v7`) elsewhere in this repository. This
-# workflow is deliberately held to the stricter pin style because (a)
-# Scorecard's own "Pinned-Dependencies" check flags GitHub Actions that
-# are not pinned by hash regardless of tag immutability, and (b) it is
-# itself supply-chain security tooling. See docs/deployment.md
-# (Workflow Conventions, Pinned action references) for the general
-# three-style pinning convention this deviation is drawn from.
+# Every action below is pinned by full commit SHA — the repository-wide
+# default. See docs/deployment.md (Workflow Conventions, Pinned action
+# references).
 
 on:
   push:
