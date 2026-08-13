@@ -16,7 +16,10 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import time
+import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -209,3 +212,188 @@ def compose_run() -> Callable[..., subprocess.CompletedProcess[str]]:
         return _run_compose_bounded(cmd, timeout)
 
     return _run
+
+
+@pytest.fixture(scope="session")
+def compose_restart() -> Callable[..., subprocess.CompletedProcess[str]]:
+    """Restart a service in the *primary* smoke stack by stopping its
+    container, removing it, and re-creating it from scratch.
+
+    Returns a callable ``(service, *, timeout=60.0) -> CompletedProcess``.
+    Unlike ``compose_exec``/``compose_run`` (which target a throwaway
+    process), this stops the running service and brings it back with
+    ``up -d`` — which recreates the container and therefore re-runs
+    the application entrypoint and lifespan. A plain ``compose restart``
+    would only issue SIGTERM+start inside the existing container,
+    which does not guarantee the FastAPI lifespan hook re-executes in
+    every container runtime. Does not wait for the restarted container
+    to become healthy; callers poll separately via ``wait_for_status``
+    below.
+    """
+    compose_cmd, file_args, project = _resolve_compose_invocation()
+
+    def _restart(
+        service: str, *, timeout: float = 60.0
+    ) -> subprocess.CompletedProcess[str]:
+        stop_cmd = [
+            *compose_cmd,
+            "-p",
+            project,
+            *file_args,
+            "stop",
+            service,
+        ]
+        _run_compose_bounded(stop_cmd, timeout)
+        up_cmd = [
+            *compose_cmd,
+            "-p",
+            project,
+            *file_args,
+            "up",
+            "-d",
+            service,
+        ]
+        return _run_compose_bounded(up_cmd, timeout)
+
+    return _restart
+
+
+def wait_for_status(
+    http_client: httpx.Client,
+    *,
+    expect_healthy: bool,
+    timeout: float = 30.0,
+    poll_interval: float = 1.0,
+) -> bool:
+    """Poll ``GET /health`` on ``http_client`` until it matches
+    ``expect_healthy``, or ``timeout`` seconds elapse.
+
+    For ``expect_healthy=True``: returns ``True`` as soon as a `200`
+    response is observed (the container came back up and became
+    healthy in time).
+
+    For ``expect_healthy=False``: returns ``True`` only if the
+    container NEVER responds with `200` for the entire window (a
+    transient failure right after `restart` is not sufficient evidence
+    that startup aborted — it must stay down for the full bound).
+    Connection failures (the container is not accepting connections at
+    all) count as "not healthy" in both modes.
+    """
+    deadline = time.monotonic() + timeout
+    if expect_healthy:
+        while time.monotonic() < deadline:
+            try:
+                if http_client.get("/health", timeout=2.0).status_code == 200:
+                    return True
+            except httpx.TransportError:
+                pass
+            time.sleep(poll_interval)
+        return False
+
+    while time.monotonic() < deadline:
+        try:
+            if http_client.get("/health", timeout=2.0).status_code == 200:
+                return False
+        except httpx.TransportError:
+            pass
+        time.sleep(poll_interval)
+    return True
+
+
+class IsolatedComposeStack:
+    """An independent, isolated compose project brought up from the
+    primary compose file plus a caller-supplied override — for
+    scenarios that must not disturb the primary smoke stack shared by
+    every other test in this suite (e.g. verifying a failed migration
+    blocks API startup). Reuses the already-built image via
+    ``SENTINEL_IMAGE`` (inherited from the parent process environment
+    set by ``scripts/image-smoke.sh``), so no image rebuild is
+    triggered.
+
+    See the ``isolated_compose_stack`` fixture below for construction
+    and guaranteed teardown.
+    """
+
+    def __init__(
+        self,
+        project: str,
+        compose_cmd: list[str],
+        file_args: list[str],
+        override_path: Path,
+    ) -> None:
+        self.project = project
+        self._compose_cmd = compose_cmd
+        self._file_args = file_args
+        self._override_path = override_path
+        self._brought_up = False
+
+    def up(self, override_yaml: str) -> subprocess.CompletedProcess[str]:
+        """Write ``override_yaml`` to this stack's override file and run
+        ``up -d --wait`` against the primary compose file plus that
+        override, under this stack's unique project name."""
+        self._override_path.write_text(override_yaml, encoding="utf-8")
+        cmd = [
+            *self._compose_cmd,
+            "-p",
+            self.project,
+            *self._file_args,
+            "-f",
+            str(self._override_path),
+            "up",
+            "-d",
+            "--wait",
+        ]
+        self._brought_up = True
+        return _run_compose_bounded(cmd, timeout=90.0)
+
+    def exec_check(self, service: str, *args: str) -> subprocess.CompletedProcess[str]:
+        """Attempt `compose exec -T <service> <args>` against this
+        stack's project — used to confirm whether `service`'s container
+        is actually running: `exec` fails immediately (non-zero exit,
+        no such service/container) if it was never created or already
+        exited, which is a more robust signal than parsing `ps` output
+        that may differ between the Docker and Podman Compose
+        implementations.
+        """
+        cmd = [
+            *self._compose_cmd,
+            "-p",
+            self.project,
+            *self._file_args,
+            "exec",
+            "-T",
+            service,
+            *args,
+        ]
+        return _run_compose_bounded(cmd, timeout=10.0)
+
+    def teardown(self) -> None:
+        if self._brought_up:
+            cmd = [
+                *self._compose_cmd,
+                "-p",
+                self.project,
+                *self._file_args,
+                "down",
+                "-v",
+                "--remove-orphans",
+            ]
+            _run_compose_bounded(cmd, timeout=60.0)
+
+
+@pytest.fixture
+def isolated_compose_stack(tmp_path: Path) -> Iterator[IsolatedComposeStack]:
+    """Provide one `IsolatedComposeStack` per test, torn down
+    unconditionally on exit (even if `up()` was never called or
+    failed)."""
+    compose_cmd, file_args, _ = _resolve_compose_invocation()
+    stack = IsolatedComposeStack(
+        project=f"sentinel-smoke-isolated-{uuid.uuid4().hex[:8]}",
+        compose_cmd=compose_cmd,
+        file_args=file_args,
+        override_path=tmp_path / "override.yml",
+    )
+    try:
+        yield stack
+    finally:
+        stack.teardown()

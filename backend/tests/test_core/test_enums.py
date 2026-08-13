@@ -15,6 +15,7 @@ from app.core.enums import (
     IdentityAuditEventType,
     Role,
     Scope,
+    SettingAuditEventType,
     UserSortField,
     UserType,
 )
@@ -107,6 +108,20 @@ class TestIdentityAuditEventTypeEnum:
 
     def test_count(self) -> None:
         assert len(list(IdentityAuditEventType)) == 14
+
+
+@pytest.mark.unit
+class TestSettingAuditEventTypeEnum:
+    """SettingAuditEventType must have exactly the one member defined
+    in system-settings.md (Setting Audit Log)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in SettingAuditEventType} == {
+            "setting_changed",
+        }
+
+    def test_count(self) -> None:
+        assert len(list(SettingAuditEventType)) == 1
 
 
 @pytest.mark.unit

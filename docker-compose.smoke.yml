@@ -80,6 +80,18 @@ services:
   api:
     <<: *app-common
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Depends on `migrate` reaching successful completion, not just on
+    # infrastructure health — see docs/deployment.md (Container Images,
+    # Startup Ordering). This makes the migration prerequisite
+    # container-observable: an unsuccessful migration prevents the API
+    # container from starting at all.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     # Published on a non-8000 host port by default to avoid clashing with
     # a local uvicorn dev server. pytest reaches it via
     # IMAGE_SMOKE_BASE_URL, so the host port number is transparent.
@@ -114,9 +126,7 @@ services:
   # Background task execution (Celery). Depends on `migrate` reaching
   # successful completion, not just on infrastructure health — see
   # docs/deployment.md (Container Images, Startup Ordering). The `api`
-  # service does not yet declare this same dependency; that is
-  # deliberately deferred to the work item that introduces
-  # system-setting persistence (see docs/deployment.md).
+  # service declares the same dependency above.
   worker:
     <<: *app-common
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]

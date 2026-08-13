@@ -1,4 +1,5 @@
-"""Image smoke assertions for the identity schema migrations.
+"""Image smoke assertions for the identity and system-settings schema
+migrations.
 
 Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the
@@ -36,7 +37,7 @@ import pytest
 _SCHEMA_CHECK_SCRIPT = """
 import asyncio
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
 from app.database import engine
 
@@ -65,6 +66,11 @@ async def main() -> None:
                 idx["name"]: idx
                 for idx in insp.get_indexes("identity_audit_event")
             }
+            setting_audit_event_indexes = {
+                idx["name"]: idx
+                for idx in insp.get_indexes("setting_audit_event")
+            }
+            setting_audit_event_fks = insp.get_foreign_keys("setting_audit_event")
             return (
                 tables,
                 user_checks,
@@ -73,6 +79,8 @@ async def main() -> None:
                 api_key_indexes,
                 api_key_checks,
                 identity_audit_event_indexes,
+                setting_audit_event_indexes,
+                setting_audit_event_fks,
             )
 
         (
@@ -83,7 +91,17 @@ async def main() -> None:
             api_key_indexes,
             api_key_checks,
             identity_audit_event_indexes,
+            setting_audit_event_indexes,
+            setting_audit_event_fks,
         ) = await conn.run_sync(_inspect)
+
+        seed_result = await conn.execute(
+            text(
+                "SELECT value FROM system_setting "
+                "WHERE key = 'default_cvss_version'"
+            )
+        )
+        seed_value = seed_result.scalar_one_or_none()
 
     assert "user" in tables, f"'user' table missing: {tables}"
     assert "user_role" in tables, f"'user_role' table missing: {tables}"
@@ -91,6 +109,10 @@ async def main() -> None:
     assert "api_key" in tables, f"'api_key' table missing: {tables}"
     assert "identity_audit_event" in tables, (
         f"'identity_audit_event' table missing: {tables}"
+    )
+    assert "system_setting" in tables, f"'system_setting' table missing: {tables}"
+    assert "setting_audit_event" in tables, (
+        f"'setting_audit_event' table missing: {tables}"
     )
     assert "chk_user_auth_exclusive" in user_checks, user_checks
     assert "chk_user_role_role_valid" in user_role_checks, user_role_checks
@@ -113,6 +135,24 @@ async def main() -> None:
     assert (
         "ix_identity_audit_event_target_user_id" in identity_audit_event_indexes
     ), identity_audit_event_indexes
+    assert (
+        "ix_setting_audit_event_created_at" in setting_audit_event_indexes
+    ), setting_audit_event_indexes
+    assert (
+        "ix_setting_audit_event_user_id" in setting_audit_event_indexes
+    ), setting_audit_event_indexes
+    assert (
+        "ix_setting_audit_event_setting_key" in setting_audit_event_indexes
+    ), setting_audit_event_indexes
+    setting_audit_event_fk_tables = {
+        fk["referred_table"] for fk in setting_audit_event_fks
+    }
+    assert setting_audit_event_fk_tables == {"system_setting", "user"}, (
+        setting_audit_event_fks
+    )
+    assert seed_value == "3.1", (
+        f"default_cvss_version seed value mismatch: {seed_value!r}"
+    )
     print("SCHEMA-OK")
     await engine.dispose()
 
@@ -158,12 +198,16 @@ def test_no_alembic_drift(
 
 
 @pytest.mark.image
-def test_identity_schema_tables_and_constraints_exist(
+def test_identity_and_settings_schema_tables_and_constraints_exist(
     compose_exec: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """`user`/`user_role`/`session`/`api_key` tables, their named CHECK
-    constraints, and the `session`/`api_key` indexes (including the
-    partial unique predicate) exist in the migrated database.
+    """`user`/`user_role`/`session`/`api_key`/`system_setting`/
+    `setting_audit_event` tables, their named CHECK constraints, the
+    `session`/`api_key`/`setting_audit_event` indexes (including the
+    partial unique predicate), the `setting_audit_event` foreign keys,
+    and the seeded `default_cvss_version = "3.1"` row all exist in the
+    migrated database (see docs/features/platform/system-settings.md,
+    Bootstrap).
     """
     result = compose_exec("api", "python", "-c", _SCHEMA_CHECK_SCRIPT)
     assert result.returncode == 0, (
