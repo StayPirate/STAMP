@@ -93,10 +93,7 @@ def _prehash(password: str) -> bytes:
     # False positive -- SHA-256 is only a length-normalizing pre-hash
     # step (see docstring above); the actual computationally-expensive
     # password hash is bcrypt(cost=12), applied afterwards in
-    # hash_password(). Dismissed as alert #45. The suppression
-    # annotation below must be the comment line immediately preceding
-    # the flagged line, per CodeQL's CodeQlSuppressionComment rule
-    # (github/codeql shared/util/codeql/util/suppression/AlertSuppression.qll).
+    # hash_password(). Dismissed as alert #45.
     # codeql[py/weak-sensitive-data-hashing]
     digest = hashlib.sha256(password.encode("utf-8")).digest()
     return base64.b64encode(digest)
