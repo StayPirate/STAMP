@@ -1,0 +1,84 @@
+name: Scorecard Analysis
+
+# Runs the official OpenSSF Scorecard action so this repository is
+# discovered, scanned, and published to the public Scorecard dataset
+# (https://scorecard.dev) and to GitHub's Code Scanning dashboard. See
+# docs/deployment.md (CI Pipeline, Workflow Inventory) for this
+# workflow's place in the overall pipeline.
+#
+# This workflow is non-blocking by design: it never fails a merge and
+# never touches the publish path (build-images.yml). It follows the
+# upstream example workflow from https://github.com/ossf/scorecard
+# almost verbatim (trigger set, permission set, step sequence), since
+# `publish_results: true` imposes strict Workflow Restrictions on the
+# job running `ossf/scorecard-action` — see
+# https://github.com/ossf/scorecard-action#workflow-restrictions: no
+# job-level env vars or defaults, no containers or services, and only
+# steps from an approved action allow-list (checkout, upload-artifact,
+# codeql-action/upload-sarif, scorecard-action, harden-runner).
+#
+# Pinning deviation: every action below is pinned by full commit SHA,
+# including actions/checkout and actions/upload-artifact — which use
+# major-version tags (`@v7`) elsewhere in this repository. This
+# workflow is deliberately held to the stricter pin style because (a)
+# Scorecard's own "Pinned-Dependencies" check flags GitHub Actions that
+# are not pinned by hash regardless of tag immutability, and (b) it is
+# itself supply-chain security tooling. See docs/deployment.md
+# (Workflow Conventions, Pinned action references) for the general
+# three-style pinning convention this deviation is drawn from.
+
+on:
+  push:
+    branches:
+      - master
+  schedule:
+    # Weekly on Saturdays, matching the upstream default schedule.
+    - cron: "30 1 * * 6"
+  workflow_dispatch:
+
+concurrency:
+  group: scorecard
+  cancel-in-progress: false
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Required to upload results to Code Scanning.
+      security-events: write
+      # Required for the GitHub OIDC token used by publish_results.
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # The Scorecard team runs a weekly scan of public GitHub
+          # repositories (see https://github.com/ossf/scorecard#public-data).
+          # Publishing our own results lets this repository's scan
+          # come from this workflow instead of their infrastructure,
+          # and is required to enable the README badge / scorecard.dev
+          # listing.
+          publish_results: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: results.sarif
