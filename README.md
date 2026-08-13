@@ -1,13 +1,19 @@
-<!-- Logo placeholder: uncomment and replace when project logo is available -->
-<!-- <p align="center"><img src="docs/assets/logo.png" alt="Sentinel" width="400"></p> -->
+<p align="center"><img src=".github/assets/logo.png" alt="Sentinel — Linux Vulnerability Management" width="500"></p>
 
-# Sentinel
+<p align="center">
+<a href="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+<a href="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml/badge.svg" alt="Image Scan"></a>
+<a href="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml/badge.svg" alt="Python Forward-Compat"></a>
+<a href="https://codecov.io/gh/StayPirate/sentinel"><img src="https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg" alt="codecov"></a>
+<a href="https://github.com/StayPirate/sentinel/releases"><img src="https://img.shields.io/github/v/release/StayPirate/sentinel" alt="Release"></a>
+<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
+</p>
 
-[![CI](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg)](https://codecov.io/gh/StayPirate/sentinel)
-[![Release](https://img.shields.io/github/v/release/StayPirate/sentinel)](https://github.com/StayPirate/sentinel/releases)
-[![Python](https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-TBD-lightgrey)](#)
+<p align="center">
+<a href="https://securityscorecards.dev/viewer/?uri=github.com/StayPirate/sentinel"><img src="https://api.securityscorecards.dev/projects/github.com/StayPirate/sentinel/badge" alt="OpenSSF Scorecard"></a>
+<a href="https://www.bestpractices.dev/en/projects/new?url=https%3A%2F%2Fgithub.com%2FStayPirate%2Fsentinel">OpenSSF Best Practices (pending registration)</a>
+</p>
 
 Security update management platform for SUSE and openSUSE-based Linux
 distributions. Sentinel automates CVE tracking, impact analysis, and
@@ -116,46 +122,6 @@ for detailed progress tracking.
 | Validation | Pydantic v2 |
 | CLI | Click |
 | HTTP Client | httpx |
-
-## Getting Started
-
-### Prerequisites
-
-- **Python 3.13** (managed via [uv](https://docs.astral.sh/uv/))
-- **Podman** or **Docker** (for local infrastructure)
-
-### Setup
-
-```bash
-# Clone the repository
-git clone git@github.com:StayPirate/sentinel.git
-cd sentinel
-
-# Install Python dependencies
-cd backend && uv sync
-
-# Start local infrastructure (PostgreSQL + Redis)
-cd .. && ./scripts/dev-env.sh up
-
-# Run database migrations
-cd backend && uv run alembic upgrade head
-
-# Start the API server
-uv run uvicorn app.main:app --reload
-
-# Run the test suite
-uv run pytest
-```
-
-### Running with Docker
-
-```bash
-# Build the image
-docker build -t sentinel-backend backend/
-
-# Run the full stack (API + Worker + Beat + migrations)
-docker compose -f docker-compose.smoke.yml up
-```
 
 ## Documentation
 
