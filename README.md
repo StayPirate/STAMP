@@ -1,7 +1,4 @@
-<!-- Logo placeholder: uncomment and replace when project logo is available -->
-<!-- <p align="center"><img src="docs/assets/logo.png" alt="Sentinel" width="400"></p> -->
-
-# Sentinel
+<p align="center"><img src=".github/assets/logo.png" alt="Sentinel — Linux Vulnerability Management" width="500"></p>
 
 [![CI](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/StayPirate/sentinel/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg)](https://codecov.io/gh/StayPirate/sentinel)
