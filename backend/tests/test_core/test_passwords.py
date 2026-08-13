@@ -72,7 +72,11 @@ class TestHashPassword:
         import hashlib
 
         hashed = hash_password(_VALID_PASSWORD)
+        # False positive -- this reproduces the pre-hash step only to
+        # verify it matches the stored bcrypt hash; SHA-256 is never
+        # used as the storage hash. Dismissed as alert #46.
         prehash = base64.b64encode(
+            # codeql[py/weak-sensitive-data-hashing]
             hashlib.sha256(_VALID_PASSWORD.encode("utf-8")).digest()
         )
         assert bcrypt.checkpw(prehash, hashed.encode("ascii"))
