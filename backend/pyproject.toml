@@ -49,7 +49,7 @@ Homepage = "https://github.com/StayPirate/sentinel"
 Documentation = "https://github.com/StayPirate/sentinel/tree/master/docs"
 Repository = "https://github.com/StayPirate/sentinel"
 Issues = "https://github.com/StayPirate/sentinel/issues"
-Changelog = "https://github.com/StayPirate/sentinel/blob/master/backend/CHANGELOG.md"
+Changelog = "https://github.com/StayPirate/sentinel/blob/master/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
