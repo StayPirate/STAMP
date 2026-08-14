@@ -2297,9 +2297,12 @@ Beat registration mechanism.
 
 **Celery workers** do NOT write to redbeat. They only:
 
-- Validate the CPE mapping (`check_cpe_mapping()` — first step)
-- Run the bootstrap (shared with Beat and API — second step)
+- Run the bootstrap shared with Beat and API
 - Read `FetcherConfig` during task execution
+
+Generic worker startup does not import, load, or validate domain data.
+In particular, CPE mapping is loaded only by a package-resolution
+consumer; see `docs/features/packages/cpe-package-mapping.md`.
 
 #### Concurrency Between Beat and API
 
@@ -2444,14 +2447,7 @@ tasks could already be executing).
 
 **Sequence**:
 
-1. Call `check_cpe_mapping()` (synchronous — no event loop needed).
-   - If `CPEMappingLoadError` is raised: log CRITICAL
-     `worker_startup_failed` with `stage="cpe_mapping"`,
-     `error_type=type(exc).__name__`, and `error=str(exc)`; call
-     `sys.exit(1)`.
-   - (Note: file-absent and file-empty do NOT raise — they log
-     WARNING inside the loader and return normally.)
-2. Call `asyncio.run(worker_async_bootstrap())` where the async
+1. Call `asyncio.run(worker_async_bootstrap())` where the async
    function performs:
    - `await bootstrap_fetcher_configs()`
    - `await engine.dispose()` (closes the parent's pooled connections
@@ -2460,19 +2456,17 @@ tasks could already be executing).
    - If raises: log CRITICAL `worker_startup_failed` with
      `stage="fetcher_config_bootstrap"`, `error_type`, and
      `error=str(exc)`; call `sys.exit(1)`.
-3. If all steps succeed: log INFO `worker_startup_completed`; return.
+2. If the bootstrap succeeds: log INFO `worker_startup_completed`;
+   return.
 
-**Catch-all**: the entire sequence (steps 1–2) is wrapped in a
+**Catch-all**: the entire sequence is wrapped in a
 `try/except Exception` that catches any exception not already handled
-by the step-specific catches above, logs CRITICAL
-`worker_startup_failed` with the appropriate `stage` (derived from
-which step was executing), `error_type=type(exc).__name__`, and
-`error=str(exc)`, then calls `sys.exit(1)`. This ensures that
-unexpected exceptions from either step (e.g., a database connectivity
-error from `bootstrap_fetcher_configs()` in step 2, or any exception
-type not anticipated by the step-specific handlers) still abort the
-worker instead of being silently swallowed by Celery's signal
-dispatcher.
+by the bootstrap-specific handling above, logs CRITICAL
+`worker_startup_failed` with `stage="fetcher_config_bootstrap"`,
+`error_type=type(exc).__name__`, and `error=str(exc)`, then calls
+`sys.exit(1)`. This ensures that unexpected bootstrap exceptions (for
+example, a database connectivity failure) still abort the worker instead
+of being silently swallowed by Celery's signal dispatcher.
 
 This follows the same pattern as the Beat `beat_init` handler, which
 wraps its entire bootstrap + reconciliation sequence in a catch-all
@@ -2483,19 +2477,14 @@ This is required because Celery's signal dispatcher catches ordinary
 `Exception` from receivers; only `SystemExit` (a `BaseException`)
 propagates through it to abort the process.
 
-**Single-owner rule**: this handler owns the complete Sentinel startup
-sequence for Celery workers. There MUST NOT be separate handlers for
-CPE and bootstrap, because Celery does not guarantee ordering between
-independent receivers of the same signal.
-
-**Logging rationale**: exception messages are included in the log
-(`error=str(exc)`) because startup errors on local files contain only
-filesystem paths and validation rule descriptions — no PII or secrets.
+**Single-owner rule**: this handler owns generic fetcher bootstrap for
+Celery workers. There MUST NOT be separate generic bootstrap handlers,
+because Celery does not guarantee ordering between independent receivers
+of the same signal. Domain consumers do not add work to this generic
+handler.
 
 **Worker-role scope**: runs for both general workers and Git workers.
-All workers run from the same image; validating a small static file is
-negligible. Beat and the IBS consumer do not emit
-`celeryd_after_setup`.
+Beat and the IBS consumer do not emit `celeryd_after_setup`.
 
 ## Concurrency Control
 
@@ -2674,9 +2663,8 @@ Per-fetcher configuration, managed by admins. A record is created
 automatically at process startup by `bootstrap_fetcher_configs()`
 (`backend/app/services/fetcher_bootstrap.py`) — a shared idempotent
 routine that runs in worker, Beat, and API server processes during
-startup. In Beat and API it is the first operation; in
-workers it is the second step, after CPE mapping validation (see
-Worker Startup Handler). The routine executes a batch
+startup. It is the first operation in each process's fetcher startup
+sequence. The routine executes a batch
 `INSERT ... ON CONFLICT DO NOTHING` (on the PK `fetcher_name`) for
 every fetcher in `FETCHER_REGISTRY`, guaranteeing safety when multiple
 processes start concurrently (common in Kubernetes multi-replica
@@ -2696,9 +2684,8 @@ The bootstrap routine:
   `FETCHER_REGISTRY`)
 - Runs as the first operation within each process's startup sequence
   (Beat: first inside `beat_init` handler, before reconciliation; API:
-  during FastAPI startup event, before serving requests; worker:
-  second step in `celeryd_after_setup` handler, after CPE mapping
-  validation — see Worker Startup Handler)
+  during FastAPI startup event, before serving requests; worker: first
+  step in the `celeryd_after_setup` handler — see Worker Startup Handler)
 - Creates records with column defaults (`enabled = true`,
   `run_timeout = 3600`, `request_delay` from `default_request_delay`,
   `custom_settings = '{}'`)

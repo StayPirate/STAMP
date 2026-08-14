@@ -683,14 +683,20 @@ security update.
 - **Access**: REST API at `aimaas.suse.de/api`. Key endpoints:
   - `GET /api/entity/products/{slug}` — individual product lifecycle dates
   - `GET /api/entity/cvss-threshold` (paginated) — CVSS thresholds
+  - `GET /api/entity/cpe-map` (paginated) — complete CPE 2.3 names and
+    associated SUSE source package lists
 - **Integration status**: **Active**. Sentinel periodically syncs lifecycle
   dates (`sync_aimaas_lifecycle` fetcher) and CVSS thresholds
   (`sync_aimaas_thresholds` fetcher). When thresholds or lifecycle dates
   change, Sentinel re-evaluates eligibility for all active tickets
-  referencing the affected products
+  referencing the affected products. The CPE map endpoint is not consumed
+  at runtime; it may serve only as an out-of-band input to reviewed updates
+  of `backend/app/data/cpe-package-mapping.json`, whose canonical contract
+  is defined in `docs/features/packages/cpe-package-mapping.md`
 - **Documentation**: https://aimaas.suse.de (internal)
 - **See also**: `docs/features/packages/product-catalog.md`,
-  `docs/features/tickets/cvss-scoring.md`
+  `docs/features/tickets/cvss-scoring.md`,
+  `docs/features/packages/cpe-package-mapping.md`
 
 ---
 

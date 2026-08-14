@@ -918,9 +918,10 @@ records. Existing records (active or soft-deleted) are skipped.
 The following scenarios invoke `add_package_to_ticket`:
 
 1. **Automatic (CVE ingestion)**: when a CVE is ingested, Sentinel
-   resolves package names from the CVE data (NVD CPE applicability
-   statements, CNA/ADP CPE strings, CNA/ADP vendor:product pairs, or
-   pre-resolved packages). For each resolved package name,
+   resolves package names from the CVE data (NVD CPE package candidates
+   selected by the NVD ingestion contract, CNA/ADP CPE strings, CNA/ADP
+   vendor:product pairs, or pre-resolved packages). For each resolved
+   package name,
    `add_package_to_ticket` is called. See
    `docs/features/tickets/cve-service.md` (Phase 2).
 2. **Manual**: the VA manually adds a package by name via the UI.

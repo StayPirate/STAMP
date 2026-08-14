@@ -295,9 +295,9 @@ classifications are used for automated triage/routing.
 
 **Origin**: CPE-to-Package mapping v2 draft
 (`docs/drafts/cpe-package-mapping-v2.md`) — the static mapping file is
-loaded once at application startup with no runtime observability. An
-administrator has no way to verify the mapping is correctly loaded or
-how many entries it contains.
+loaded and cached by each real consumer process on first use, with no
+runtime observability. An administrator has no way to verify whether a
+consumer loaded the mapping or how many entries it contains.
 
 **Context**: Sentinel currently has no system info or diagnostics
 surface beyond the minimal `/health` liveness endpoint (now formally
@@ -425,15 +425,18 @@ to other open points.
 
 ## Archive — Resolved
 
-### OP-16. CPE Mapping Fail-Fast Asymmetry — RESOLVED
+### OP-16. CPE Mapping Fail-Fast Asymmetry — SUPERSEDED
 
-**Resolution**: resolved via `celeryd_after_setup` worker handler
-that validates the CPE mapping in the worker process before accepting
-tasks. API lifespan guard removed (API does not consume the mapping).
-Worker-specific startup handler contract documented in
-`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
-Handler). Runtime validation contract added to
-`docs/features/packages/cpe-package-mapping.md`.
+**Original resolution**: a `celeryd_after_setup` handler validated the
+mapping before every generic worker accepted tasks.
+
+**Superseding decision**: SG3-01 removes this domain-specific prerequisite
+from generic worker startup. The mapping is loaded lazily by a real
+consumer; an invalid non-empty file fails that consumer task without
+preventing unrelated workers from starting. P4-05 owns the loader,
+validation, and cache but introduces no eager check. Any later eager
+validation belongs to the consuming work item and reuses a contract from
+the mapping module. See `docs/features/packages/cpe-package-mapping.md`.
 
 ---
 
