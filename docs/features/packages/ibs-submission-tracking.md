@@ -905,6 +905,9 @@ than 20 records per ticket, similar to ticket references).
 List all submission requests correlated to the ticket via the
 `SubmissionRequestTrack` join table.
 
+**`Access: Public`**
+**`Authentication: Optional`**
+
 **Query parameters** (all optional):
 
 | Parameter        | Type   | Description                                      |
@@ -954,6 +957,9 @@ List all submission requests correlated to the ticket via the
 | `updated_at`       | datetime (UTC)    | Record update timestamp                          |
 
 ### List Release Requests
+
+**`Access: Public`**
+**`Authentication: Optional`**
 
 List all release requests associated with the ticket. Derived via the
 SR correlation: find SRs correlated to the ticket, collect their
@@ -1241,4 +1247,3 @@ implementation.
   class contract, custom settings
 - `docs/features/platform/networking.md` — `is_retryable_condition()` Celery
   retry classification
-

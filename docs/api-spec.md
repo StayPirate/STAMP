@@ -38,7 +38,8 @@ management.
 Every endpoint definition in a feature specification MUST declare its
 authorization level using one of the following formats:
 
-- **`Access: Public`** — no authentication required
+- **`Access: Public`** — no authentication required; the endpoint additionally
+  declares `Authentication: Optional` when it processes a presented credential
 - **`Access: Authenticated`** — any logged-in user regardless of role
 - **`Capability: <capability_name>`** — requires the specified capability
   (e.g., `Capability: create_ticket`)
@@ -48,6 +49,39 @@ serves as a visual indicator: `Access` means "authentication level
 only", `Capability` means "specific authorization check required". See
 `docs/features/identity/rbac.md` for the full list of capabilities and
 which roles include them.
+
+#### Optional Authentication on Public Endpoints
+
+Every normal Public application endpoint under `/api/v1` MUST process optional
+authentication, including reads whose response does not otherwise vary by
+caller, so browser activity on those endpoints participates in sliding session
+refresh. Place this declaration immediately after the endpoint's access
+declaration:
+
+```text
+**`Authentication: Optional`**
+```
+
+The declaration invokes `get_optional_current_user` from
+`docs/features/identity/authentication.md`. Its result is a fully validated
+`AuthenticatedPrincipal` or `None`; a partially authenticated caller is never
+exposed to endpoint or visibility logic.
+
+- No selected credential is accepted as anonymous and produces no
+  authentication side effect.
+- A valid selected credential authenticates the caller and executes the same
+  JWT refresh or API-key operational effects as mandatory authentication.
+- A selected credential that fails validation returns the global `401
+  AUTH_NOT_AUTHENTICATED`; it is not silently ignored.
+- A selected non-empty Bearer credential never falls back to a cookie after
+  validation failure.
+
+A Public endpoint without this declaration ignores request credentials. This
+form is reserved for exactly `/health`, `/ready`, local login, SSO authorization
+and callback, and authentication-provider discovery, whose probe, bootstrap,
+or recovery contracts must remain independent of stale credentials. Adding
+another exception requires an explicit contract in its owning specification;
+endpoint authors MUST NOT infer optional authentication from `Access: Public`.
 
 **Scope** is an orthogonal dimension applied as an implicit query filter
 (not at the endpoint level). Scope controls confidential ticket
@@ -95,8 +129,10 @@ specific CVE, the same pattern applies:
 3. **CVE accessibility** (`require_accessible_cve`) — returns 404
    `CVE_NOT_FOUND` for non-existent or inaccessible CVEs
 
-For `GET /cves/{cve_id}/cvss` (Public — no authentication required),
-only step 3 applies.
+For every Public endpoint with optional authentication under
+`/cves/{cve_id}/`, optional authentication runs first and CVE accessibility is
+then step 2. An absent credential yields an anonymous caller; a selected
+invalid credential returns 401 before accessibility is evaluated.
 
 For non-ticket, non-CVE endpoints, only steps 1 and 2 apply.
 
@@ -449,20 +485,22 @@ Examples:
 
 ### Global Responses
 
-The following responses may be returned by any authenticated endpoint due to
-shared dependencies (middleware). Individual endpoint error tables document
-only endpoint-specific errors; global responses are not repeated.
+The following responses may be returned by any endpoint that processes
+authentication due to shared dependencies. Individual endpoint error tables
+document only endpoint-specific errors; global responses are not repeated.
 
 | Status | Code                     | Condition                                      | Source                         |
 |--------|--------------------------|------------------------------------------------|--------------------------------|
-| 401    | `AUTH_NOT_AUTHENTICATED` | Missing, malformed, or invalid credentials     | `get_current_user` dependency  |
+| 401    | `AUTH_NOT_AUTHENTICATED` | Credential required but absent, or selected credential invalid | Authentication dependency |
 | 403    | `AUTH_INSUFFICIENT_PERMISSION` | User authenticated but lacks required capability | `require_capability` dependency |
 | 422    | `VALIDATION_ERROR`       | Request body/query/path fails schema validation | FastAPI automatic (Pydantic)   |
 | 500    | `INTERNAL_ERROR`         | Unhandled server error                         | Framework                      |
 
 Notes:
 
-- **Public endpoints** (explicitly marked) are exempt from 401
+- **Public endpoints without optional authentication** are exempt from 401;
+  Public endpoints with `Authentication: Optional` accept absence but return
+  401 when a selected credential fails validation
 - The 401 response body is always `{"code": "AUTH_NOT_AUTHENTICATED",
   "detail": "Authentication required"}` regardless of the specific failure
   reason — no information about the failure cause is disclosed
@@ -638,6 +676,7 @@ The derivation tables below are the single normative source of truth.
 | Access level | Applicable global responses |
 |---|---|
 | `Access: Public` | `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
+| `Access: Public` + `Authentication: Optional` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Access: Authenticated` | `401 AUTH_NOT_AUTHENTICATED`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 | `Capability: <any>` | `401 AUTH_NOT_AUTHENTICATED`, `403 AUTH_INSUFFICIENT_PERMISSION`, `422 VALIDATION_ERROR`, `500 INTERNAL_ERROR` |
 

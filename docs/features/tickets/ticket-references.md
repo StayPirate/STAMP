@@ -510,6 +510,9 @@ via `_classify_type()`.
 GET /api/v1/tickets/{ticket_id}/references
 ```
 
+**`Access: Public`**
+**`Authentication: Optional`**
+
 Returns all references for a ticket (both automatic and manual). This
 endpoint is **not paginated** because the number of references per ticket
 is expected to be small (typically fewer than 30). All references are
@@ -585,11 +588,6 @@ out), the response returns `{"data": []}`.
   ]
 }
 ```
-
-**`Access: Public`**
-
-Soft-deleted ticket protection is enforced centrally — see
-`docs/api-spec.md` ([Scoped Responses](../../api-spec.md#scoped-responses)).
 
 ### Add Reference
 

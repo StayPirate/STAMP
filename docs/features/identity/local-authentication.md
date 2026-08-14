@@ -33,7 +33,7 @@ authenticate exclusively via SSO — see
 Authenticates a local user with username and password, creates a
 session, and returns a JWT.
 
-**Authentication**: none (public endpoint).
+**`Access: Public`**
 
 **Request body**:
 

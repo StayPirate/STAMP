@@ -140,7 +140,7 @@ frontend calls:
 
 #### SSO Authorize
 
-**Authentication**: none (public endpoint).
+**`Access: Public`**
 
 **Behavior**:
 
@@ -203,7 +203,7 @@ callback URL with an authorization `code` and `state` parameter.
 
 #### SSO Callback
 
-**Authentication**: none (public endpoint).
+**`Access: Public`**
 
 **Request body**:
 
@@ -450,7 +450,7 @@ This is a deliberate design decision:
 
 #### List Auth Providers
 
-**Authentication**: none (public endpoint).
+**`Access: Public`**
 
 **Purpose**: allows the frontend to discover which authentication methods
 are available before rendering the login page.

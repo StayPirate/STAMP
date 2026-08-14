@@ -117,9 +117,12 @@ not carry capabilities or scope.
 
 ### Public
 
-No authentication required. Read-only access to platform data:
+No authentication required. Public endpoints that declare optional
+authentication resolve a caller when a valid credential is selected and
+otherwise apply their anonymous behavior. Read-only access to platform data:
 - View users (list and detail)
-- View tickets, CVEs, and products
+- View tickets, CVEs, products, packages, and ticket package trees
+- View ticket references, CVSS assessments, and submission/release requests
 - View fetcher dashboard (list, detail, charts, run history, error messages)
 
 ### Authenticated
@@ -130,6 +133,7 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 - Manage own API keys (list, create, revoke)
 - View own identity audit log (`/api/v1/users/me/audit-log`)
 - View maintainer dashboard (own pending, in-progress, and completed packages)
+- View ticket audit logs
 
 ## Permission Matrix
 
@@ -195,12 +199,17 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | Action | Access |
 |---|---|
 | View users (list and detail) | Public |
-| View tickets / CVEs (active) | Public |
+| View tickets / CVEs | Public |
+| View packages and ticket package trees | Public |
 | View products | Public |
 | View ticket references | Public |
 | View CVSS assessments | Public |
 | View submission/release requests | Public |
 | View fetcher dashboard | Public |
+
+These application read operations use optional authentication. Authentication
+bootstrap/recovery endpoints and infrastructure probes remain Public without
+optional authentication.
 
 ## Scope and Confidential Ticket Visibility
 
@@ -258,6 +267,23 @@ def confidential_ticket_filter(
 When `caller_scope` is `None` (unauthenticated), the function
 short-circuits: only non-confidential tickets are returned, and
 grant/bugowner checks are skipped (no user identity to match against).
+
+### Optional Principal to Caller Context
+
+Public endpoints that depend on caller identity obtain
+`AuthenticatedPrincipal | None` from `get_optional_current_user` before
+building visibility or field-level authorization rules.
+
+- For `None`, pass `caller_scope=None`, `caller_user_id=None`, and
+  `caller_email=None`. No roles are loaded and grant/bugowner checks remain
+  disabled as described above.
+- For an `AuthenticatedPrincipal`, load the user's current roles, resolve the
+  effective scope using the normal Scope resolution rule, and pass that scope
+  together with `principal.user.id` and `principal.user.email`.
+
+Only a completely validated principal reaches this mapping. A selected invalid
+credential returns 401 at the authentication boundary before confidentiality,
+resource accessibility, or optional field-level capability checks execute.
 
 ## Endpoint Authorization
 
@@ -336,7 +362,8 @@ For CVE endpoints that are capability-protected and operate on a
 specific CVE, the same pattern applies with `require_accessible_cve`
 as step 3 — returning `404 CVE_NOT_FOUND` for non-existent or
 inaccessible CVEs (see `docs/api-spec.md`, CVE Accessibility Check).
-For `GET /cves/{cve_id}/cvss` (Public), only step 3 applies.
+For the exact ordering on Public CVE endpoints with optional authentication,
+see `docs/api-spec.md` (Authorization Chain Evaluation Order).
 
 For non-ticket, non-CVE endpoints (user management, settings,
 fetchers), only steps 1 and 2 apply.
@@ -367,8 +394,8 @@ here with the required authorization level and a link to the owning spec.
 |--------|----------|---------------|-------------|
 | GET | `/api/v1/users/me` | Authenticated | [authentication](authentication.md#get-current-user) |
 | GET | `/api/v1/users/me/audit-log` | Authenticated | [identity-audit-log](identity-audit-log.md#list-my-identity-audit-events) |
-| GET | `/api/v1/users` | Public | [user-management](user-management.md#list-users) |
-| GET | `/api/v1/users/{user}` | Public | [user-management](user-management.md#get-user) |
+| GET | `/api/v1/users` | Public (optional auth) | [user-management](user-management.md#list-users) |
+| GET | `/api/v1/users/{user}` | Public (optional auth) | [user-management](user-management.md#get-user) |
 
 ### API Keys
 
@@ -382,8 +409,8 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets` | Public | [tickets](../tickets/tickets.md#list-tickets) |
-| GET | `/api/v1/tickets/{ticket_id}` | Public | [tickets](../tickets/tickets.md#get-ticket) |
+| GET | `/api/v1/tickets` | Public (optional auth) | [tickets](../tickets/tickets.md#list-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}` | Public (optional auth) | [tickets](../tickets/tickets.md#get-ticket) |
 | POST | `/api/v1/tickets` | `create_ticket` †manage_confidentiality | [tickets](../tickets/tickets.md#create-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/associate-cve` | `triage_ticket` | [tickets](../tickets/tickets.md#associate-cve) |
 | PATCH | `/api/v1/tickets/{ticket_id}/severity` | `triage_ticket` | [tickets](../tickets/tickets.md#set-severity-manual) |
@@ -401,8 +428,8 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/packages` | Public | [package-model](../packages/package-model.md#search-packages-across-tickets) |
-| GET | `/api/v1/tickets/{ticket_id}/packages` | Public | [package-model](../packages/package-model.md#list-ticket-packages) |
+| GET | `/api/v1/packages` | Public (optional auth) | [package-model](../packages/package-model.md#search-packages-across-tickets) |
+| GET | `/api/v1/tickets/{ticket_id}/packages` | Public (optional auth) | [package-model](../packages/package-model.md#list-ticket-packages) |
 | POST | `/api/v1/tickets/{ticket_id}/packages` | `manage_packages` | [package-model](../packages/package-model.md#add-package-to-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-package-from-ticket) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-package) |
@@ -417,13 +444,13 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/products` | Public | [product-catalog](../packages/product-catalog.md#list-products) |
+| GET | `/api/v1/products` | Public (optional auth) | [product-catalog](../packages/product-catalog.md#list-products) |
 
 ### Ticket References
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/references` | Public | [references](../tickets/ticket-references.md#list-references) |
+| GET | `/api/v1/tickets/{ticket_id}/references` | Public (optional auth) | [references](../tickets/ticket-references.md#list-references) |
 | POST | `/api/v1/tickets/{ticket_id}/references` | `manage_references` | [references](../tickets/ticket-references.md#add-reference) |
 | PATCH | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#update-reference) |
 | DELETE | `/api/v1/tickets/{ticket_id}/references/{reference_id}` | `manage_references` | [references](../tickets/ticket-references.md#delete-reference) |
@@ -432,13 +459,13 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/cves` | Public | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
-| GET | `/api/v1/cves/{cve_id}/cvss` | Public | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
-| GET | `/api/v1/cves/{cve_id}/sources` | Public | [cve-service](../tickets/cve-service.md#cve-source-status) |
+| GET | `/api/v1/cves` | Public (optional auth) | [cve-tracking](../tickets/cve-tracking.md#list-cves) |
+| GET | `/api/v1/cves/{cve_id}/cvss` | Public (optional auth) | [cvss-scoring](../tickets/cvss-scoring.md#get-cvss-assessments-for-a-cve) |
+| GET | `/api/v1/cves/{cve_id}/sources` | Public (optional auth) | [cve-service](../tickets/cve-service.md#cve-source-status) |
 | POST | `/api/v1/cves/{cve_id}/cvss/suse` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#set-or-update-suse-cvss-assessment) |
 | DELETE | `/api/v1/cves/{cve_id}/cvss/suse/{cvss_version}` | `manage_cvss` | [cvss-scoring](../tickets/cvss-scoring.md#delete-suse-cvss-assessment) |
 | POST | `/api/v1/cves/{cve_id}/refetch` | `triage_ticket` | [cve-tracking](../tickets/cve-tracking.md#re-fetch-cve-data) |
-| GET | `/api/v1/cve-sources` | Public | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
+| GET | `/api/v1/cve-sources` | Public (optional auth) | [cve-service](../tickets/cve-service.md#global-cve-source-listing) |
 
 ### Ticket Events
 
@@ -450,22 +477,22 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-submission-requests) |
-| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-release-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/submission-requests` | Public (optional auth) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-submission-requests) |
+| GET | `/api/v1/tickets/{ticket_id}/release-requests` | Public (optional auth) | [ibs-submission-tracking](../packages/ibs-submission-tracking.md#list-release-requests) |
 
 ### Fetchers
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/fetchers` | Public | [fetcher-operations](../platform/fetcher-operations.md#list-fetchers) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
-| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
-| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
+| GET | `/api/v1/fetchers` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#list-fetchers) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#list-fetcher-runs) |
+| GET | `/api/v1/fetchers/{fetcher_name}/runs/{run_id}` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-detail) |
+| GET | `/api/v1/fetchers/{fetcher_name}/timeline` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-run-timeline-data) |
 | POST | `/api/v1/fetchers/{fetcher_name}/trigger` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#trigger-fetcher) |
 | GET | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config) |
 | PATCH | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config) |
 | GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-audit-log) |
-| GET | `/api/v1/ibs-consumer/status` | Public | [fetcher-operations](../platform/fetcher-operations.md#ibs-rabbitmq-consumer-status) |
+| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#ibs-rabbitmq-consumer-status) |
 
 ### Maintainer Operations
 
@@ -508,7 +535,8 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/ready` | Public | [health-endpoints](../platform/health-endpoints.md#readiness--get-ready) |
 
 **Notes**:
-- "Public" = no authentication required
+- "Public" = no authentication required; "Public (optional auth)" additionally
+  processes a selected credential per `docs/api-spec.md`
 - "Authenticated" = any logged-in user regardless of role
 - Capability names (e.g., `create_ticket`, `manage_users`) = requires the
   specified capability; see Predefined Roles for which roles include each
@@ -553,10 +581,11 @@ here with the required authorization level and a link to the owning spec.
    See `docs/features/identity/authentication.md` (Deactivation ordering) and
    `docs/features/identity/user-service.md`
 6. All authentication events are logged (login, logout, failed attempts)
-7. Session duration: JWT expires after 72 hours of inactivity (refreshed
-   transparently via sliding session for active users). Maximum session
-   lifetime is `SESSION_MAX_LIFETIME_DAYS` (default 30 days) regardless
-   of activity. See `docs/features/identity/authentication.md`
+7. Session duration: JWT expires after 72 hours without a request that
+   processes authentication. Valid JWT requests using mandatory or optional
+   authentication refresh it transparently when eligible. Maximum session
+   lifetime is `SESSION_MAX_LIFETIME_DAYS` (default 30 days) regardless of
+   activity. See `docs/features/identity/authentication.md`
 8. Authenticated users with no roles have an effective scope of
    `non_confidential` and no capabilities. They can access specific
    confidential tickets via `TicketAccessGrant` or bugowner matching —
@@ -748,6 +777,8 @@ is responsible for ensuring the mapping is intentional.
 
 - `docs/features/tickets/tickets.md` — confidentiality rules, status transitions
 - `docs/features/tickets/ticket-mutations.md` — service-layer mutation contracts
+- `docs/features/identity/authentication.md` — authenticated principal and
+  mandatory/optional authentication dependencies
 - `docs/features/identity/identity-provisioning.md` — external sync, role mappings
 - `docs/features/identity/user-service.md` — centralized user lifecycle operations
 - `docs/data-model.md` — Role enum, UserRole table

@@ -22,6 +22,9 @@ This feature depends on the fetcher infrastructure defined in
 GET /api/v1/ibs-consumer/status
 ```
 
+**`Access: Public`**
+**`Authentication: Optional`**
+
 Returns the current status of the `IBSEventConsumer` by reading the
 `sentinel:ibs_consumer_status` key from Redis. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`, section "Redis Heartbeat"
@@ -128,13 +131,14 @@ log a WARNING without exposing the invalid value or parsing details.
 | `reconnect_attempts` | Number of reconnection attempts since disconnection | `0` | `0` | integer (incrementing) | `null` |
 | `next_retry_seconds` | Seconds until the next reconnection attempt | `null` | integer (initial delay, 5s) | integer (backoff) | `null` |
 
-**`Access: Public`**
-
 ### List Fetchers
 
 ```
 GET /api/v1/fetchers
 ```
+
+**`Access: Public`**
+**`Authentication: Optional`**
 
 Returns all fetchers — both registered (present in the in-memory
 `FETCHER_REGISTRY`) and deregistered (removed from the codebase but
@@ -258,13 +262,14 @@ provides the distinction.
   UI fetches it only when opening the configuration panel for a specific
   fetcher (via the GET config endpoint).
 
-**`Access: Public`**
-
 ### List Fetcher Runs
 
 ```
 GET /api/v1/fetchers/{fetcher_name}/runs
 ```
+
+**`Access: Public`**
+**`Authentication: Optional`**
 
 Returns paginated run history for a specific fetcher.
 
@@ -321,8 +326,6 @@ run first). Follows the project-wide default sorting convention.
   `{"id": "uuid", "username": "admin1", "full_name": "Alice Smith", "active": true}`
   when `triggered_by` is `manual`, otherwise `null`
 
-**`Access: Public`**
-
 **Error responses**:
 
 | Status | Code | Condition |
@@ -335,6 +338,9 @@ run first). Follows the project-wide default sorting convention.
 GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}
 ```
 
+**`Access: Public`**
+**`Authentication: Optional`**
+
 Returns full detail for a single run.
 
 **Response** (200 OK):
@@ -346,8 +352,6 @@ Same fields as the list response, plus:
 - `error_traceback`: included ONLY if the requesting user has the
   `manage_fetchers` capability. The field is **absent from the response
   body** for callers without this capability.
-
-**`Access: Public`**
 
 Users with `manage_fetchers` capability see additional fields (`error_detail`,
 `error_traceback`).
@@ -371,6 +375,9 @@ Listing).
 ```
 GET /api/v1/fetchers/{fetcher_name}/timeline
 ```
+
+**`Access: Public`**
+**`Authentication: Optional`**
 
 Returns time-series data optimized for chart rendering. Each data point
 represents an individual `FetcherRun` record.
@@ -433,8 +440,6 @@ endpoint.
   derived from `FetcherAuditEvent` records. Used to render grey overlay
   bands on the chart. If the fetcher is currently disabled, `enabled_at`
   and `enabled_by` are `null`.
-
-**`Access: Public`**
 
 **Sorting**: results are returned in chronological order (`timestamp`
 ascending). Client-controlled sorting is not supported — the data is

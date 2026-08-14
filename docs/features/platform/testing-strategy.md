@@ -1095,8 +1095,9 @@ Every new or modified API endpoint MUST be tested for:
 
 - Happy path with valid input
 - Validation errors (invalid/missing fields) → correct error code
-- Authentication enforcement (unauthenticated request → 401)
-- Authorization enforcement (insufficient permissions → 403)
+- Authentication enforcement when applicable to the declared access level
+  (see `api-spec.md`, Response Applicability Derivation)
+- Authorization enforcement when the declared capability can produce 403
 - Resource not found → 404
 - Edge cases: empty results, boundary values, concurrent modifications
   (for endpoints backed by `FOR UPDATE` locking: verify lock
@@ -1179,6 +1180,27 @@ scenarios are required:
   the 50% threshold; preservation of immutable claims; expiration capping;
   no refresh when the deadline cannot support a positive-lifetime token; and
   absence of database writes
+- Optional authentication returns `None` only when credential selection yields
+  no credential, with no user/session/API-key lookup, refresh, `last_used_at`
+  touch, or unknown-key WARNING
+- Optional authentication returns the same principal and performs the same JWT
+  refresh or API-key operational effects as mandatory authentication for a
+  valid selected credential
+- Every selected credential rejection produces the same generic 401 under
+  optional and mandatory authentication: malformed/expired JWT, missing or
+  inactive session, unknown/revoked/expired API key, and missing/inactive user
+- A selected invalid non-empty Bearer credential never falls back to a valid
+  cookie; empty/whitespace-only Bearer and non-Bearer/unparseable headers retain
+  the documented cookie fallback
+- An absent or empty session cookie produces the same anonymous result as no
+  cookie; a non-empty whitespace-only cookie is a selected invalid credential
+- Database and unexpected infrastructure failures propagate and are never
+  converted into an anonymous optional-authentication result
+- Public endpoints marked `Authentication: Optional` are exercised without a
+  credential, with each valid credential kind, and with a selected invalid
+  credential. Public endpoints without that marker are exercised with a stale
+  credential to prove their probe or authentication-bootstrap contract remains
+  independent of credential validation
 
 **Session liveness and invalidation:**
 
