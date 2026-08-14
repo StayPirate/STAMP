@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -28,14 +29,18 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1.users import _parse_role_filters, _parse_user_type
+from app.config import settings
 from app.core.enums import Role, SessionCreationReason, UserType
 from app.core.exceptions import UserNotFoundError
+from app.core.jwt import issue_token
 from app.database import get_db
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.identity_audit_event import IdentityAuditEvent
+from app.models.session import Session
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services import api_key_service, user_service
@@ -341,6 +346,88 @@ class TestListUsers:
         assert "last_login_at" not in item
         assert "synced_at" not in item
 
+    async def test_valid_jwt_authentication_is_accepted(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+    ) -> None:
+        """See `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints): a valid selected credential authenticates the
+        caller with no change to the public response."""
+        _user, client = authenticated_user_and_client
+
+        response = await client.get("/api/v1/users")
+
+        assert response.status_code == 200
+
+    async def test_valid_api_key_authentication_is_accepted(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        user = await user_factory()
+        token, digest = _make_api_key_credential()
+        key = await api_key_factory(user_id=user.id, key_hash=digest)
+        touch_mock = AsyncMock()
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", touch_mock)
+
+        response = await client.get(
+            "/api/v1/users", headers={"Authorization": f"Bearer {token}"}
+        )
+
+        assert response.status_code == 200
+        touch_mock.assert_awaited_once()
+        assert touch_mock.await_args is not None
+        assert touch_mock.await_args.args[0] == key.id
+
+    async def test_invalid_selected_credential_returns_401(
+        self, client: AsyncClient
+    ) -> None:
+        """A selected but rejected credential is never silently ignored
+        — see `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints)."""
+        response = await client.get(
+            "/api/v1/users",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+
+        assert response.status_code == 401
+        assert response.json() == {
+            "code": "AUTH_NOT_AUTHENTICATED",
+            "detail": "Authentication required",
+        }
+
+    async def test_eligible_jwt_triggers_sliding_refresh(
+        self,
+        client: AsyncClient,
+        session_factory: Callable[..., Awaitable[Session]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """Proves optional authentication is actually wired on this
+        Public endpoint end-to-end, not merely accepted as a no-op —
+        see `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints): "so browser activity on those endpoints
+        participates in sliding session refresh"."""
+        session = await session_factory()
+        old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
+        issued = issue_token(
+            user_id=session.user_id,
+            session_id=session.id,
+            issued_at=old_iat,
+            session_deadline=session.expires_at,
+            jwt_expiry_hours=settings.jwt_expiry_hours,
+            secret_key=settings.jwt_secret_key.get_secret_value(),
+        )
+
+        response = await client.get(
+            "/api/v1/users", headers={"Authorization": f"Bearer {issued.token}"}
+        )
+
+        assert response.status_code == 200
+        assert "set-cookie" in response.headers
+        assert response.headers["set-cookie"].startswith(f"{SESSION_COOKIE_NAME}=")
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/users/{user}
@@ -453,6 +540,98 @@ class TestGetUser:
         response = await client.get(f"/api/v1/users/{user.username}")
 
         assert "password_hash" not in response.json()["data"]
+
+    async def test_valid_jwt_authentication_is_accepted(
+        self,
+        authenticated_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """See `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints): a valid selected credential authenticates the
+        caller with no change to the public response."""
+        _actor, client = authenticated_user_and_client
+        target = await user_factory(username="jwttargetuser")
+
+        response = await client.get(f"/api/v1/users/{target.username}")
+
+        assert response.status_code == 200
+
+    async def test_valid_api_key_authentication_is_accepted(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        api_key_factory: Callable[..., Awaitable[ApiKey]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        actor = await user_factory()
+        target = await user_factory(username="apikeytargetuser")
+        token, digest = _make_api_key_credential()
+        key = await api_key_factory(user_id=actor.id, key_hash=digest)
+        touch_mock = AsyncMock()
+        monkeypatch.setattr(dependencies._last_used_debouncer, "touch", touch_mock)
+
+        response = await client.get(
+            f"/api/v1/users/{target.username}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200
+        touch_mock.assert_awaited_once()
+        assert touch_mock.await_args is not None
+        assert touch_mock.await_args.args[0] == key.id
+
+    async def test_invalid_selected_credential_returns_401(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+    ) -> None:
+        """A selected but rejected credential is never silently ignored
+        — see `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints)."""
+        target = await user_factory(username="rejectedcredentialtarget")
+
+        response = await client.get(
+            f"/api/v1/users/{target.username}",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+
+        assert response.status_code == 401
+        assert response.json() == {
+            "code": "AUTH_NOT_AUTHENTICATED",
+            "detail": "Authentication required",
+        }
+
+    async def test_eligible_jwt_triggers_sliding_refresh(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """Proves optional authentication is actually wired on this
+        Public endpoint end-to-end, not merely accepted as a no-op —
+        see `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints)."""
+        target = await user_factory(username="refreshtargetuser")
+        session = await session_factory()
+        old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
+        issued = issue_token(
+            user_id=session.user_id,
+            session_id=session.id,
+            issued_at=old_iat,
+            session_deadline=session.expires_at,
+            jwt_expiry_hours=settings.jwt_expiry_hours,
+            secret_key=settings.jwt_secret_key.get_secret_value(),
+        )
+
+        response = await client.get(
+            f"/api/v1/users/{target.username}",
+            headers={"Authorization": f"Bearer {issued.token}"},
+        )
+
+        assert response.status_code == 200
+        assert "set-cookie" in response.headers
+        assert response.headers["set-cookie"].startswith(f"{SESSION_COOKIE_NAME}=")
 
 
 # ---------------------------------------------------------------------------

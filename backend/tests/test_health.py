@@ -118,6 +118,27 @@ class TestLivenessEndpoint:
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
+    async def test_stale_credential_is_ignored(self, client: AsyncClient) -> None:
+        """`/health` is one of the documented exceptions to `Authentication:
+        Optional` (see `docs/api-spec.md`, Optional Authentication on
+        Public Endpoints): it ignores request credentials entirely, so a
+        malformed JWT or unknown API key must not affect its probe
+        contract — see `docs/features/platform/testing-strategy.md`
+        (Optional authentication mandatory scenarios)."""
+        response = await client.get(
+            "/health",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+        response = await client.get(
+            "/health",
+            headers={"Authorization": "Bearer stl_ak_" + "0" * 32},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
 
 @pytest.mark.e2e
 class TestReadinessEndpointSuccess:
@@ -173,6 +194,38 @@ class TestReadinessEndpointSuccess:
     ) -> None:
         response = await client.get("/ready")
         assert response.status_code == 200
+
+    async def test_stale_credential_does_not_affect_result(
+        self,
+        client: AsyncClient,
+        use_real_readiness_postgresql: None,
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """`/ready` is one of the documented exceptions to `Authentication:
+        Optional` (see `docs/api-spec.md`, Optional Authentication on
+        Public Endpoints): the result depends only on the readiness
+        checks, never on a stale or invalid credential — see
+        `docs/features/platform/testing-strategy.md` (Optional
+        authentication mandatory scenarios)."""
+        response = await client.get(
+            "/ready",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ok",
+            "checks": {"postgresql": "ok", "redis": "ok"},
+        }
+
+        response = await client.get(
+            "/ready",
+            headers={"Authorization": "Bearer stl_ak_" + "0" * 32},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ok",
+            "checks": {"postgresql": "ok", "redis": "ok"},
+        }
 
     async def test_performs_fresh_checks_each_request(
         self,

@@ -1,7 +1,8 @@
 """Shared authentication and authorization FastAPI dependencies.
 
 See `docs/features/identity/authentication.md` (Authenticated Principal,
-Middleware: `get_current_user`, API key validation, Session-Only
+Authentication Dependencies: `get_current_user`,
+`get_optional_current_user`, API key validation, Session-Only
 Authentication Dependency) and `docs/features/identity/rbac.md`
 (`require_capability()` Dependency) for the authoritative contracts
 this module implements.
@@ -49,8 +50,8 @@ def unauthenticated_error() -> AppError:
     `get_current_user()` (missing credential, invalid JWT, failed
     session liveness, unknown/revoked/expired API key, missing/inactive
     user) and by the logout endpoint's lightweight JWT-only dependency
-    — see `docs/features/identity/authentication.md` (Credential
-    resolution): "All HTTP 401 responses return a generic body ...
+    — see `docs/features/identity/authentication.md` (Shared Credential
+    Resolution): "All HTTP 401 responses return a generic body ...
     regardless of the specific failure reason." A fresh instance per
     call avoids accumulating traceback state and request-local
     credential data on a shared singleton exception.
@@ -333,7 +334,7 @@ async def _authenticate_jwt(
 
     # Sliding refresh occurs here — after the user-active check — so a
     # refreshed cookie is never emitted alongside a 401 for an inactive
-    # user (authentication.md, Credential resolution step 6).
+    # user (authentication.md, Shared Credential Resolution step 6).
     refreshed = refresh_token(
         claims,
         now=now,
@@ -381,31 +382,35 @@ async def _authenticate_api_key(
 
 
 # ---------------------------------------------------------------------------
-# `get_current_user`
+# Shared credential resolution — `get_current_user` / `get_optional_current_user`
 # ---------------------------------------------------------------------------
 
 
-async def get_current_user(
+async def _resolve_principal(
     request: Request,
     response: Response,
     db: DatabaseSession,
-) -> AuthenticatedPrincipal:
-    """Resolve and validate the request's credential.
+) -> AuthenticatedPrincipal | None:
+    """Apply Shared Credential Resolution and return the principal, or
+    `None` when no credential is selected.
 
-    See `docs/features/identity/authentication.md` (Middleware:
-    `get_current_user`, Credential resolution) for the authoritative
-    behavior: `Authorization: Bearer` precedence over the
-    `sentinel_session` cookie, JWT-vs-API-key dispatch by the
-    `stl_ak_` prefix, the generic 401 on any validation failure, and
-    the JWT-only sliding refresh. Injected via `Depends()` into every
-    endpoint that requires authentication.
+    See `docs/features/identity/authentication.md` (Authentication
+    Dependencies, Shared Credential Resolution): `get_current_user` and
+    `get_optional_current_user` share this single selection and
+    validation path and differ only in how they handle the `None`
+    case — they must never diverge on validation behavior or
+    successful-authentication side effects. `Authorization: Bearer`
+    takes precedence over the `sentinel_session` cookie; JWT-vs-API-key
+    dispatch uses the `stl_ak_` prefix; any selected-but-rejected
+    credential raises the generic 401 (never converted to `None` here);
+    and JWT requests receive the sliding refresh evaluation.
     """
     credential = extract_credential(
         request.headers.get("authorization"),
         request.cookies.get(SESSION_COOKIE_NAME),
     )
     if credential is None:
-        raise unauthenticated_error()
+        return None
 
     now = datetime.now(UTC)
     if credential.startswith(API_KEY_PREFIX):
@@ -418,7 +423,51 @@ async def get_current_user(
     return AuthenticatedPrincipal(user=user, credential_kind=credential_kind)
 
 
+async def get_current_user(
+    request: Request,
+    response: Response,
+    db: DatabaseSession,
+) -> AuthenticatedPrincipal:
+    """Resolve and validate the request's credential; reject if absent.
+
+    See `docs/features/identity/authentication.md` (`get_current_user`):
+    applies Shared Credential Resolution and returns the generic 401
+    when no credential is selected. Injected via `Depends()` into every
+    endpoint that requires authentication.
+    """
+    principal = await _resolve_principal(request, response, db)
+    if principal is None:
+        raise unauthenticated_error()
+    return principal
+
+
 CurrentUser = Annotated[AuthenticatedPrincipal, Depends(get_current_user)]
+
+
+async def get_optional_current_user(
+    request: Request,
+    response: Response,
+    db: DatabaseSession,
+) -> AuthenticatedPrincipal | None:
+    """Resolve and validate the request's credential; return `None` if absent.
+
+    See `docs/features/identity/authentication.md`
+    (`get_optional_current_user`): applies Shared Credential Resolution
+    to Public endpoints that declare `Authentication: Optional`. Returns
+    `None` only when no credential is selected — no user/session/API-key
+    lookup, refresh, `last_used_at` touch, or unknown-key WARNING occurs
+    in that case. A selected credential is validated exactly as in
+    `get_current_user`: success returns the same `AuthenticatedPrincipal`
+    with the same side effects (JWT refresh, API-key `last_used_at`
+    touch); rejection raises the same generic 401 rather than degrading
+    to anonymous access.
+    """
+    return await _resolve_principal(request, response, db)
+
+
+OptionalCurrentUser = Annotated[
+    AuthenticatedPrincipal | None, Depends(get_optional_current_user)
+]
 
 
 # ---------------------------------------------------------------------------

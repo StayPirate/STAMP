@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Query, status
 from app.api.dependencies import (
     AuthenticatedPrincipal,
     CurrentUser,
+    OptionalCurrentUser,
     require_capability,
     require_session_authentication,
     user_not_found_error,
@@ -252,9 +253,16 @@ def _serialize_user(user: User) -> UserData:
 async def list_users(
     db: DatabaseSession,
     query: Annotated[UserListQuery, Depends(_user_list_query)],
+    _principal: OptionalCurrentUser,
 ) -> UserListResponse:
     """List users — see
-    `docs/features/identity/user-management.md` (List Users)."""
+    `docs/features/identity/user-management.md` (List Users).
+
+    `_principal` is unused by the response: it exists solely to run
+    optional authentication (`Authentication: Optional`) so a valid
+    selected credential participates in JWT sliding refresh and API-key
+    operational effects — see `docs/api-spec.md` (Optional
+    Authentication on Public Endpoints)."""
     type_valid, user_type = _parse_user_type(query.type)
     roles_valid, roles = _parse_role_filters(query.role)
     if not type_valid or not roles_valid:
@@ -324,9 +332,17 @@ async def get_current_user_profile(
         },
     },
 )
-async def get_user(user: str, db: DatabaseSession) -> UserResponse:
+async def get_user(
+    user: str, db: DatabaseSession, _principal: OptionalCurrentUser
+) -> UserResponse:
     """Get user — see
-    `docs/features/identity/user-management.md` (Get User)."""
+    `docs/features/identity/user-management.md` (Get User).
+
+    `_principal` is unused by the response: it exists solely to run
+    optional authentication (`Authentication: Optional`) so a valid
+    selected credential participates in JWT sliding refresh and API-key
+    operational effects — see `docs/api-spec.md` (Optional
+    Authentication on Public Endpoints)."""
     try:
         resolved = await user_service.get_user(db, user)
     except UserNotFoundError:
