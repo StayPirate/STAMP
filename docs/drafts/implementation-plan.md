@@ -51,6 +51,11 @@ tested, reviewed, and merged independently while leaving `master` deployable.
 Each piece has a stable ID (`P<phase>-<sequence>`, for example `P1-03`) and is
 represented by one GitHub sub-issue.
 
+Candidate IDs in a future, not-yet-elaborated phase remain provisional. They
+become stable when progressive elaboration creates their GitHub issues. A
+one-time phase-planning work item uses `PG<phase>-00`; documentation gates use
+the `SG<phase>-<sequence>` form.
+
 Execution follows `docs/conventions.md` (Git Conventions). The roadmap-specific
 mapping is:
 
@@ -196,7 +201,7 @@ Examples:
 - System-setting mutation and recalculation endpoints require Ticket/CVSS
   services. `P2-14` implements persistence/startup foundations, `P2-15`
   implements the two read APIs, and mutation/recalculation behavior completes
-  only in `P4-27`.
+  only in `P4-28`.
 - `BaseCVEFetcher` requires CVE/Ticket models and CVE services. Only generic
   `BaseFetcher` infrastructure belongs in Phase 3.
 - The IBS consumer status endpoint in `fetcher-operations.md` remains deferred
@@ -226,8 +231,8 @@ deployable behavior; that decision is recorded in the phase parent issue.
 | Prep | Image testing setup | Completed (2026-07-29) |
 | 0 | Infrastructure completion and validation | Completed (2026-07-30) |
 | 1 | Cross-cutting platform foundations and identity roots | Completed (2026-08-03) |
-| 2 | Local identity foundation | Not started |
-| 3 | Generic fetcher platform | Not started |
+| 2 | Local identity foundation | Completed (2026-08-14) |
+| 3 | Generic fetcher platform | Documentation gates pending |
 | RG-01 | Resolve product/package/CVE contract boundary | Not started — immediate documentation work |
 | 4 | Ticket, CVE, and conditional package domain core | Not started; package orchestration blocked by `RG-01` |
 | 5 | CVE fetcher infrastructure and real ingestion | Blocked by Phase 4 |
@@ -236,7 +241,7 @@ deployable behavior; that decision is recorded in the phase parent issue.
 
 ## GitHub Tracking Model
 
-After this plan is merged, create the following operational structure:
+The roadmap uses the following operational structure:
 
 - **Project**: `Sentinel Backend Implementation`, covering the entire plan.
 - **Milestone per phase**: phases are repository milestones without artificial
@@ -264,9 +269,9 @@ Initial views:
 3. **Blocked**: filtered to blocked issues and visible dependency relations.
 
 A roadmap/date view is intentionally deferred until real scheduling needs
-exist. Create all phase parent issues after this plan merges, but create
-detailed sub-issues only for Phase 1. Elaborate Phase 2 when Phase 1 approaches
-completion.
+exist. Phase parent issues exist for the approved roadmap; detailed sub-issues
+are created only for the next executable phase under the progressive
+elaboration rule.
 
 ---
 
@@ -329,15 +334,19 @@ publication all completed; see Progress Log).
 
 ## Phase 2 — Local Identity Foundation
 
+**Status: Completed (2026-08-14).** All implementation pieces and
+documentation gates merged and were released in v0.4.0.
+
 **Outcome**: local users can authenticate, bootstrap an administrator, use API
 keys, and access the ticket-independent identity management surface.
 
-The Phase 2 documentation gates referenced below are: `SG-03` (#105, session,
-lockout, and identity logging), `SG-04` (#106, API key contracts), `SG-05`
-(#108, user lifecycle and identity audit), `SG-06` (#109, CLI invocation and
-transactions), `SG-07` (#107, system settings bootstrap and reads), and
-`SG-08` (#101, Redis I/O ordering and rollback claims). The optional
-authentication contract gate is #177.
+The Phase 2 documentation gates referenced below are: `SG-02` (#90, Redis
+contracts and testability), `SG-03` (#105, session, lockout, and identity
+logging), `SG-04` (#106, API key contracts), `SG-05` (#108, user lifecycle and
+identity audit), `SG-06` (#109, CLI invocation and transactions), `SG-07`
+(#107, system settings bootstrap and reads), and `SG-08` (#101, Redis I/O
+ordering and rollback claims). The optional authentication contract gate is
+#177.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
@@ -408,27 +417,58 @@ lifespan/image tests. It does not introduce settings API routes.
 and their permission, validation, API, audit-read, OpenAPI, and image tests. It
 does not mutate settings or create audit events. The PATCH endpoint,
 recalculation endpoint, Redis/Celery coordination, mutation transaction and
-  audit insertion, and recalculation task remain exclusively in `P4-27`.
+  audit insertion, and recalculation task remain exclusively in `P4-28`.
 
 ## Phase 3 — Generic Fetcher Platform
 
 **Outcome**: non-domain-specific fetchers can register, schedule, run, report
 metrics, and be operated through generic API/CLI surfaces.
 
+Phase 3 remains independent of CVE, Ticket, package-resolution, and real
+upstream-ingestion behavior. `SG3-01` must detach CPE mapping validation from
+generic worker startup and assign its implementation to `P4-05` before Phase 3
+implementation begins.
+
+The documentation gates below must merge before implementation begins:
+
+| ID | Gate | Direct blockers | Primary contract |
+|---|---|---|---|
+| `SG3-01` | Detach CPE mapping from generic fetcher startup | `PG3-00` | `packages/cpe-package-mapping.md`, `platform/fetcher-infrastructure.md`, `tickets/cve-service.md` |
+| `SG3-02` | Complete generic fetcher runtime contracts | `SG3-01` | `platform/fetcher-infrastructure.md`, `architecture.md`, `conventions.md` |
+| `SG3-03` | Complete fetcher operations and CLI contracts | `SG3-02` | `platform/fetcher-operations.md`, `api-spec.md`, `conventions.md` |
+| `SG3-04` | Define test-only fetcher system-test contract | `SG3-03` | `platform/testing-strategy.md`, `platform/fetcher-infrastructure.md` |
+
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P3-01` | FetcherConfig/FetcherRun/FetcherAuditEvent models and migration | Phase 2 | `platform/fetcher-infrastructure.md` |
-| `P3-02` | BaseFetcher lifecycle, registry, metrics, sanitization, settings schema | `P3-01`, `P1-02` | `platform/fetcher-infrastructure.md` |
-| `P3-03` | CPE package mapping loader, pure resolution, startup validation, and fixtures | `P1-02` | `packages/cpe-package-mapping.md` |
-| `P3-04` | Generic task wrapper, config bootstrap, redbeat reconciliation, worker/Beat image smoke | `P3-02`, `P3-03`, `P1-06` | `platform/fetcher-infrastructure.md` |
-| `P3-05` | Generic fetcher API operations | `P3-04`, `P2-05` | `platform/fetcher-operations.md` |
-| `P3-06` | Fetcher diagnostic CLI: `fetcher list` and `fetcher config` | `P3-04`, `P2-12` | `platform/fetcher-operations.md` |
-| `P3-07` | Test-only no-op fetcher end-to-end validation | `P3-04`, `P3-05` | `platform/testing-strategy.md` |
+| `P3-01` | Fetcher persistence and audit foundation | `SG3-04` | `platform/fetcher-infrastructure.md`, `data-model.md` |
+| `P3-02` | BaseFetcher lifecycle and registry | `P3-01` | `platform/fetcher-infrastructure.md`, `platform/networking.md` |
+| `P3-03` | Generic fetcher task and concurrency | `P3-02` | `platform/fetcher-infrastructure.md` |
+| `P3-04` | Fetcher config bootstrap and process startup | `P3-02` | `platform/fetcher-infrastructure.md`, `deployment.md` |
+| `P3-05` | RedBeat scheduling and reconciliation | `P3-03`, `P3-04` | `platform/fetcher-infrastructure.md` |
+| `P3-06` | Public fetcher observation API | `P3-05`, `P2-16` | `platform/fetcher-operations.md` |
+| `P3-07` | Admin fetcher configuration and audit reads | `P3-04`, `P2-06` | `platform/fetcher-operations.md` |
+| `P3-08` | Fetcher configuration mutation | `P3-05`, `P3-07` | `platform/fetcher-operations.md` |
+| `P3-09` | Manual fetcher trigger | `P3-05`, `P3-06` | `platform/fetcher-operations.md` |
+| `P3-10` | Fetcher diagnostic CLI | `P3-04`, `P2-12` | `platform/fetcher-operations.md` |
+| `P3-11` | Test-only fetcher system validation | `P3-05`, `P3-06` | `platform/testing-strategy.md` |
 
-`P3-05` excludes the IBS RabbitMQ consumer status endpoint; that endpoint is
-implemented with its disabled owning integration in Phase 7+. `P3-07` proves
-schedule → run → FetcherRun → operational visibility without adding a
-production no-op fetcher.
+`P3-04` extends the already-active worker and Beat image roles with
+fetcher-specific bootstrap and startup assertions; it does not introduce those
+roles. `P3-06` owns `GET /api/v1/fetchers`, run list/detail, and timeline.
+`P3-07` owns the capability-protected config and audit-log reads. `P3-08` and
+`P3-09` isolate the two mutation workflows because they have different
+transaction, audit, Redis, and broker semantics. `SG3-03` owns the approved
+in-flight-timeout and manual-trigger transaction decisions before either
+mutation piece begins. `SG3-02` owns worker handling of supplied run records.
+
+`P3-11` validates the complete generic pipeline without introducing
+production-facing test scaffolding; `SG3-04` owns the test-harness contract.
+
+The IBS RabbitMQ consumer status endpoint remains with its owning disabled
+integration in Phase 7+. `P3-02` owns the generic catch-up extension points and
+registry validation retained by `SG3-02`; ticket/CVE invocation, the generic
+task that depends on that domain, `BaseCVEFetcher`, and all real fetchers remain
+outside Phase 3.
 
 ## Phase 4 — Ticket, CVE, and Package Domain Core
 
@@ -442,36 +482,38 @@ automatic ingestion.
 | `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
 | `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
 | `P4-04` | Pure CVSS resolution | `P2-14`, `P4-02` | `tickets/cvss-scoring.md` |
-| `P4-05` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
-| `P4-06` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
-| `P4-07` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
-| `P4-08` | Ticket audit service and pure gate predicates | `P4-03`, `P4-04`, `P4-07` | `tickets/ticket-audit-log.md`, `tickets/ticket-mutations.md` |
-| `P4-09` | Status reconciliation plus CVSS mutation/recalculation chain | `P4-08` | `tickets/ticket-mutations.md`, `tickets/cvss-scoring.md` |
-| `P4-10` | CVSS assessment and severity APIs | `P4-09` | `tickets/cvss-scoring.md` |
-| `P4-11` | Manual-zone ticket mutations | `P4-09` | `tickets/ticket-mutations.md` |
-| `P4-12` | Ticket creation and CVE-association service functions | `P4-06`, `P4-09` | `tickets/ticket-service.md` |
-| `P4-13` | Ticket assignment/lifecycle service and APIs | `P4-11`, `P4-12` | ticket service/mutation specs |
-| `P4-14` | Ticket confidentiality/access service, APIs, and stale-grant cleanup task | `P4-12` | `tickets/ticket-service.md`, `tickets/tickets.md` |
-| `P4-15` | Internal package record creation and state mutation services/APIs | `P4-07`, `P4-09` | package model/service specs |
-| `P4-16` | Package exclusion/restore services and APIs | `P4-15` | package model/service specs |
-| `P4-17` | Package query services and read APIs | `P4-15` | package model/service specs |
-| `P4-18` | Ticket reference service and APIs | `P4-03`, `P4-12` | `tickets/ticket-references.md` |
-| `P4-19` | Ticket/CVE list/detail and audit read APIs | `RG-01`, `P4-12`, `P4-17`, `P4-18` | `tickets/tickets.md`, `tickets/cve-tracking.md` |
-| `P4-20` | Full package orchestration and package-add API | `RG-01`, `P4-15` | package model/service specs plus `RG-01` resolution |
-| `P4-21` | Complete CVE ingestion transaction | `P4-02`, `P4-05`, `P4-09`, `P4-12`, `P4-18`, `P4-20` | `tickets/cve-service.md` |
-| `P4-22` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-21`, `P3-02` | `platform/cve-fetcher-infrastructure.md` |
-| `P4-23` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-19`, `P4-22` | ticket and CVE API specs |
-| `P4-24` | Shared active-ticket unassignment helper and audit behavior | `P4-09`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
-| `P4-25` | Complete `update_roles`, `manage-user update`, and role-management APIs | `P4-24` | identity service/management specs |
-| `P4-26` | Complete `deactivate_user`, impact query, `manage-user deactivate`, and APIs | `P4-24` | identity service/management specs |
-| `P4-27` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-09`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-05` | CPE package mapping loader, canonical data validation, and cached resolution | Phase 3, `SG3-01` | `packages/cpe-package-mapping.md` |
+| `P4-06` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
+| `P4-07` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
+| `P4-08` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
+| `P4-09` | Ticket audit service and pure gate predicates | `P4-03`, `P4-04`, `P4-08` | `tickets/ticket-audit-log.md`, `tickets/ticket-mutations.md` |
+| `P4-10` | Status reconciliation plus CVSS mutation/recalculation chain | `P4-09` | `tickets/ticket-mutations.md`, `tickets/cvss-scoring.md` |
+| `P4-11` | CVSS assessment and severity APIs | `P4-10` | `tickets/cvss-scoring.md` |
+| `P4-12` | Manual-zone ticket mutations | `P4-10` | `tickets/ticket-mutations.md` |
+| `P4-13` | Ticket creation and CVE-association service functions | `P4-07`, `P4-10` | `tickets/ticket-service.md` |
+| `P4-14` | Ticket assignment/lifecycle service and APIs | `P4-12`, `P4-13` | ticket service/mutation specs |
+| `P4-15` | Ticket confidentiality/access service, APIs, and stale-grant cleanup task | `P4-13` | `tickets/ticket-service.md`, `tickets/tickets.md` |
+| `P4-16` | Internal package record creation and state mutation services/APIs | `P4-08`, `P4-10` | package model/service specs |
+| `P4-17` | Package exclusion/restore services and APIs | `P4-16` | package model/service specs |
+| `P4-18` | Package query services and read APIs | `P4-16` | package model/service specs |
+| `P4-19` | Ticket reference service and APIs | `P4-03`, `P4-13` | `tickets/ticket-references.md` |
+| `P4-20` | Ticket/CVE list/detail and audit read APIs | `RG-01`, `P4-13`, `P4-18`, `P4-19` | `tickets/tickets.md`, `tickets/cve-tracking.md` |
+| `P4-21` | Full package orchestration and package-add API | `RG-01`, `P4-05`, `P4-16` | package model/service specs plus `RG-01` resolution |
+| `P4-22` | Complete CVE ingestion transaction | `P4-02`, `P4-05`, `P4-06`, `P4-10`, `P4-13`, `P4-19`, `P4-21` | `tickets/cve-service.md` |
+| `P4-23` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-22`, `P3-02` | `platform/cve-fetcher-infrastructure.md`, `platform/fetcher-infrastructure.md` |
+| `P4-24` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-20`, `P4-23` | ticket and CVE API specs |
+| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-10`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
+| `P4-26` | Complete `update_roles`, `manage-user update`, and role-management APIs | `P4-25` | identity service/management specs |
+| `P4-27` | Complete `deactivate_user`, impact query, `manage-user deactivate`, and APIs | `P4-25` | identity service/management specs |
+| `P4-28` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-10`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
 
 The candidate pieces above are intentionally more granular than the old
 service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate
-the exact functions/endpoints it owns and preserve complete contracts. Package
-pieces blocked by `RG-01` remain Blocked while independent CVE/Ticket pieces
-may proceed. Migration and endpoint image assertions remain with the pieces
-that introduce them under the testing-strategy Growth Rule.
+the exact functions/endpoints it owns and preserve complete contracts.
+`P4-01` through `P4-07` are independent of `RG-01`; `P4-08` and every piece
+transitively dependent on it remain Blocked until that gate merges. Migration
+and endpoint image assertions remain with the pieces that introduce them under
+the testing-strategy Growth Rule.
 
 ## Phase 5 — CVE Fetcher Infrastructure and Ingestion
 
@@ -480,15 +522,15 @@ platform and the complete CVE ingestion service.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P5-01` | BaseGitFetcher, git operations, git-worker runtime and image smoke | `P4-22` | `platform/git-fetcher-infrastructure.md` |
-| `P5-02` | NVD fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-nvd.md` |
-| `P5-03` | Red Hat fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-redhat.md` |
-| `P5-04` | GHSA fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-ghsa.md` |
-| `P5-05` | OSV fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-osv.md` |
-| `P5-06` | EPSS fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-epss.md` |
-| `P5-07` | CISA KEV fetcher | `P4-22`, `P4-23` | `tickets/cve-sync-kev.md` |
-| `P5-08` | MITRE fetcher | `P5-01`, `P4-23` | `tickets/cve-sync-mitre.md` |
-| `P5-09` | Linux Kernel fetcher | `P5-01`, `P4-23` | `tickets/cve-sync-kernel.md` |
+| `P5-01` | BaseGitFetcher, git operations, git-worker runtime and image smoke | `P4-23` | `platform/git-fetcher-infrastructure.md` |
+| `P5-02` | NVD fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-nvd.md` |
+| `P5-03` | Red Hat fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-redhat.md` |
+| `P5-04` | GHSA fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-ghsa.md` |
+| `P5-05` | OSV fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-osv.md` |
+| `P5-06` | EPSS fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-epss.md` |
+| `P5-07` | CISA KEV fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-kev.md` |
+| `P5-08` | MITRE fetcher | `P5-01`, `P4-24` | `tickets/cve-sync-mitre.md` |
+| `P5-09` | Linux Kernel fetcher | `P5-01`, `P4-24` | `tickets/cve-sync-kernel.md` |
 | `P5-10` | CVE source failure retry fetcher | `P5-02` through `P5-09` | `platform/cve-source-failure-retry.md` |
 
 Each external integration piece satisfies the mandatory external-contract
@@ -503,8 +545,8 @@ ingestion, and remaining non-WIP administrative surfaces are completed.
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
 | `P6-01` | Real-ingestion CVE → Ticket → package-tree E2E verification | Phase 5 | ingestion and package specs |
-| `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-05` | fetcher operations and CVE service specs |
-| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-25`, `P4-26` | identity and ticket specs |
+| `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-06` | fetcher operations and CVE service specs |
+| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-26`, `P4-27` | identity and ticket specs |
 | `P6-04` | Cross-surface image smoke assertions not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
 | `P6-05` | Operational release checkpoint and manual acceptance | `P6-04` | deployment and testing docs |
 
@@ -554,8 +596,14 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
 - **2026-08-03 — Phase 1 completed.** All six pieces (`P1-01`-`P1-06`) merged;
   `SG-01` (mixed Redis readiness failure precedence) resolved in-phase. Release
   checkpoint taken: release-please PR merged, releasing **v0.3.0** (tag,
-  GitHub Release, and image build/smoke/publish all succeeded). Phase 2
-  (`docs/drafts/implementation-plan.md` Phase 2) remains queued for detailed
-  sub-issue elaboration; `SG-02` (#90, Redis contracts and testability) is
-  already open as its documentation blocker for session-liveness and
-  login-lockout pieces.
+  GitHub Release, and image build/smoke/publish all succeeded).
+- **2026-08-14 — Phase 2 completed.** All implementation pieces and
+  documentation gates, including `SG-02` (#90), merged. Release checkpoint
+  taken: release-please PR #152 merged, releasing **v0.4.0**; tag, GitHub
+  Release, image build, smoke gate, and publication all succeeded.
+- **2026-08-14 — Phase 3 elaboration started.** Replaced the stale seven-piece
+  candidate list with documentation gates and dependency-complete work units.
+  Moved CPE mapping implementation to candidate `P4-05`, its first-consumer
+  phase, shifting the former candidate `P4-05` through `P4-27` IDs to `P4-06`
+  through `P4-28`. `SG3-01` owns the required detachment of CPE validation from
+  generic worker startup before Phase 3 implementation begins.
