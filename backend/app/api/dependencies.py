@@ -50,8 +50,8 @@ def unauthenticated_error() -> AppError:
     `get_current_user()` (missing credential, invalid JWT, failed
     session liveness, unknown/revoked/expired API key, missing/inactive
     user) and by the logout endpoint's lightweight JWT-only dependency
-    — see `docs/features/identity/authentication.md` (Credential
-    resolution): "All HTTP 401 responses return a generic body ...
+    — see `docs/features/identity/authentication.md` (Shared Credential
+    Resolution): "All HTTP 401 responses return a generic body ...
     regardless of the specific failure reason." A fresh instance per
     call avoids accumulating traceback state and request-local
     credential data on a shared singleton exception.
@@ -334,7 +334,7 @@ async def _authenticate_jwt(
 
     # Sliding refresh occurs here — after the user-active check — so a
     # refreshed cookie is never emitted alongside a 401 for an inactive
-    # user (authentication.md, Credential resolution step 6).
+    # user (authentication.md, Shared Credential Resolution step 6).
     refreshed = refresh_token(
         claims,
         now=now,

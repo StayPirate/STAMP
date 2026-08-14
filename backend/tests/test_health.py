@@ -217,6 +217,16 @@ class TestReadinessEndpointSuccess:
             "checks": {"postgresql": "ok", "redis": "ok"},
         }
 
+        response = await client.get(
+            "/ready",
+            headers={"Authorization": "Bearer stl_ak_" + "0" * 32},
+        )
+        assert response.status_code == 200
+        assert response.json() == {
+            "status": "ok",
+            "checks": {"postgresql": "ok", "redis": "ok"},
+        }
+
     async def test_performs_fresh_checks_each_request(
         self,
         client: AsyncClient,

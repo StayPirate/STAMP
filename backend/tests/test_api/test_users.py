@@ -601,6 +601,38 @@ class TestGetUser:
             "detail": "Authentication required",
         }
 
+    async def test_eligible_jwt_triggers_sliding_refresh(
+        self,
+        client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        session_factory: Callable[..., Awaitable[Session]],
+        redis_client: redis_asyncio.Redis,
+    ) -> None:
+        """Proves optional authentication is actually wired on this
+        Public endpoint end-to-end, not merely accepted as a no-op —
+        see `docs/api-spec.md` (Optional Authentication on Public
+        Endpoints)."""
+        target = await user_factory(username="refreshtargetuser")
+        session = await session_factory()
+        old_iat = datetime.now(UTC) - timedelta(hours=settings.jwt_expiry_hours * 0.6)
+        issued = issue_token(
+            user_id=session.user_id,
+            session_id=session.id,
+            issued_at=old_iat,
+            session_deadline=session.expires_at,
+            jwt_expiry_hours=settings.jwt_expiry_hours,
+            secret_key=settings.jwt_secret_key.get_secret_value(),
+        )
+
+        response = await client.get(
+            f"/api/v1/users/{target.username}",
+            headers={"Authorization": f"Bearer {issued.token}"},
+        )
+
+        assert response.status_code == 200
+        assert "set-cookie" in response.headers
+        assert response.headers["set-cookie"].startswith(f"{SESSION_COOKIE_NAME}=")
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/users/me
