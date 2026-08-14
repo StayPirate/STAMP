@@ -1,0 +1,30 @@
+# OpenSSF Scorecard Maintainer Annotations.
+#
+# These annotations document maintainer context for Scorecard findings that
+# are false positives or already remediated. They are informational only —
+# per https://github.com/ossf/scorecard/config/README.md, annotations do not
+# change the numeric Scorecard score; they are displayed alongside check
+# results when the report is viewed with --show-annotations, and may
+# suppress the corresponding alert in GitHub's Code Scanning dashboard.
+#
+# See docs/deployment.md (CI Pipeline) for this repository's Scorecard
+# integration (.github/workflows/scorecard.yml).
+
+annotations:
+  - checks:
+      - dangerous-workflow
+    reasons:
+      - reason: remediated
+        # .github/workflows/build-images.yml uses a `workflow_run` trigger
+        # combined with an explicit checkout of
+        # `github.event.workflow_run.head_sha` (line 44-46), which Scorecard
+        # pattern-matches as an untrusted code checkout.
+        #
+        # This is a false positive: the job's `if:` guard (lines 34-37)
+        # requires `github.event.workflow_run.event == 'push'` and
+        # `conclusion == 'success'`, and the trigger is further restricted to
+        # `branches: [master]` (line 6). Together these conditions guarantee
+        # the checked-out ref is always a commit that has already landed on
+        # master via a direct push — never code from an untrusted pull
+        # request. There is no path by which a PR author can inject code
+        # through this workflow.
