@@ -433,7 +433,7 @@ The documentation gates below must merge before implementation begins:
 
 | ID | Gate | Direct blockers | Primary contract |
 |---|---|---|---|
-| `SG3-01` | Detach CPE mapping from generic fetcher startup | `PG3-00` | `packages/cpe-package-mapping.md`, `platform/fetcher-infrastructure.md`, `tickets/cve-service.md` |
+| `SG3-01` | Detach CPE mapping from generic fetcher startup | `PG3-00` | CPE mapping, fetcher infrastructure, CVE service/NVD, and testing contracts |
 | `SG3-02` | Complete generic fetcher runtime contracts | `SG3-01` | `platform/fetcher-infrastructure.md`, `architecture.md`, `conventions.md` |
 | `SG3-03` | Complete fetcher operations and CLI contracts | `SG3-02` | `platform/fetcher-operations.md`, `api-spec.md`, `conventions.md` |
 | `SG3-04` | Define test-only fetcher system-test contract | `SG3-03` | `platform/testing-strategy.md`, `platform/fetcher-infrastructure.md` |
@@ -482,7 +482,7 @@ automatic ingestion.
 | `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
 | `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
 | `P4-04` | Pure CVSS resolution | `P2-14`, `P4-02` | `tickets/cvss-scoring.md` |
-| `P4-05` | CPE package mapping loader, canonical data validation, and cached resolution | Phase 3, `SG3-01` | `packages/cpe-package-mapping.md` |
+| `P4-05` | CPE canonical file, parser, package-relative loader, cached resolvers, and focused validation | Phase 3, `SG3-01` | `packages/cpe-package-mapping.md` |
 | `P4-06` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
 | `P4-07` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
 | `P4-08` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
@@ -514,6 +514,21 @@ the exact functions/endpoints it owns and preserve complete contracts.
 transitively dependent on it remain Blocked until that gate merges. Migration
 and endpoint image assertions remain with the pieces that introduce them under
 the testing-strategy Growth Rule.
+
+`P4-05` is the sole implementation owner for the committed mapping data,
+canonical key grammar, CPE parser, package-relative loader, process cache,
+both public resolvers, focused tests, and CI validation of the real file.
+It normalizes the small set of escaped or truncated legacy keys in the committed
+JSON before enabling canonical-file validation, ensures the resource is present
+in the installed wheel and container image, and verifies parser, loader, cache,
+resolver, failure, fallback, and canonical-data behavior directly. Generic
+worker startup has no CPE dependency, and `P4-05` introduces no eager startup
+check. If a later consumer requires eager validation, the mapping module owns
+the reusable check contract and the consumer work item owns its invocation.
+`P4-22` owns complete-ingestion integration tests without duplicating `P4-05`
+contract tests. NVD applicability-tree and `vulnerable=false` selection
+semantics must be approved by the owning ingestion contract before `P4-22` or
+`P5-02` begins.
 
 ## Phase 5 — CVE Fetcher Infrastructure and Ingestion
 

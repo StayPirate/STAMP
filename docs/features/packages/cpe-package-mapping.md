@@ -17,10 +17,9 @@ CVE ingestion. This spec defines:
 
 An earlier design proposed a `BaseFetcher` subclass syncing a
 `CPEPackageMapping` database table from the AIMAAS `cpe-map` endpoint.
-Investigation revealed that the AIMAAS data is manually curated by SUSE
-security engineers and updated infrequently. A daily fetcher, a dedicated
-database table, and a runtime dependency on AIMAAS are unnecessary for a
-dataset that changes at most a few times per year.
+That endpoint exposes complete CPE 2.3 names and their associated SUSE
+packages. A daily fetcher, a dedicated database table, and a runtime
+dependency on AIMAAS are unnecessary for this lookup.
 
 This spec uses a static mapping file committed to the repository. The
 tradeoff is explicit:
@@ -30,14 +29,13 @@ tradeoff is explicit:
 | Update mechanism | Automatic daily sync | Manual file edit + deploy |
 | External dependency | AIMAAS at runtime | None |
 | DB table + migration | Yes | No |
-| Risk of empty/truncated data | Yes (requires safety guards) | No |
-| Mapping precision | `product`-only key (~222 collisions) | `vendor:product` key (no collisions) |
+| Risk of empty/truncated upstream data | Yes (requires safety guards) | None at runtime |
+| Mapping precision | Depends on imported projection | Canonical `vendor:product` key |
 | Complexity | BaseFetcher + error handling + metrics | One JSON file + dict lookup |
 
 The static file approach is appropriate because:
 
-- The mapping data changes infrequently (a few times per year at most)
-- Updates are always a manual curation activity regardless of source
+- Mapping changes can be reviewed and deployed with the application
 - The dataset is small (~2,500 entries, <200 KB)
 - Eliminating runtime AIMAAS dependency reduces failure modes
 - The file is version-controlled, providing full change history via git
@@ -50,9 +48,8 @@ The static file approach is appropriate because:
 
 ### Format
 
-A JSON object where each key is a `vendor:product` pair (extracted from
-a CPE 2.3 string) and each value is an array of SUSE source package
-names:
+A JSON object where each key is a canonical `vendor:product` pair and
+each value is an array of SUSE source package names:
 
 ```json
 {
@@ -65,14 +62,17 @@ names:
 
 Key characteristics:
 
-- **Key format**: `vendor:product` -- both components extracted from the
-  CPE 2.3 string. Using both vendor and product avoids ambiguity when
-  the same product name appears under different vendors (222 such
-  collisions exist in the dataset)
+- **Key format**: the canonical serialization defined in CPE String
+  Parsing. One unescaped `:` separates vendor from product; literal
+  colons and backslashes inside either component are escaped
+- **Semantic form**: CPE formatted-string escapes other than `\:` and
+  `\\` do not appear in mapping keys. For example, CPE component
+  `xerces-c\+\+` is stored as `xerces-c++`
 - **1:N mapping**: a single CPE key can map to multiple SUSE packages
   (~8% of entries). Example: `rust-lang:rust` maps to 45 packages
 - **Sorted**: entries are sorted alphabetically by key for readability
-  and merge-friendly diffs
+  and merge-friendly diffs. Ordering uses Python `sorted()` semantics on
+  the raw canonical key text, not the decoded semantic pair
 - **No soft-delete**: if a mapping is no longer relevant, the entry is
   removed from the file entirely
 
@@ -88,14 +88,21 @@ Key characteristics:
 
 ### Maintenance
 
-The mapping file is maintained manually. When a new CPE product needs
-to be mapped to a SUSE source package (e.g., a new upstream project
-starts being tracked by SUSE), a developer or security engineer adds
-the entry to the JSON file and deploys the update.
+The mapping file is maintained through reviewed repository changes. When
+a new CPE product needs to be mapped to a SUSE source package (e.g., a
+new upstream project starts being tracked by SUSE), a developer or
+security engineer adds the entry and deploys the update.
 
-The file can be updated from AIMAAS as a one-time bulk operation if
-needed, but there is no automated sync. The canonical source of truth
-is the committed file, not AIMAAS.
+The AIMAAS `GET /api/entity/cpe-map` endpoint may be used as an
+out-of-band input to a manual update, but its complete CPE names must be
+parsed and canonicalized according to this specification before review.
+There is no automated sync. The committed file is the sole runtime
+source of truth; AIMAAS is not a Sentinel runtime dependency.
+
+Every deployed mapping file MUST conform to the canonical grammar before
+the loader and CI validation are enabled for it. Repository work that
+introduces validation is responsible for normalizing any pre-existing
+non-canonical entries in the same change.
 
 **Operational workflow for mapping changes**: when a mapping entry is
 added or modified, the person making the change SHOULD:
@@ -111,14 +118,14 @@ This manual step is necessary because existing tickets are not
 automatically re-resolved when the mapping changes (see Integration
 notes, "Mapping changes vs existing CVEs").
 
-**CI validation**: a CI check validates the mapping file on every
-change:
+**CI validation**: the focused mapping tests validate the committed file
+on every change through the repository's existing blocking test workflow:
 
-- Valid JSON syntax
-- Keys sorted alphabetically
-- No duplicate keys
+- Valid UTF-8 and JSON object syntax
+- Keys are canonical, unique after semantic decoding, and sorted
+  alphabetically
 - Every value is a non-empty array of strings (no empty arrays, no
-  non-string elements, no empty strings)
+  non-string elements, no empty or untrimmed strings)
 
 This prevents manual editing errors from reaching deployment. An empty
 array value would suppress the raw-product fallback (the key exists,
@@ -129,7 +136,8 @@ this case.
 ## CPE String Parsing
 
 Both the resolution function and any future consumer that needs to
-extract fields from a CPE string use the same parsing algorithm.
+extract fields for package lookup use the same parsing and canonical
+serialization rules.
 
 **Supported format**: CPE 2.3 only. NVD API v2 uses CPE 2.3
 exclusively. CPE 2.2 strings (`cpe:/...`) are treated as parse errors
@@ -139,70 +147,103 @@ contains no CPE 2.2 entries. If a future data source provides CPE 2.2
 strings, the parser must be extended with proper encoding handling at
 that time.
 
-**Algorithm**:
+### Formatted-string decoding
 
-1. Verify the `cpe:2.3:` prefix. If absent, treat as a parse error
-2. Strip the prefix
-3. Check if the remaining string contains `\:` (escaped colon). If yes,
-   log a warning and skip the CPE entirely (return empty set). Escaped
-   colons in vendor/product fields would produce ambiguous lookup keys
-   that cannot be reliably matched against the mapping
-4. Split on `:` (simple split)
-5. Extract fields by index:
-   - Index 0: `part` (e.g., `a` for application)
-   - Index 1: `vendor` (e.g., `apache`)
-   - Index 2: `product` (e.g., `commons_compress`)
-6. Normalize `vendor` and `product` to lowercase (e.g.,
-   `Apache` → `apache`, `Commons_Compress` → `commons_compress`). NVD
-   CPE strings are nominally lowercase, but normalization ensures correct
-   lookups regardless of source casing
-7. Form the lookup key: `vendor:product` (e.g.,
-   `apache:commons_compress`). The function extracts only `vendor` and
-   `product`, discarding all other fields (part, version, update, etc.)
+The parser treats an unescaped `:` as a component separator. Within a
+component, `\` escapes the following character; that character becomes
+part of the semantic component value and the escape marker is removed.
+A trailing unpaired `\` is invalid. This rule applies to all components,
+so an escaped colon in version or edition data does not shift the vendor
+or product indexes.
+
+The algorithm is:
+
+1. Require the exact `cpe:2.3:` prefix; otherwise report a parse error.
+2. Scan the remainder once, splitting only on unescaped `:` and decoding
+   each escaped character into its semantic value.
+3. Require exactly 11 decoded components: `part`, `vendor`, `product`,
+   `version`, `update`, `edition`, `language`, `sw_edition`, `target_sw`,
+   `target_hw`, and `other`. A different count or an unpaired escape is a
+   parse error.
+4. Extract `vendor` and `product`; the other components do not affect
+   package lookup.
+5. Trim leading/trailing whitespace from and lowercase the two extracted
+   semantic values. The parser does not replace spaces or punctuation
+   within CPE components.
+
+On a parse error, `resolve_cpe_packages()` logs WARNING
+`cpe_parse_failed` without logging the complete untrusted CPE string and
+returns an empty set. Parse errors do not raise an exception.
+
+### Canonical mapping-key serialization
+
+The mapping key is a reversible serialization of the normalized semantic
+vendor and product values:
+
+1. Within each component, serialize a literal `\` as `\\` and a literal
+   `:` as `\:`. All other characters are serialized unchanged.
+2. Join the serialized components with one unescaped `:`.
+
+The result therefore contains exactly one unescaped separator. JSON then
+applies its own string escaping to the serialized key; JSON escaping is
+not part of the mapping-key grammar.
+
+The loader validates canonical form by decoding each key, serializing it
+again, and requiring byte-for-byte equality. This rejects multiple textual
+representations of the same semantic pair. Examples below show mapping-key
+text before JSON escaping:
+
+| CPE vendor/product fields | Canonical key |
+|---|---|
+| `apache`, `xerces-c\+\+` | `apache:xerces-c++` |
+| `criu`, `checkpoint\/restore_in_userspace` | `criu:checkpoint/restore_in_userspace` |
+| `cpan`, `file\:\:temp` | `cpan:file\:\:temp` |
+| `example`, `path\\name` | `example:path\\name` |
 
 **Example** (standard):
 
 ```
 Input:  cpe:2.3:a:apache:commons_compress:1.21:*:*:*:*:*:*:*
 Strip:  a:apache:commons_compress:1.21:*:*:*:*:*:*:*
-Split:  [a, apache, commons_compress, 1.21, *, *, *, *, *, *, *]
+Decode: [a, apache, commons_compress, 1.21, *, *, *, *, *, *, *]
 Key:    apache:commons_compress
 ```
 
-**Example** (escaped colon — skipped):
+**Example** (escaped colon):
 
 ```
-Input:  cpe:2.3:a:foo\:bar:product:*:*:*:*:*:*:*:*
-Strip:  a:foo\:bar:product:*:*:*:*:*:*:*:*
-Result: contains '\:', log warning, return empty set (no lookup)
+Input:  cpe:2.3:a:cpan:file\:\:temp:*:*:*:*:*:*:*:*
+Decode: [a, cpan, file::temp, *, *, *, *, *, *, *, *]
+Key:    cpan:file\:\:temp
 ```
 
-**Escaped colons**: the CPE 2.3 specification allows escaped colons
-(`\:`) in field values. Escaped colons in vendor or product names are
-NOT supported in the mapping. If a CPE string contains `\:` (after
-prefix stripping), the parser logs a warning and skips lookups for that
-CPE entirely. This is acceptable because escaped colons are absent from
-the SUSE dataset and extremely rare in NVD data. Attempting to parse
-them would produce ambiguous lookup keys (e.g., `foo:bar:product` is
-indistinguishable from vendor `foo` + product `bar:product`), making
-correct mapping impossible without a more complex key format.
+### Wildcard and NA values
 
-If a CPE string cannot be parsed by this algorithm (fewer
-than 3 fields after splitting), it is treated as a parse error.
+The unescaped CPE formatted-string components `*` (ANY) and `-` (NA)
+retain their special meaning only when the encoded component consists of
+that single character. The parser retains this classification while
+decoding the semantic value:
 
-**Parse errors**: when a CPE string is malformed (unrecognized prefix
-or fewer than 3 fields after stripping and splitting), the resolution
-function logs a warning and returns an empty set. It does not raise
-an exception -- the caller skips the unparseable CPE and continues
-processing.
+- Product `*`, product `-`, or an empty product produces no package
+  candidate. `resolve_cpe_packages()` returns an empty set without
+  loading the mapping.
+- Vendor `*`, vendor `-`, or an empty vendor cannot form an exact mapping
+  lookup. With a concrete product, the resolver returns the normalized
+  semantic product through the raw-product fallback.
+- An escaped literal asterisk or hyphen is a normal component value, not
+  ANY or NA.
 
 ## Resolution Function
+
+The functions in this section create no audit events. A successful first
+call may read and cache the mapping file; later calls use that process-local
+cache. They do not mutate database state or invoke external services.
 
 ### `resolve_cpe_packages()`
 
 Converts a CPE 2.3 string into a set of SUSE source package names.
-This function is a **pure in-memory lookup** with no I/O -- it reads
-from the mapping dict loaded lazily on first call.
+It performs file I/O only when a concrete lookup first requires the lazy
+mapping loader.
 
 **Signature**:
 
@@ -215,28 +256,34 @@ It can be called from any context without performance concerns.
 
 **Algorithm**:
 
-1. **Parse**: extract the `vendor:product` lookup key from the CPE
-   string using the CPE String Parsing algorithm (see above)
-2. **Lookup**: check the in-memory mapping dict for the key
-3. **Return**: if found, return the set of mapped SUSE package names.
-   If not found, return `{product}` (the raw CPE product name as
-   fallback)
+1. Parse and decode the CPE using CPE String Parsing.
+2. On a parse error or non-concrete product, return an empty set.
+3. If the vendor is non-concrete, return the normalized semantic product
+   as a single-element set without loading the mapping.
+4. Serialize the canonical vendor/product key and load the cached mapping.
+5. If the key exists, return a new set containing its mapped SUSE package
+   names. Otherwise return the normalized semantic product as a
+   single-element set.
 
-**Fallback behavior**: when no mapping exists for a `vendor:product`
-key, the function returns the raw CPE product name as a single-element
-set. This optimistic fallback is consistent with SMASH (the predecessor
-system) and works correctly when the CPE product name happens to match
-the SUSE package name (e.g., `emacs`). When the names differ (e.g., CPE
+**Fallback behavior**: when no mapping exists for a concrete product,
+the function returns its decoded, lowercased semantic value as a
+single-element set. CPE escape markers are never passed to SMELT. This
+optimistic fallback is consistent with SMASH (the predecessor system)
+and works correctly when the CPE product name happens to match the SUSE
+package name (e.g., `emacs`). When the names differ (e.g., CPE
 `linux_kernel` vs SUSE `kernel-source`), the subsequent
 `add_package_to_ticket()` call queries SMELT, which returns zero
 results, and the package is not added (see `package-service.md`,
 `add_package_to_ticket()`, `PACKAGE_NOT_FOUND_IN_SMELT` error). No
 phantom data is created.
 
-**Loading**: the mapping dict is loaded lazily on first call to
-`resolve_cpe_packages()`, cached for subsequent calls via
-`functools.lru_cache(maxsize=1)` on the internal loader function.
-The file path is `backend/app/data/cpe-package-mapping.json`.
+**Loading**: the mapping dict is loaded lazily on the first lookup that
+has concrete vendor and product values, then cached for subsequent calls
+via `functools.lru_cache(maxsize=1)` on the internal loader function.
+The loader resolves `data/cpe-package-mapping.json` relative to the
+installed `app` package. Its behavior is independent of the process
+working directory. The resource MUST be included in the installed wheel
+and container image.
 
 The lazy-init pattern avoids coupling all modules that transitively
 import `cpe_mapping` to the existence of the JSON file, improving
@@ -246,10 +293,10 @@ the module freely without requiring the data file).
 **Runtime validation contract**:
 
 Package resolution is a best-effort mechanism — the platform functions
-correctly without a CPE mapping (tickets are created normally, VAs can
-add packages manually). This informs the loader's error handling:
-absence or emptiness of the file is a degraded-but-operational state,
-not a fatal error.
+without curated overrides (tickets are created normally, the raw-product
+fallback remains active, and VAs can add packages manually). This informs
+the loader's error handling: absence or emptiness of the file is a
+degraded-but-operational state, not a fatal error.
 
 **Exception**: `CPEMappingLoadError` — a `RuntimeError` subclass
 defined beside the loader in `backend/app/services/cpe_mapping.py`.
@@ -262,17 +309,16 @@ contents or package values.
 
 | Condition | Behavior | Rationale |
 |-----------|----------|-----------|
-| File does not exist | Log WARNING `cpe_mapping_absent`; return empty dict | Best-effort degradation — resolution disabled, platform operational |
+| File does not exist | Log WARNING `cpe_mapping_absent`; return empty dict | Curated overrides unavailable; raw-product fallback remains active |
 | File exists, zero bytes or whitespace-only | Log WARNING `cpe_mapping_absent`; return empty dict | Equivalent to absent — no meaningful content to parse |
-| File exists, content is `{}` (empty JSON object) | Log WARNING `cpe_mapping_empty`; return empty dict | Explicit empty mapping — resolution disabled, platform operational |
-| File exists, non-empty, structurally valid | Return populated dict | Normal operation |
+| File exists, parsed root is an empty JSON object | Log WARNING `cpe_mapping_empty`; return empty dict | Explicitly no curated overrides; raw-product fallback remains active |
+| File exists, parsed root has at least one entry and is structurally valid | Return populated dict | Normal operation |
 | File exists, non-empty, structurally invalid | Raise `CPEMappingLoadError` | Corrupted file = deployment bug; partial/wrong mappings are worse than no mappings |
 
-"Non-empty" for the purpose of validation means: the file contains at
-least one non-whitespace character AND the content is not the empty
-JSON object `{}`. Files that are zero bytes, whitespace-only, or
-contain exactly `{}` are treated as graceful-degradation cases (no
-validation rules applied, no error raised).
+A zero-byte or whitespace-only file is treated as absent. After parsing,
+any root object with zero entries (including `{}`, `{ }`, or a
+pretty-printed equivalent) is the `cpe_mapping_empty` case. Validation
+rules 4–7 apply only when the parsed object contains at least one entry.
 
 **Validation rules** (applied only when file exists and is non-empty;
 checked in order, first failure raises `CPEMappingLoadError`):
@@ -283,14 +329,12 @@ checked in order, first failure raises `CPEMappingLoadError`):
 4. No duplicate keys exist. The loader MUST use a pair-preserving
    decoder hook because a standard dict silently retains only the last
    duplicate.
-5. Every key is lowercase with exactly one literal `:` separating
-   non-empty `vendor` and `product` components. Key and both components
-   must equal their whitespace-trimmed forms. Components MUST NOT
-   contain internal whitespace (only `[a-z0-9._-]` characters are
-   permitted) — keys with spaces would never be matched by the
-   resolution functions, which produce underscore-separated keys from
-   CPE data.
-6. Every value is a non-empty array of strings. Every string is
+5. Every key decodes to exactly two non-empty components separated by
+   one unescaped `:`. Both decoded components are lowercase and equal
+   their whitespace-trimmed forms. Re-serializing them with Canonical
+   Mapping-Key Serialization must reproduce the original key exactly.
+6. No two keys decode to the same semantic vendor/product pair.
+7. Every value is a non-empty array of strings. Every string is
    non-empty after trimming and must equal its trimmed form.
 
 **Not enforced at runtime** (CI-only): alphabetical key ordering.
@@ -305,59 +349,39 @@ subsequent calls return the cached mapping without file I/O. There is
 no hot-reload or cache invalidation; a mapping update requires a new
 deployment and process restart.
 
-File I/O errors (`PermissionError`, `IsADirectoryError`, and any
-other `OSError` subclass raised during file access) are wrapped in
-`CPEMappingLoadError` with the underlying OS error as `{reason}`.
-These indicate deployment/mount issues that prevent determining file
-state.
+`FileNotFoundError` and `NotADirectoryError` are treated as the absent-file
+case even if raised while opening the package-relative resource. Other
+file I/O errors (`PermissionError`, `IsADirectoryError`, and other
+`OSError` subclasses) are wrapped in `CPEMappingLoadError` with the
+underlying OS error as `{reason}`. These indicate deployment or mount
+issues that prevent determining file state.
 
 Non-`OSError` exceptions (`MemoryError`, `KeyboardInterrupt`, etc.)
 propagate unchanged — they are not wrapped in `CPEMappingLoadError`.
 
-**Worker startup guard**: Celery workers validate the CPE mapping at
-process startup via `check_cpe_mapping()` in the unified
-`celeryd_after_setup` handler, before accepting any task. This
-ensures a corrupted mapping file is detected at boot time — not hours
-later when the first ingestion task runs. See
-`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
-Handler) for the full handler contract.
-
-The API server, Beat, and IBS consumer do not validate the CPE
-mapping — they never call `resolve_cpe_packages()` or
-`resolve_vendor_product()`.
-
-**`check_cpe_mapping()`**:
-
-- **Location**: `backend/app/core/startup_checks.py`
-- **Signature**: `def check_cpe_mapping() -> None`
-- **Behavior**: invokes `resolve_cpe_packages()` with the fixed dummy
-  CPE `cpe:2.3:a:test:test:*:*:*:*:*:*:*:*`. The loader handles all
-  three cases (valid file, absent/empty file, invalid file) internally.
-  On success (including file-absent or file-empty), the `lru_cache` is
-  warmed for subsequent use by worker tasks. If loading raises
-  `CPEMappingLoadError`, propagates it to the caller.
-- **Side effects**: cache warming only. No I/O beyond what the loader
-  performs, no audit events.
-- **Exceptions**: propagates `CPEMappingLoadError` from the loader.
-  Unexpected exceptions from the loader propagate unchanged.
-
 **Operational semantics**: the mapping file is treated as source code —
 committed to the repository, versioned, and reviewed via normal code
-review. It is loaded exactly once per process at first use and remains
-immutable in memory for the entire process lifetime (read-once-per-process).
-Modifications to the mapping require a commit and a new deployment to
-reach production. There is no hot-reload or runtime cache invalidation
-mechanism. After a deployment with an updated mapping, Celery workers (the only
-consumers) start fresh with the new version. The API server, Beat,
-and IBS consumer do not load the mapping.
+review. A process loads it only when it invokes a resolver with concrete
+lookup values. A successful result remains immutable in memory for the
+process lifetime. Modifications require a commit and new deployment;
+there is no hot reload or runtime cache invalidation.
 
-**Mapping file key format**: all keys in the JSON mapping file MUST be
-lowercase (`vendor:product`). The lowercase normalization step in the
-parser (step 6) guarantees correct lookups regardless of input casing,
-and the CI pipeline validates that no uppercase characters exist in
-mapping keys.
+Generic worker startup never imports or validates CPE mapping data. A
+corrupt non-empty file therefore fails the first task that requires a
+concrete mapping lookup, while unrelated generic worker tasks remain
+operational. Any future eager check may run only in a process or task
+role dedicated to a real mapping consumer. No eager check is currently
+required. If one is introduced, its reusable contract belongs to the
+mapping module and its invocation belongs to the consuming workflow. Such
+a check belongs in the Service or Task layer, never in `app/core`, because
+Core cannot import Service code.
 
 **Location**: `backend/app/services/cpe_mapping.py`
+
+**Re-invocation and exceptions**: calls are deterministic for a fixed
+process cache. Parse errors and non-concrete products return an empty set.
+The function propagates `CPEMappingLoadError` and unexpected loader
+exceptions unchanged. It does not cache failures.
 
 ### `resolve_vendor_product()`
 
@@ -376,27 +400,24 @@ It can be called from any context without performance concerns.
 
 **Algorithm**:
 
-1. **Normalize vendor**: strip whitespace, lowercase, replace spaces with
-   underscores (e.g., `"Apache Software Foundation"` →
-   `"apache_software_foundation"`)
-2. **Normalize product**: strip whitespace, lowercase, replace spaces
-   with underscores (e.g., `"Commons Compress"` → `"commons_compress"`)
-3. **Form lookup key**: `vendor:product` (e.g.,
-   `"apache_software_foundation:commons_compress"`)
-4. **Lookup**: check the in-memory mapping dict for the key
-5. **Return**: if found, return the set of mapped SUSE package names.
-   If not found, return `{product}` (the normalized product name as
-   fallback)
+1. Strip leading/trailing whitespace, lowercase both inputs, and replace
+   each internal space with `_`. Other punctuation is preserved.
+2. If product is empty, `*`, or `-`, return an empty set.
+3. If vendor is empty, `*`, or `-`, return the normalized product as the
+   raw-product fallback without loading the mapping.
+4. Canonically serialize the normalized vendor/product pair and load the
+   cached mapping.
+5. If the key exists, return a new set containing its mapped package
+   names. Otherwise return the normalized product as a single-element
+   set.
 
-**Normalization rationale**: CNA/ADP-provided vendor and product strings
-are free-text with no enforced format. CPE 2.3 uses lowercase with
-underscores for multi-word values. The normalization applied here
-matches the CPE convention: `resolve_cpe_packages()` applies the same
-lowercase normalization (step 6 of CPE String Parsing) to the extracted
-vendor:product pair. Both functions produce identical lookup keys for
-equivalent inputs — e.g., a CNA providing `vendor = "Apache"`,
-`product = "commons_compress"` resolves to the same key as a CPE string
-`cpe:2.3:a:apache:commons_compress:*:...`.
+**Normalization rationale**: CNA/ADP values are free text, while CPE
+multi-word values commonly use underscores. The space-to-underscore
+heuristic preserves the existing best-effort match behavior without
+rewriting other punctuation. Both resolvers produce identical keys when
+the free-text values correspond to CPE-normalized words — e.g., CNA
+`vendor = "Apache"`, `product = "Commons Compress"` and CPE fields
+`apache`, `commons_compress`.
 
 **Fallback behavior**: identical to `resolve_cpe_packages()` — when no
 mapping exists, returns the normalized product name as a single-element
@@ -407,11 +428,16 @@ SMELT. No phantom data is created.
 CNA-provided vendor/product values use marketing names that differ from
 CPE-normalized identifiers (e.g., `"Google"` / `"Chrome"` vs CPE
 `"google"` / `"chrome"` — matches; but `"The Apache Foundation"` /
-`"HTTP Server"` vs CPE `"apache"` / `"http_server"` — does not match).
+`"HTTP Server"` vs CPE `"apache"` / `"http_server"` — does not match
+because the vendor identifiers differ).
 Even a partial match rate provides value by reducing manual VA work.
 
 **Loading**: shares the same lazily-loaded mapping dict as
 `resolve_cpe_packages()`. No additional file reads or initialization.
+
+**Re-invocation and exceptions**: identical to
+`resolve_cpe_packages()`. It propagates `CPEMappingLoadError` and
+unexpected loader exceptions unchanged.
 
 **Location**: `backend/app/services/cpe_mapping.py` (same module as
 `resolve_cpe_packages()`)
@@ -420,7 +446,7 @@ Even a partial match rate provides value by reducing manual VA work.
 
 | Consumer | Where | How |
 |----------|-------|-----|
-| CVE ingestion pipeline — NVD CPE (Phase 2) | `cve_service` | For each CPE entry in the NVD ingestion payload (`CVEIngestPayload.cpe_matches`), call `resolve_cpe_packages(cpe_criteria)` and collect all returned package names into a single set |
+| CVE ingestion pipeline — NVD CPE (Phase 2) | `cve_service` | For each CPE entry selected as a package candidate by the NVD ingestion contract, call `resolve_cpe_packages(cpe_criteria)` and collect all returned package names into a single set |
 | CVE ingestion pipeline — affected[] CPE (Phase 2) | `cve_service` | For each `AffectedVersionEntry` with a non-null `cpe` field (from `CVEIngestPayload.affected_versions`), call `resolve_cpe_packages(cpe)` and add results to the same package set |
 | CVE ingestion pipeline — affected[] vendor:product (Phase 2) | `cve_service` | For each `AffectedVersionEntry` with non-null `vendor` and `product` (from `CVEIngestPayload.affected_versions`), call `resolve_vendor_product(vendor, product)` and add results to the same package set |
 | CVE ingestion pipeline — resolved_packages (Phase 2) | `cve_service` | Pre-resolved package names from the payload (`CVEIngestPayload.resolved_packages`) are added directly to the package set without mapping resolution |
@@ -434,11 +460,13 @@ CNA vendor:product both resolving to `emacs`).
 
 **Integration notes**:
 
-- **CPE vulnerable flag**: the resolution function is agnostic to the
-  `vulnerable` field in NVD CPE match data. All CPE entries are
-  resolved to package names regardless of the `vulnerable` boolean.
-  The VA determines affectedness at the track level after packages are
-  added to the ticket
+- **NVD applicability ownership**: the resolution function accepts one
+  CPE already selected by its caller and is intentionally unaware of NVD
+  configuration trees, logical operators, `negate`, version ranges, and
+  the `vulnerable` flag. The NVD ingestion specification must define
+  which CPE entries are package candidates before any consumer processes
+  NVD configuration data. This specification neither includes nor
+  excludes `vulnerable=false` entries
 - **Version data is informational only**: version ranges from
   `CVEAffectedVersion` records are stored and displayed to VAs but
   are NOT used for package resolution or affectedness determination.
@@ -452,6 +480,27 @@ CNA vendor:product both resolving to `emacs`).
   processed after the deployment. This is accepted eventual-consistency
   behavior -- the mapping rarely changes, and VAs can manually add
   packages to tickets when needed
+
+## Verification
+
+The focused mapping tests cover at least:
+
+- package-relative loading from a working directory outside the source
+  tree and presence of the resource in the installed package;
+- absent, zero-byte, whitespace-only, empty-object, valid, malformed,
+  unreadable, and structurally invalid files;
+- duplicate textual keys, duplicate semantic keys, key round trips,
+  ordering, and value validation against the committed file;
+- success and empty-result caching, failure non-caching, and exception
+  propagation;
+- standard CPEs, escaped punctuation, escaped colons and backslashes,
+  malformed strings, CPE 2.2 rejection, and ANY/NA handling; and
+- exact mapping hits, one-to-many mappings, raw-product fallback, and
+  equivalent results from both public resolvers.
+
+Consumer integration tests do not duplicate the loader and resolver
+contract tests. Runtime AIMAAS ingestion, database persistence, and a
+`BaseFetcher` mapping synchronization remain out of scope.
 
 ## Security
 
@@ -472,11 +521,15 @@ CNA vendor:product both resolving to `emacs`).
 - `docs/features/tickets/cve-service.md` -- Post-Ingestion Side
   Effects (consumer of `resolve_cpe_packages()` and
   `resolve_vendor_product()`)
-- `docs/features/tickets/cve-tracking.md` -- Business Rule #5
+- `docs/features/tickets/cve-tracking.md` -- Business Rule #4
   (package resolution from CVE data)
 - `docs/features/packages/package-model.md` -- Adding Packages to a
   Ticket (`add_package_to_ticket()`)
 - `docs/features/packages/package-service.md` --
   `add_package_to_ticket()` function specification
+- `docs/features/platform/fetcher-infrastructure.md` -- generic Worker
+  Startup Handler
+- `docs/architecture.md` -- Backend Layer Architecture
+- `docs/data-sources.md` -- AIMAAS endpoint catalog
 - `docs/api-spec.md` -- global API conventions (envelope format, error
   codes, pagination)
