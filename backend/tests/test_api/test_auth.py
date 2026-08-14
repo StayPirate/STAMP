@@ -295,6 +295,31 @@ class TestLogin:
         )
         assert claims.user_id == user.id
 
+    async def test_succeeds_despite_stale_authorization_and_cookie(
+        self,
+        auth_client: AsyncClient,
+        local_user_factory: Callable[..., Awaitable[tuple[User, str]]],
+    ) -> None:
+        """Login is one of the documented exceptions to `Authentication:
+        Optional` (see `docs/api-spec.md`, Optional Authentication on
+        Public Endpoints): it ignores request credentials entirely, so a
+        stale `Authorization` header and a stale session cookie
+        presented alongside valid login credentials must not block
+        authentication bootstrap — see
+        `docs/features/platform/testing-strategy.md` (Optional
+        authentication mandatory scenarios)."""
+        user, password = await local_user_factory()
+        auth_client.cookies.set("sentinel_session", "stale-cookie-value")
+
+        response = await auth_client.post(
+            "/api/v1/auth/login",
+            json={"username": user.username, "password": password},
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["token_type"] == "bearer"
+
     async def test_username_is_trimmed_and_lowercased(
         self,
         auth_client: AsyncClient,
