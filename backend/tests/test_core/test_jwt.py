@@ -284,6 +284,16 @@ class TestDecodeAndValidateClaimShape:
         with pytest.raises(InvalidTokenError):
             decode_and_validate(_encode(payload), secret_key=_SECRET, now=now)
 
+    def test_non_string_session_id_is_rejected(self) -> None:
+        """`session_id` is a custom claim with no built-in PyJWT type
+        check (unlike `sub`, which PyJWT itself validates as a string).
+        A crafted token with an integer `session_id` must still be
+        rejected by Sentinel's own claim-shape validation."""
+        now = datetime.now(UTC)
+        payload = _payload(session_id=12345)
+        with pytest.raises(InvalidTokenError):
+            decode_and_validate(_encode(payload), secret_key=_SECRET, now=now)
+
     def test_boolean_iat_is_rejected(self) -> None:
         """JSON booleans must not be accepted as integer timing claims."""
         now = datetime.now(UTC)

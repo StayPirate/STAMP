@@ -19,6 +19,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import click
@@ -1301,6 +1302,83 @@ def test_set_password_external_user_rejected_exits_one(
     )
 
     result = _invoke(["manage-user", "set-password", "--username", username])
+    assert result.exit_code == 1
+    assert result.stderr.strip() == (
+        f"Error: Cannot set password for external user '{username}'. "
+        "External users authenticate via SSO."
+    )
+
+
+@pytest.mark.integration
+def test_set_password_race_user_deleted_after_resolve_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    """The genuine concurrent race (the user resolved successfully in
+    the first session but disappears before `reset_password()`'s own
+    row lock in the second session) is covered at the service layer
+    (`tests/test_services/test_user_service.py`). This verifies only
+    the CLI-layer mapping of the second `UserNotFoundError` catch to
+    exit code 1 with the standard "not found" message — reproducing
+    the race itself would require true cross-connection concurrency
+    for a mapping that is otherwise a single deterministic `except`
+    clause."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdracenotfound"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    from app.core.exceptions import UserNotFoundError
+    from app.services import user_service as user_service_module
+
+    monkeypatch.setattr(
+        user_service_module,
+        "reset_password",
+        AsyncMock(side_effect=UserNotFoundError()),
+    )
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.strip() == f"Error: User '{username}' not found."
+
+
+@pytest.mark.integration
+def test_set_password_race_external_id_added_after_resolve_exits_one(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_session_factory: async_sessionmaker[AsyncSession],
+    cleanup_users_by_username: Callable[..., None],
+) -> None:
+    """Analogous race to the one above, but the user is converted to an
+    external user (by an external sync) between the two sessions. Verifies
+    only the CLI-layer mapping of `ExternalUserPasswordError` raised by
+    the second, mutating call to the standard external-user message and
+    exit code 1."""
+    _inject_session_factory(monkeypatch, cli_session_factory)
+    _allow_tty(monkeypatch)
+    username = "clisetpwdraceexternal"
+    cleanup_users_by_username(username)
+    asyncio.run(_create_user_directly(cli_session_factory, username=username))
+
+    from app.services import user_service as user_service_module
+    from app.services.user_service import ExternalUserPasswordError
+
+    monkeypatch.setattr(
+        user_service_module,
+        "reset_password",
+        AsyncMock(side_effect=ExternalUserPasswordError()),
+    )
+
+    result = _invoke(
+        ["manage-user", "set-password", "--username", username],
+        input=_NEW_PASSWORD_INPUT,
+    )
+
     assert result.exit_code == 1
     assert result.stderr.strip() == (
         f"Error: Cannot set password for external user '{username}'. "
