@@ -43,6 +43,11 @@ def extract_credential(authorization: str | None, cookie: str | None) -> str | N
         parts = authorization.split(None, 1)
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1].strip()
+            # Defensive: str.split(None, 1) never yields a `parts[1]` that
+            # is empty or whitespace-only when len(parts) == 2 (a maximal
+            # whitespace run is always consumed as the separator), so
+            # `token` is always truthy here. Kept as defense-in-depth in
+            # case the splitting logic above changes.
             if token:
                 return token
     if cookie:

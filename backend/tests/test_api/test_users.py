@@ -31,13 +31,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.v1.users import _parse_role_filters, _parse_user_type
 from app.core.enums import Role, SessionCreationReason, UserType
+from app.core.exceptions import UserNotFoundError
 from app.database import get_db
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.identity_audit_event import IdentityAuditEvent
 from app.models.user import User
 from app.models.user_role import UserRole
-from app.services import api_key_service
+from app.services import api_key_service, user_service
 from app.services.session_service import create_session
 
 # ---------------------------------------------------------------------------
@@ -1017,6 +1018,35 @@ class TestUpdateUserAdmin:
         assert response.status_code == 409
         assert response.json()["code"] == "USER_EXTERNAL_FIELD_READONLY"
 
+    async def test_race_condition_user_deleted_returns_404(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The genuine concurrent race (the target user resolved
+        successfully but disappears before `update_user()`'s own row
+        lock) is covered at the service layer
+        (`tests/test_services/test_user_service.py`). This verifies
+        only the HTTP-layer mapping of the second `UserNotFoundError`
+        catch to `404 USER_NOT_FOUND` — reproducing the race itself
+        would require true cross-connection concurrency for a mapping
+        that is otherwise a single deterministic `except` clause."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="updateracetarget")
+        monkeypatch.setattr(
+            user_service,
+            "update_user",
+            AsyncMock(side_effect=UserNotFoundError()),
+        )
+
+        response = await client.patch(
+            f"/api/v1/admin/users/{target.id}", json={"email": "new@example.com"}
+        )
+
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
     async def test_no_op_when_values_unchanged_creates_no_audit_event(
         self,
         admin_user_and_client: tuple[User, AsyncClient],
@@ -1157,6 +1187,33 @@ class TestReactivateUserAdmin:
         assert response.status_code == 409
         assert response.json()["code"] == "USER_EXTERNAL_STATUS_READONLY"
         assert await _audit_events_for(db_session, target.id) == []
+
+    async def test_race_condition_user_deleted_returns_404(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The genuine concurrent race (the target user resolved
+        successfully but disappears before `reactivate_user()`'s own
+        row lock) is covered at the service layer
+        (`tests/test_services/test_user_service.py`). This verifies
+        only the HTTP-layer mapping of the second `UserNotFoundError`
+        catch to `404 USER_NOT_FOUND` — reproducing the race itself
+        would require true cross-connection concurrency for a mapping
+        that is otherwise a single deterministic `except` clause."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="reactivateracetarget", active=False)
+        monkeypatch.setattr(
+            user_service,
+            "reactivate_user",
+            AsyncMock(side_effect=UserNotFoundError()),
+        )
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/reactivate")
+
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -1327,6 +1384,36 @@ class TestResetUserPasswordAdmin:
         assert response.status_code == 409
         assert response.json()["code"] == "USER_EXTERNAL_PASSWORD_FORBIDDEN"
 
+    async def test_race_condition_user_deleted_returns_404(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The genuine concurrent race (the target user resolved
+        successfully but disappears before `reset_password()`'s own row
+        lock) is covered at the service layer
+        (`tests/test_services/test_user_service.py`). This verifies
+        only the HTTP-layer mapping of the second `UserNotFoundError`
+        catch to `404 USER_NOT_FOUND` — reproducing the race itself
+        would require true cross-connection concurrency for a mapping
+        that is otherwise a single deterministic `except` clause."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="resetpasswordracetarget")
+        monkeypatch.setattr(
+            user_service,
+            "reset_password",
+            AsyncMock(side_effect=UserNotFoundError()),
+        )
+
+        response = await client.post(
+            f"/api/v1/admin/users/{target.id}/password",
+            json={"password": "a-new-fictional-password"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
     async def test_password_outside_policy_returns_domain_422(
         self,
         admin_user_and_client: tuple[User, AsyncClient],
@@ -1441,6 +1528,33 @@ class TestUnlockUserAdmin:
     ) -> None:
         _admin, client = admin_user_and_client
         response = await client.post("/api/v1/admin/users/no-such-user/unlock")
+        assert response.status_code == 404
+        assert response.json()["code"] == "USER_NOT_FOUND"
+
+    async def test_race_condition_user_deleted_returns_404(
+        self,
+        admin_user_and_client: tuple[User, AsyncClient],
+        user_factory: Callable[..., Awaitable[User]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The genuine concurrent race (the target user resolved
+        successfully but disappears before `unlock_user()` runs) is
+        covered at the service layer
+        (`tests/test_services/test_user_service.py`). This verifies
+        only the HTTP-layer mapping of the second `UserNotFoundError`
+        catch to `404 USER_NOT_FOUND` — reproducing the race itself
+        would require true cross-connection concurrency for a mapping
+        that is otherwise a single deterministic `except` clause."""
+        _admin, client = admin_user_and_client
+        target = await user_factory(username="unlockracetarget")
+        monkeypatch.setattr(
+            user_service,
+            "unlock_user",
+            AsyncMock(side_effect=UserNotFoundError()),
+        )
+
+        response = await client.post(f"/api/v1/admin/users/{target.id}/unlock")
+
         assert response.status_code == 404
         assert response.json()["code"] == "USER_NOT_FOUND"
 

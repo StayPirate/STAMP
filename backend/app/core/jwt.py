@@ -154,6 +154,10 @@ def _decode_raw(token: str, secret_key: str) -> dict[str, Any]:
         )
     except jwt.PyJWTError as exc:
         raise InvalidTokenError("invalid token") from exc
+    # Defensive: PyJWT's own decoder already rejects a non-object JSON
+    # payload with `DecodeError` (a `PyJWTError` subclass, caught above),
+    # so `payload` is always a dict here. Kept as defense-in-depth against
+    # a future PyJWT version relaxing that internal validation.
     if not isinstance(payload, dict):
         raise InvalidTokenError("invalid token")
     return payload

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.health import get_readiness_redis_urls, get_readiness_session_factory
 from app.config import settings as app_settings
+from app.database import async_session_factory
 from app.main import app
 from tests.support.redis import redis_url_from_client
 
@@ -73,6 +74,17 @@ def broken_readiness_redis() -> Generator[None]:
         yield
     finally:
         app.dependency_overrides.pop(get_readiness_redis_urls, None)
+
+
+@pytest.mark.unit
+class TestGetReadinessSessionFactory:
+    def test_returns_the_shared_application_session_factory(self) -> None:
+        """Every readiness test overrides this dependency (via
+        `use_real_readiness_postgresql`) to point at the test database
+        instead of whatever `DATABASE_URL` the environment running the
+        suite happens to have configured — so the default, un-overridden
+        implementation is exercised directly here instead."""
+        assert get_readiness_session_factory() is async_session_factory
 
 
 @pytest.mark.e2e

@@ -567,30 +567,35 @@ pass; neither substitutes for the other:
    percentage. This is the primary correctness control.
 
 2. **Coverage threshold**: the build fails if line coverage drops below
-   **85%** (`--cov-fail-under=85`). This prevents untested code from
+   **95%** (`--cov-fail-under=95`). This prevents untested code from
    entering the codebase silently.
 
-### Why 85%, Not 100%
+### Why 95%, Not 100%
 
 - Coverage measures **quantity** (lines executed), not **quality**
   (correctness of assertions). 100% coverage with weak assertions
   provides false confidence.
-- The last 10–15% typically consists of defensive error handlers,
+- A small remainder typically consists of defensive error handlers,
   platform-specific branches, and boilerplate that is expensive to
-  test and yields diminishing returns.
+  test and yields diminishing returns (e.g., a CLI process entry-point
+  guard, OS signal handler bodies, or a debug-only `__repr__`).
 - An unrealistic target incentivizes low-value tests that game the
   metric (executing code without verifying behavior).
-- 85% is a **floor, not a ceiling**. Teams should aim higher where
+- 95% is a **floor, not a ceiling**. Teams should aim higher where
   practical; the threshold exists to catch regressions, not to define
   "good enough."
 
 ### Ratchet Mechanism
 
 The coverage threshold only goes up, never down. When coverage
-naturally exceeds 85% (e.g., reaches 90%), the threshold SHOULD be
-raised to the new level (rounded down to nearest 5%) to prevent
-regression. This is a manual adjustment made when updating the CI
-configuration — not an automatic mechanism.
+naturally exceeds the current threshold (e.g., reaches 99%), the
+threshold SHOULD be raised to the new level (rounded down to nearest
+5%) to prevent regression. This is a manual adjustment made when
+updating the CI configuration — not an automatic mechanism. The
+threshold was raised from 85% to 95% once coverage stabilized above
+99%, following an explicit line-by-line review of the remaining
+uncovered lines to confirm each one is genuinely low-value to test
+(see Why 95%, Not 100% above) rather than an unaddressed gap.
 
 ### Coverage Configuration
 
@@ -623,7 +628,7 @@ Coverage is measured by `pytest-cov` with the following settings (in
   executed after control passes through a greenlet switch or into a
   spawned thread, under-reporting coverage for ordinary endpoint and
   service code — not just edge cases. Per-file reports are the most
-  visible symptom: a small file can show as low as 85% coverage while
+  visible symptom: a small file can show as low as 70% coverage while
   every line is demonstrably exercised by passing tests, because the
   project-wide aggregate is large enough to mask the gap.
 
@@ -983,7 +988,7 @@ asserting against it over HTTP (and, where a check requires it, via
 Because the marker is excluded from the default invocation, `cd backend
 && uv run pytest` never attempts to start containers, and — since
 coverage is measured on that same default invocation — the image suite
-**does not contribute to, and is not counted toward, the ≥85% coverage
+**does not contribute to, and is not counted toward, the ≥95% coverage
 gate**. This is intentional: it is a black-box suite running against a
 separately-built artifact, not against the instrumented local venv.
 

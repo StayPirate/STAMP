@@ -462,6 +462,26 @@ class TestListIdentityAuditEvents:
 
         assert response.json()["meta"]["total"] == 1
 
+    async def test_all_invalid_event_types_return_empty_result(
+        self,
+        admin_client: AsyncClient,
+        user_factory: Callable[..., Awaitable[User]],
+        identity_audit_event_factory: Callable[..., Awaitable[IdentityAuditEvent]],
+    ) -> None:
+        target = await user_factory()
+        await identity_audit_event_factory(
+            event_type="user_created", target_user_id=target.id
+        )
+
+        response = await admin_client.get(
+            "/api/v1/admin/identity/audit-log",
+            params=[("event_type", "not-a-real-type")],
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+        assert response.json()["meta"]["total"] == 0
+
     async def test_actor_filter_by_uuid(
         self,
         admin_client: AsyncClient,

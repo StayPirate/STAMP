@@ -470,7 +470,15 @@ async def _email_taken(
 async def _external_id_taken(
     session: AsyncSession, external_id: UUID, exclude_user_id: UUID | None
 ) -> bool:
-    """Whether a user other than `exclude_user_id` already has `external_id`."""
+    """Whether a user other than `exclude_user_id` already has `external_id`.
+
+    `exclude_user_id` mirrors `_username_taken()`'s/`_email_taken()`'s
+    signature for consistency. It is currently always `None` in practice:
+    `external_id` is immutable after creation (no `update_user()` parameter
+    changes it — see External User Data Ownership), so no caller today
+    needs to exclude a user from its own uniqueness check. Kept
+    non-`None`-capable for a future update path.
+    """
     filters: list[ColumnElement[bool]] = [User.external_id == external_id]
     if exclude_user_id is not None:
         filters.append(User.id != exclude_user_id)

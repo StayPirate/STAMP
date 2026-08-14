@@ -332,6 +332,28 @@ class TestParseRetryAfter:
         header_value = format_datetime(past, usegmt=True)
         assert hc._parse_retry_after(header_value) is None
 
+    def test_http_date_with_unknown_offset_is_treated_as_utc(self) -> None:
+        """RFC 5322 uses a `-0000` offset to signal "no timezone
+        information" (as opposed to `+0000`, meaning "confirmed UTC").
+        `email.utils.parsedate_to_datetime` parses `-0000` into a
+        timezone-naive `datetime`. Sentinel treats an absent timezone
+        as UTC rather than propagating a naive datetime into the
+        subsequent arithmetic against `datetime.now(UTC)`."""
+        from datetime import UTC, datetime, timedelta
+        from email.utils import format_datetime
+
+        # Naive datetime whose wall-clock value matches UTC-now + 45s, so
+        # that treating it as UTC (as the code under test does) yields the
+        # expected delay regardless of the host's local timezone.
+        future_utc_naive = (datetime.now(UTC) + timedelta(seconds=45)).replace(
+            tzinfo=None
+        )
+        header_value = format_datetime(future_utc_naive)  # renders "-0000"
+        wait = hc._parse_retry_after(header_value)
+        assert wait is not None
+        # Allow small scheduling jitter between construction and parsing.
+        assert 40 <= wait <= 46
+
 
 # ---------------------------------------------------------------------------
 # _RetryTransport — test double
