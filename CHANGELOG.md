@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.0](https://github.com/StayPirate/sentinel/compare/v0.3.0...v0.4.0) (2026-08-14)
+
+
+### Features
+
+* add identity audit persistence and service ([#155](https://github.com/StayPirate/sentinel/issues/155)) ([794c985](https://github.com/StayPirate/sentinel/commit/794c98502470fb99e53de0bd43d6091289ec852a))
+* add Session and ApiKey persistence models ([#151](https://github.com/StayPirate/sentinel/issues/151)) ([eb4af4d](https://github.com/StayPirate/sentinel/commit/eb4af4dd228b1a0770aae3b9059a3fcb03bcc81a))
+* **auth:** add JWT session service, logout, and cleanup task ([#158](https://github.com/StayPirate/sentinel/issues/158)) ([482c1d4](https://github.com/StayPirate/sentinel/commit/482c1d42d0603b1a1bc0e3c36bd1fb6bca3adaa6))
+* **auth:** add local password login endpoint with lockout ([#162](https://github.com/StayPirate/sentinel/issues/162)) ([18c5534](https://github.com/StayPirate/sentinel/commit/18c55340140efb17f4a7b7b218298cfc2103078b)), closes [#114](https://github.com/StayPirate/sentinel/issues/114)
+* **auth:** add optional authentication for public reads ([#229](https://github.com/StayPirate/sentinel/issues/229)) ([807668d](https://github.com/StayPirate/sentinel/commit/807668d17cfadf326a451f994da942c4d4407ca3))
+* **auth:** add unified authentication dependencies ([#178](https://github.com/StayPirate/sentinel/issues/178)) ([a0ad9d8](https://github.com/StayPirate/sentinel/commit/a0ad9d81ac0dc449d355077898644f317f08e647))
+* constrain api_key.key_hash to SHA-256 hex digest format ([#154](https://github.com/StayPirate/sentinel/issues/154)) ([3890175](https://github.com/StayPirate/sentinel/commit/3890175587cef115bc218ecb837684466de5e91c)), closes [#150](https://github.com/StayPirate/sentinel/issues/150)
+* **identity:** add API key lifecycle service with audit trail ([#174](https://github.com/StayPirate/sentinel/issues/174)) ([42d53a9](https://github.com/StayPirate/sentinel/commit/42d53a916933453fbefcd41d601c30a73145e00d))
+* **identity:** add API key management endpoints ([#181](https://github.com/StayPirate/sentinel/issues/181)) ([8d65fb0](https://github.com/StayPirate/sentinel/commit/8d65fb069495aab43cc46c89f59d496b13c34aa9))
+* **identity:** add CLI infrastructure and user bootstrap commands ([#201](https://github.com/StayPirate/sentinel/issues/201)) ([5035e62](https://github.com/StayPirate/sentinel/commit/5035e624e42ccfe5bca96977c494b01363ef4261))
+* **identity:** add password reset and unlock services ([#184](https://github.com/StayPirate/sentinel/issues/184)) ([a2c256c](https://github.com/StayPirate/sentinel/commit/a2c256c0d6ab3828345e5fc5564565d219ed8a16))
+* **identity:** add remaining local identity CLI commands ([#202](https://github.com/StayPirate/sentinel/issues/202)) ([5085cf7](https://github.com/StayPirate/sentinel/commit/5085cf7e1dc82400663335da1e25a799b71bc6fb))
+* **identity:** add ticket-independent admin user mutation APIs ([#198](https://github.com/StayPirate/sentinel/issues/198)) ([c656808](https://github.com/StayPirate/sentinel/commit/c65680879de71a2a6f21ece01c980bc1bcc4c597))
+* **identity:** add user lifecycle create/update/reactivate services ([#183](https://github.com/StayPirate/sentinel/issues/183)) ([f5e256e](https://github.com/StayPirate/sentinel/commit/f5e256e9a19a61978ac8973e9369fc8f718b51cf))
+* **identity:** add user read, profile, and identity audit APIs ([#195](https://github.com/StayPirate/sentinel/issues/195)) ([7ff84be](https://github.com/StayPirate/sentinel/commit/7ff84be0d0709d5728e3e3d3315262c7313b407b)), closes [#123](https://github.com/StayPirate/sentinel/issues/123)
+* **platform:** add system settings persistence and bootstrap ([#204](https://github.com/StayPirate/sentinel/issues/204)) ([a3b960b](https://github.com/StayPirate/sentinel/commit/a3b960b0169c955a2e322a72dd921efa9d336b1c)), closes [#113](https://github.com/StayPirate/sentinel/issues/113)
+* **platform:** add system settings read and audit log APIs ([#222](https://github.com/StayPirate/sentinel/issues/222)) ([80ba9d6](https://github.com/StayPirate/sentinel/commit/80ba9d6c1af639b893b090cb5e834afd0d40a3ec)), closes [#120](https://github.com/StayPirate/sentinel/issues/120)
+
+
+### Bug Fixes
+
+* align User.roles and manager_id cascade with unsupported deletion ([#153](https://github.com/StayPirate/sentinel/issues/153)) ([d58f76c](https://github.com/StayPirate/sentinel/commit/d58f76c9b5d88be8de6c5a2127c06fac80b5521d)), closes [#149](https://github.com/StayPirate/sentinel/issues/149)
+* run API transaction commit before response is sent ([#165](https://github.com/StayPirate/sentinel/issues/165)) ([f376a26](https://github.com/StayPirate/sentinel/commit/f376a26373129308a50033078ef7bd8d73428301))
+* trace greenlet and thread execution in coverage measurement ([#167](https://github.com/StayPirate/sentinel/issues/167)) ([ea29110](https://github.com/StayPirate/sentinel/commit/ea29110de36355c09c17daaca7ca98001c6defe0)), closes [#166](https://github.com/StayPirate/sentinel/issues/166)
+
 ## [0.3.0](https://github.com/StayPirate/sentinel/compare/v0.2.0...v0.3.0) (2026-08-03)
 
 
