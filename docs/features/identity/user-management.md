@@ -579,6 +579,7 @@ GET /api/v1/users
 ```
 
 **`Access: Public`**
+**`Authentication: Optional`**
 
 User search and autocomplete. Returns a paginated list of users.
 The route delegates filtering, sorting, pagination, and relationship loading to
@@ -621,6 +622,7 @@ GET /api/v1/users/{user}
 ```
 
 **`Access: Public`**
+**`Authentication: Optional`**
 
 Returns full user profile. Response uses the standard single-resource
 envelope:

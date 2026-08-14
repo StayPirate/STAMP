@@ -1634,6 +1634,7 @@ a standalone endpoint for clients that only need package data.
 | Aspect | Design |
 |--------|--------|
 | **`Access: Public`** | Consistent with `GET /api/v1/tickets/{ticket_id}` |
+| **`Authentication: Optional`** | Resolves caller identity for ticket accessibility |
 | **Guard** | `require_accessible_ticket` (404 for missing/confidential tickets) |
 | **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
@@ -1669,6 +1670,7 @@ once per ticket in the results.
 | Aspect | Design |
 |--------|--------|
 | **`Access: Public`** | Consistent with `GET /api/v1/tickets` |
+| **`Authentication: Optional`** | Resolves caller identity for confidentiality filtering |
 | **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
 | **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
 | **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |

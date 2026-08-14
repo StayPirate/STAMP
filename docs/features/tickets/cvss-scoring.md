@@ -450,7 +450,8 @@ with an active ticket, Sentinel performs the following recalculation:
 GET /api/v1/cves/{cve_id}/cvss
 ```
 
-**Access: Public**
+**`Access: Public`**
+**`Authentication: Optional`**
 
 The `{cve_id}` path parameter accepts a CVE-ID string (e.g.,
 `CVE-2025-1234`). See `docs/api-spec.md` (CVE Identifier Resolution).

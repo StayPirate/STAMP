@@ -203,6 +203,7 @@ List all products synced from SMELT. Paginated.
 ```
 
 **`Access: Public`**
+**`Authentication: Optional`**
 
 ---
 

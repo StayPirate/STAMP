@@ -1111,6 +1111,7 @@ GET /api/v1/tickets
 ```
 
 **`Access: Public`**
+**`Authentication: Optional`**
 - **Response schema**: `TicketSummary[]` (paginated)
 
 Lists tickets with filtering, search, pagination, and sorting.
@@ -1155,6 +1156,7 @@ GET /api/v1/tickets/{ticket_id}
 ```
 
 **`Access: Public`**
+**`Authentication: Optional`**
 - **Response schema**: `TicketDetail`
 
 Returns a single ticket by UUID or `SNTL-{n}`. The `packages` field

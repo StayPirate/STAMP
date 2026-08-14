@@ -336,7 +336,8 @@ The Phase 2 documentation gates referenced below are: `SG-03` (#105, session,
 lockout, and identity logging), `SG-04` (#106, API key contracts), `SG-05`
 (#108, user lifecycle and identity audit), `SG-06` (#109, CLI invocation and
 transactions), `SG-07` (#107, system settings bootstrap and reads), and
-`SG-08` (#101, Redis I/O ordering and rollback claims).
+`SG-08` (#101, Redis I/O ordering and rollback claims). The optional
+authentication contract gate is #177.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
@@ -355,6 +356,7 @@ transactions), `SG-07` (#107, system settings bootstrap and reads), and
 | `P2-13` | `manage-user set-password` and `unlock`; `api-key list` and `revoke` | `P2-05`, `P2-09`, `P2-12` | `platform/cli-infrastructure.md`, `identity/user-management.md`, `identity/api-key-management.md` |
 | `P2-14` | System settings persistence and bootstrap | SG-07 | `platform/system-settings.md` |
 | `P2-15` | System settings read and audit APIs | `P2-14`, `P2-06` | `platform/system-settings.md` |
+| `P2-16` | Optional authentication for Public reads | `P2-06`, `P2-10`, #177 | `identity/authentication.md`, `api-spec.md`, `identity/rbac.md` |
 
 The Phase 2 lifecycle mutation inventory is exactly `create_user`,
 `update_user`, `reactivate_user`, `reset_password`, and `unlock_user`.
