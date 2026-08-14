@@ -194,6 +194,33 @@ class TestSettingAuditEventNoCascadeOnDeletion:
 
 
 @pytest.mark.integration
+class TestSettingAuditEventActorRelationship:
+    """The read-only `actor` relationship (mirrors
+    `IdentityAuditEvent.actor`), used by the settings audit log
+    endpoint to serialize the actor without a separate query."""
+
+    async def test_actor_relationship_resolves_the_user(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        admin = await user_factory(username="actorrelationshipuser")
+        event = await setting_audit_event_factory(user_id=admin.id)
+
+        await db_session.refresh(event, attribute_names=["actor"])
+
+        assert event.actor is not None
+        assert event.actor.id == admin.id
+        assert event.actor.username == "actorrelationshipuser"
+
+    def test_actor_relationship_is_viewonly(self) -> None:
+        mapper = inspect(SettingAuditEvent)
+        relationship_property = mapper.relationships["actor"]
+        assert relationship_property.viewonly is True
+
+
+@pytest.mark.integration
 class TestSettingAuditEventTimezoneAwareTimestamps:
     async def test_created_at_is_timezone_aware(
         self,

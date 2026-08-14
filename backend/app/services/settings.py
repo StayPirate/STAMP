@@ -2,16 +2,19 @@
 
 See `docs/features/platform/system-settings.md` for the full
 specification: `bootstrap_system_settings()`, `get_default_cvss_version()`,
-and the `SettingAuditLog` audit trail.
+the `SettingAuditLog` audit trail, and `list_setting_audit_events()`.
 """
 
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from datetime import date, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.enums import SettingAuditEventType
 from app.core.exceptions import ServiceError
@@ -142,3 +145,82 @@ class SettingAuditLog(BaseAuditLog):
             old_value=old_value,
             new_value=new_value,
         )
+
+
+@dataclass(frozen=True)
+class SettingAuditEventPage:
+    """A page of `SettingAuditEvent` rows, with `actor` eagerly loaded
+    on every item (see `list_setting_audit_events()`)."""
+
+    items: list[SettingAuditEvent]
+    total: int
+    page: int
+    per_page: int
+
+
+async def list_setting_audit_events(
+    session: AsyncSession,
+    *,
+    event_types: list[SettingAuditEventType] | None = None,
+    setting_key: str | None = None,
+    actor: str | None = None,
+    from_date: date | datetime | None = None,
+    to_date: date | datetime | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> SettingAuditEventPage:
+    """Return one page of `SettingAuditEvent` rows for the settings
+    audit log (`docs/features/platform/system-settings.md`, List
+    Settings Audit Events).
+
+    Q1: `event_types`, when non-empty, restricts to those event types
+    (OR). `setting_key`, when given, is an exact match. `actor` follows
+    the shared User Identifier Resolution contract plus the reserved
+    literal `"system"` for `user_id IS NULL` (see
+    `BaseAuditLog.filter_by_actor()`); because every setting audit event
+    has a human actor, `"system"` and any unmatched UUID/username yield
+    an empty page, never an error. `from_date`/`to_date` are inclusive
+    bounds, already parsed by the API layer. `page`/`per_page` have
+    already passed API schema validation. All filter types combine with
+    AND.
+
+    Q3: returns `SettingAuditEventPage(items, total, page, per_page)`
+    with `actor` eagerly loaded on every item, ordered `created_at DESC,
+    id DESC` (fixed — no client-controlled sort). An out-of-range page
+    returns an empty `items` list with the correct `total`. No row lock,
+    mutation, or audit event is created.
+
+    Q6: propagates any underlying database exception. Infallible
+    otherwise.
+    """
+    query = select(SettingAuditEvent)
+    count_query = select(func.count()).select_from(SettingAuditEvent)
+
+    if event_types:
+        type_filter = SettingAuditEvent.event_type.in_(
+            [event_type.value for event_type in event_types]
+        )
+        query = query.where(type_filter)
+        count_query = count_query.where(type_filter)
+
+    if setting_key is not None:
+        key_filter = SettingAuditEvent.setting_key == setting_key
+        query = query.where(key_filter)
+        count_query = count_query.where(key_filter)
+
+    query = SettingAuditLog.filter_by_actor(query, actor)
+    count_query = SettingAuditLog.filter_by_actor(count_query, actor)
+
+    query = SettingAuditLog.apply_date_filters(query, from_date, to_date)
+    count_query = SettingAuditLog.apply_date_filters(count_query, from_date, to_date)
+
+    total = (await session.execute(count_query)).scalar_one()
+
+    data_query = (
+        query.options(selectinload(SettingAuditEvent.actor))
+        .order_by(SettingAuditEvent.created_at.desc(), SettingAuditEvent.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    items = list((await session.execute(data_query)).scalars().all())
+    return SettingAuditEventPage(items=items, total=total, page=page, per_page=per_page)

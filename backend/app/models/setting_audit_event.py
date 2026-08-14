@@ -9,11 +9,16 @@ validation and write.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import ForeignKey, Index, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.mixins import AuditEventMixin
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class SettingAuditEvent(Base, AuditEventMixin):
@@ -38,3 +43,12 @@ class SettingAuditEvent(Base, AuditEventMixin):
     )
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Read-only convenience relationship for API consumers. Deliberately
+    # unidirectional and NOT back-populated: User gets no reverse
+    # collection, mirroring IdentityAuditEvent.actor. `viewonly=True`
+    # because this model is append-only and this relationship must
+    # never be used to persist changes through ORM cascade.
+    actor: Mapped[User | None] = relationship(
+        "User", foreign_keys="SettingAuditEvent.user_id", viewonly=True
+    )

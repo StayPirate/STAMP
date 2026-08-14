@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from app.api import health
 from app.api.v1 import api_keys, auth, identity_audit, users
+from app.api.v1 import settings as settings_api
 from app.config import settings
 from app.core.errors import AppError, ErrorCode
 from app.core.logging import configure_logging
@@ -138,3 +139,4 @@ app.include_router(auth.router)
 app.include_router(api_keys.router)
 app.include_router(users.router)
 app.include_router(identity_audit.router)
+app.include_router(settings_api.router)

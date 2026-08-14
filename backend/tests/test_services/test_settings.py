@@ -1,14 +1,15 @@
 """Tests for the system settings service (backend/app/services/settings.py).
 
 See `docs/features/platform/system-settings.md` for the contract under
-test: `bootstrap_system_settings()`, `get_default_cvss_version()`, and
-the `SettingAuditLog` audit trail.
+test: `bootstrap_system_settings()`, `get_default_cvss_version()`, the
+`SettingAuditLog` audit trail, and `list_setting_audit_events()`.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -27,6 +28,7 @@ from app.services.settings import (
     SettingAuditLog,
     bootstrap_system_settings,
     get_default_cvss_version,
+    list_setting_audit_events,
 )
 
 _DEFAULT_KEY = "default_cvss_version"
@@ -383,3 +385,299 @@ class TestSettingAuditLogAtomicity:
             (await db_session.execute(select(SettingAuditEvent))).scalars().all()
         )
         assert rows_after == []
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsEmpty:
+    async def test_returns_empty_page_with_zero_total(
+        self, db_session: AsyncSession
+    ) -> None:
+        page = await list_setting_audit_events(db_session)
+
+        assert page.items == []
+        assert page.total == 0
+        assert page.page == 1
+        assert page.per_page == 20
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsActorLoading:
+    async def test_actor_is_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        admin = await user_factory(username="eagerloadactor")
+        await setting_audit_event_factory(user_id=admin.id)
+
+        page = await list_setting_audit_events(db_session)
+
+        assert len(page.items) == 1
+        assert page.items[0].actor is not None
+        assert page.items[0].actor.username == "eagerloadactor"
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsSettingKeyFilter:
+    async def test_exact_match_filters_to_one_setting(
+        self,
+        db_session: AsyncSession,
+        system_setting_factory: Callable[..., Awaitable[SystemSetting]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        setting_a = await system_setting_factory()
+        setting_b = await system_setting_factory()
+        await setting_audit_event_factory(setting_key=setting_a.key)
+        await setting_audit_event_factory(setting_key=setting_b.key)
+
+        page = await list_setting_audit_events(db_session, setting_key=setting_a.key)
+
+        assert page.total == 1
+        assert page.items[0].setting_key == setting_a.key
+
+    async def test_unknown_setting_key_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(
+            db_session, setting_key="no_such_setting_key"
+        )
+
+        assert page.total == 0
+        assert page.items == []
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsActorFilter:
+    async def test_filter_by_actor_uuid(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        other_actor = await user_factory()
+        await setting_audit_event_factory(user_id=actor.id)
+        await setting_audit_event_factory(user_id=other_actor.id)
+
+        page = await list_setting_audit_events(db_session, actor=str(actor.id))
+
+        assert page.total == 1
+        assert page.items[0].user_id == actor.id
+
+    async def test_filter_by_actor_username(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        actor = await user_factory(username="filterbyusernamesetting")
+        await setting_audit_event_factory(user_id=actor.id)
+
+        page = await list_setting_audit_events(
+            db_session, actor="filterbyusernamesetting"
+        )
+
+        assert page.total == 1
+
+    async def test_unknown_actor_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(db_session, actor="no-such-actor")
+
+        assert page.total == 0
+
+    async def test_system_literal_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        """Every setting audit event has a human actor — `"system"` never
+        matches any row (system-settings.md, List Settings Audit
+        Events)."""
+        await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(db_session, actor="system")
+
+        assert page.total == 0
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsEventTypeFilter:
+    async def test_matching_type_is_included(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        await setting_audit_event_factory(event_type="setting_changed")
+
+        page = await list_setting_audit_events(
+            db_session, event_types=[SettingAuditEventType.SETTING_CHANGED]
+        )
+
+        assert page.total == 1
+
+    async def test_empty_event_types_list_applies_no_filter(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        await setting_audit_event_factory()
+        await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(db_session, event_types=[])
+
+        assert page.total == 2
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsDateFilter:
+    async def test_inclusive_from_and_to_date(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        in_range = await setting_audit_event_factory(
+            created_at=datetime(2026, 5, 13, tzinfo=UTC)
+        )
+        await setting_audit_event_factory(created_at=datetime(2026, 1, 1, tzinfo=UTC))
+
+        page = await list_setting_audit_events(
+            db_session,
+            from_date=datetime(2026, 5, 1, tzinfo=UTC),
+            to_date=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == in_range.id
+
+    async def test_date_only_bounds_cover_full_day(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        event = await setting_audit_event_factory(
+            created_at=datetime(2026, 5, 13, 23, 59, 0, tzinfo=UTC)
+        )
+
+        page = await list_setting_audit_events(
+            db_session, from_date=datetime(2026, 5, 13, tzinfo=UTC).date(), to_date=None
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == event.id
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsCombinedFilters:
+    async def test_filters_combine_with_and(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        system_setting_factory: Callable[..., Awaitable[SystemSetting]],
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        actor = await user_factory()
+        setting = await system_setting_factory()
+        await setting_audit_event_factory(
+            user_id=actor.id, setting_key=setting.key, event_type="setting_changed"
+        )
+        # Same setting, different actor — must not match the actor filter.
+        other_actor = await user_factory()
+        await setting_audit_event_factory(
+            user_id=other_actor.id, setting_key=setting.key
+        )
+
+        page = await list_setting_audit_events(
+            db_session,
+            actor=str(actor.id),
+            setting_key=setting.key,
+            event_types=[SettingAuditEventType.SETTING_CHANGED],
+        )
+
+        assert page.total == 1
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsPagination:
+    async def test_reports_filtered_total(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        for _ in range(3):
+            await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(db_session, per_page=2)
+
+        assert page.total == 3
+        assert len(page.items) == 2
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        await setting_audit_event_factory()
+
+        page = await list_setting_audit_events(db_session, page=2)
+
+        assert page.items == []
+        assert page.total == 1
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsOrdering:
+    async def test_orders_newest_first(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        older = await setting_audit_event_factory(
+            created_at=datetime(2026, 5, 1, tzinfo=UTC)
+        )
+        newer = await setting_audit_event_factory(
+            created_at=datetime(2026, 5, 2, tzinfo=UTC)
+        )
+
+        page = await list_setting_audit_events(db_session)
+
+        assert [item.id for item in page.items] == [newer.id, older.id]
+
+    async def test_equal_timestamps_break_tie_by_id_desc(
+        self,
+        db_session: AsyncSession,
+        setting_audit_event_factory: Callable[..., Awaitable[SettingAuditEvent]],
+    ) -> None:
+        same_time = datetime(2026, 5, 13, tzinfo=UTC)
+        first = await setting_audit_event_factory(created_at=same_time)
+        second = await setting_audit_event_factory(created_at=same_time)
+        expected_order = sorted([first.id, second.id], reverse=True)
+
+        page = await list_setting_audit_events(db_session)
+
+        assert [item.id for item in page.items] == expected_order
+
+
+@pytest.mark.integration
+class TestListSettingAuditEventsErrorPropagation:
+    async def test_database_error_propagates_unchanged(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def _boom(*args: Any, **kwargs: Any) -> None:
+            raise OperationalError("simulated", {}, Exception("boom"))
+
+        monkeypatch.setattr(db_session, "execute", _boom)
+
+        with pytest.raises(OperationalError):
+            await list_setting_audit_events(db_session)
