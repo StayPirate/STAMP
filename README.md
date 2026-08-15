@@ -1,4 +1,4 @@
-<p align="center"><img src=".github/assets/logo.png" alt="Sentinel — Linux Vulnerability Management" width="500"></p>
+<p align="center"><img src=".github/assets/banner.svg" alt="Sentinel — Linux Vulnerability Management" width="500"></p>
 
 <p align="center">
 <a href="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
