@@ -437,6 +437,16 @@ CI drift check.
 is pinned by digest (`python:3.13-slim@sha256:...`) in both Dockerfile
 stages, in addition to the tag — the tag documents the intent (Python
 3.13, slim variant) while the digest guarantees immutability. Dependabot
+does NOT track this reference: both the tag and the digest are supplied
+through Dockerfile `ARG` values (`PYTHON_VERSION`, `PYTHON_BASE_DIGEST`),
+and Dependabot's `docker` ecosystem parser only recognizes literal tag
+and digest text in a `FROM` line — a well-known upstream limitation
+(`dependabot/dependabot-core#2057`, open since 2020). This was already
+true before digest pinning (the tag alone was equally untracked); pinning
+the digest does not regress anything Dependabot previously provided for
+this Dockerfile. Base image freshness is monitored instead by the weekly
+Trivy scan — see Image Vulnerability Monitoring below for the resulting
+manual remediation step.
 
 **Test code exclusion.** The runtime image MUST NOT contain test code.
 `backend/tests/` is excluded by `.dockerignore` and is never copied
@@ -448,16 +458,6 @@ test suite (see `docs/features/platform/testing-strategy.md`, Local
 Process System Testing) uses the normal local installation with
 test-owned process launchers — it does not require changes to the
 shipped image.
-does NOT track this reference: both the tag and the digest are supplied
-through Dockerfile `ARG` values (`PYTHON_VERSION`, `PYTHON_BASE_DIGEST`),
-and Dependabot's `docker` ecosystem parser only recognizes literal tag
-and digest text in a `FROM` line — a well-known upstream limitation
-(`dependabot/dependabot-core#2057`, open since 2020). This was already
-true before digest pinning (the tag alone was equally untracked); pinning
-the digest does not regress anything Dependabot previously provided for
-this Dockerfile. Base image freshness is monitored instead by the weekly
-Trivy scan — see Image Vulnerability Monitoring below for the resulting
-manual remediation step.
 
 ---
 

@@ -985,6 +985,11 @@ Note: `IBSEventConsumer` (real-time codestream release detection via IBS
 RabbitMQ) is a continuous service, not a `BaseFetcher` subclass. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
 
+Note: the test-only system fetcher under `backend/tests/support/` is
+intentionally excluded from this registry — see
+`docs/features/platform/fetcher-infrastructure.md` (Registry
+Maintenance).
+
 ### CVE Enrichment Data Structures
 
 The following tables store CVE enrichment data from multiple sources.

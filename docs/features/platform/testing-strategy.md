@@ -874,7 +874,9 @@ per-repository via `core.hooksPath` (see activation steps below):
   so the hook never mutates `backend/uv.lock` as a side effect of running
   a check.
 - **pre-push**: full test suite (`pytest`) including integration and
-  e2e tests. Also uses `uv run --locked`, for the same reason.
+  e2e tests, followed by the system suite (`pytest -m system
+  tests/system/`) — see Local Process System Testing. Also uses
+  `uv run --locked`, for the same reason.
 - **post-checkout / post-merge / post-rewrite**: after switching
   branches, pulling, merging, or completing a rebase, the backend
   environment (`backend/.venv`) is automatically synchronized with
@@ -1179,6 +1181,15 @@ the normal Celery entrypoint. This ensures:
 - Pytest teardown restores only the specific test entry without
   clearing the global registry.
 
+The spawned worker and Beat subprocesses MUST receive an explicit
+environment that sets `DATABASE_URL` and `CELERY_BROKER_URL` (and
+`REDIS_URL` if consumed) to the test-harness infrastructure derived
+from `TEST_DATABASE_URL` and `TEST_REDIS_URL`. The subprocess
+environment MUST NOT inherit application-configured values from the
+developer's shell or `.env` file. This prevents the spawned processes
+from writing test rows into a real local development database or
+broker.
+
 ### Behavioral Requirements
 
 The system test MUST prove the following end-to-end path using real
@@ -1192,7 +1203,9 @@ infrastructure:
 3. Beat dispatches the task through the Redis broker without manual
    `send_task()` bypass.
 4. The worker executes the fetcher and finalizes a `FetcherRun` record
-   with the expected outcome.
+   with the expected outcome. Exactly one finalized `FetcherRun` row
+   MUST exist for the test fetcher after the assertion phase (no
+   duplicates from concurrent dispatch).
 5. The finalized run is visible through the Public fetcher observation
    API (exercised via the in-process ASGI client with independently
    connecting database sessions).
@@ -1226,6 +1239,9 @@ or failed. The required ordering:
 4. Delete the test RedBeat entry through the library's public API.
 5. Clear only the designated Redis logical database (`FLUSHDB`).
 6. Delete committed test rows from PostgreSQL in FK-safe order.
+   This includes all `FetcherConfig` rows created by the spawned
+   processes' bootstrap (which inserts rows for every fetcher in
+   the subprocess registry), not only the test fetcher's own row.
 7. Restore/remove the test registry entry in the pytest process.
 8. Verify that processes are dead and test artifacts are absent.
 
