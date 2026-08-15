@@ -91,15 +91,17 @@ function-scoped test functions.
 
 ### Marker Registration
 
-All custom markers (`unit`, `integration`, `e2e`) MUST be registered in
-`pyproject.toml` under `[tool.pytest.ini_options]` to avoid
-`PytestUnknownMarkWarning`:
+All custom markers (`unit`, `integration`, `e2e`, `image`, `system`)
+MUST be registered in `pyproject.toml` under `[tool.pytest.ini_options]`
+to avoid `PytestUnknownMarkWarning`:
 
 ```ini
 markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
+    "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
+    "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 ```
 
@@ -955,6 +957,10 @@ through the following required gates:
    image MUST pass a black-box smoke test that verifies the container
    starts correctly and responds to health checks. This gate is blocking
    on PRs only (not on pushes to `master`).
+9. **Local process system test** — the system suite (`-m system`) MUST
+   pass. This gate verifies the inter-process fetcher pipeline using
+   real worker and Beat processes against the test infrastructure. It
+   is a separate invocation from the coverage-measured suite.
 
 The test execution environment MUST provide PostgreSQL 16 and Redis 7
 instances, exposed to the test harness via `TEST_DATABASE_URL` and
@@ -984,7 +990,7 @@ asserting against it over HTTP (and, where a check requires it, via
 | Location | `backend/tests/image/` (one file per concern/role) |
 | Marker | `@pytest.mark.image` |
 | Isolation | Black-box: talks to a running container over the network. Does NOT use the in-process `db_session` / `client` fixtures |
-| Default run | **Excluded** — `pyproject.toml` sets `addopts = "-m 'not image'"` |
+| Default run | **Excluded** — `pyproject.toml` sets `addopts = "-m 'not image and not system'"` |
 
 Because the marker is excluded from the default invocation, `cd backend
 && uv run pytest` never attempts to start containers, and — since
@@ -1081,6 +1087,185 @@ setting-key filtering, repeatable enum filtering, actor filtering, inclusive
 date normalization, inverted and malformed ranges, filtered totals, empty and
 out-of-range pages, equal-timestamp ordering, and the missing-required-setting
 `500 INTERNAL_ERROR` response.
+
+---
+
+## Local Process System Testing
+
+The three-tier pyramid and the image smoke suite share a limitation:
+they never exercise real inter-process communication between the
+pytest host, a Celery worker, Celery Beat, Redis as a broker, and
+PostgreSQL as durable storage — all within the local development
+environment. The **local process system suite** fills this gap by
+spawning real worker and Beat processes against the test
+infrastructure and verifying observable outcomes through the database
+and the in-process ASGI API client.
+
+This suite is distinct from the image smoke suite: it does NOT
+exercise the built Docker image. It validates the scheduled pipeline
+path (registration → config bootstrap → Beat schedule → broker
+delivery → worker execution → FetcherRun finalization → Public API
+visibility) using the local virtual environment and real
+infrastructure.
+
+### Location and Marker
+
+| Property | Value |
+|----------|-------|
+| Location | `backend/tests/system/` |
+| Marker | `@pytest.mark.system` |
+| Isolation | Spawns real worker and Beat processes against test PostgreSQL and test Redis. Does NOT use the `db_session` rollback fixture for subprocess-committed rows |
+| Default run | **Excluded** — `addopts` excludes both `image` and `system` markers |
+| Coverage | Not counted toward the coverage gate — subprocess execution is not observable by the pytest-host tracer |
+
+### Execution
+
+The suite runs via a dedicated pytest invocation:
+
+```bash
+cd backend && uv run pytest -m system tests/system/
+```
+
+This invocation is included in the **pre-push hook** (after the
+ordinary full suite) and as a **separate blocking CI gate** on every
+pull request and push to `master`. The CI environment provides the
+same `TEST_DATABASE_URL` and `TEST_REDIS_URL` used by the ordinary
+suite.
+
+### Test-Only Fetcher
+
+The suite exercises the generic fetcher pipeline using a concrete
+`BaseFetcher` subclass that exists exclusively in test code. This
+class:
+
+- Lives under `backend/tests/support/` (never under `app/`).
+- Is not imported by `app/services/fetcher_discovery.py`.
+- Is not documented in `docs/data-sources.md` (Fetcher Registry).
+- Cannot be discovered by normal production processes (API server,
+  worker, Beat) unless explicitly imported by a test-owned process
+  launcher.
+- Has no production discovery import, environment flag, or runtime
+  test mode that could expose it.
+- Performs no database writes, network calls, metric-helper calls,
+  cursor assignment, or domain mutations in its `execute()` method.
+
+**Expected finalized run outcome:**
+
+| Field | Expected value |
+|-------|----------------|
+| `status` | `success` |
+| `items_created` | `0` |
+| `items_updated` | `0` |
+| `items_failed` | `0` |
+| `triggered_by` | `schedule` |
+| `triggered_by_user_id` | `NULL` |
+| `error_message` | `NULL` |
+| `error_detail` | `NULL` |
+| `error_traceback` | `NULL` |
+| `cursor` | `NULL` |
+| `started_at`, `finished_at` | Non-NULL, `finished_at >= started_at` |
+| `FetcherAuditEvent` | None created |
+
+### Registration Boundary
+
+The test-only fetcher is registered in worker and Beat processes
+through a test-owned launcher that imports the class before invoking
+the normal Celery entrypoint. This ensures:
+
+- Production entrypoints import only `fetcher_discovery`.
+- The test class is registered process-locally in spawned test
+  processes and in the pytest host (for API visibility assertions).
+- Process exit removes subprocess registry state.
+- Pytest teardown restores only the specific test entry without
+  clearing the global registry.
+
+### Behavioral Requirements
+
+The system test MUST prove the following end-to-end path using real
+infrastructure:
+
+1. A real Celery worker starts, becomes reachable, and has the
+   generic `run_fetcher` task registered.
+2. A real Celery Beat starts, bootstraps the test fetcher's
+   `FetcherConfig`, reconciles a RedBeat entry for it, and schedules
+   it according to the normal mechanism.
+3. Beat dispatches the task through the Redis broker without manual
+   `send_task()` bypass.
+4. The worker executes the fetcher and finalizes a `FetcherRun` record
+   with the expected outcome.
+5. The finalized run is visible through the Public fetcher observation
+   API (exercised via the in-process ASGI client with independently
+   connecting database sessions).
+6. No domain tables are mutated (no rows created, modified, or
+   deleted outside the fetcher infrastructure tables).
+
+The test MAY use the RedBeat public API to make an existing
+reconciliation-created entry become due without waiting for a real
+cron boundary, provided Beat still performs the dispatch (the broker
+path is not bypassed).
+
+### Bounded Waiting and Diagnostics
+
+- Every poll operation uses a monotonic deadline.
+- Every subprocess operation has a finite timeout.
+- Short intervals between poll attempts are acceptable; a fixed sleep
+  followed by a single assertion is not.
+- Early failure if the worker or Beat process exits unexpectedly.
+- Timeout diagnostics MUST include: captured process output, return
+  codes, current `FetcherConfig`/`FetcherRun` state, and RedBeat
+  entry state (when readable).
+
+### Deterministic Cleanup
+
+Cleanup MUST succeed regardless of whether the test assertions passed
+or failed. The required ordering:
+
+1. Stop Beat first (prevents new task enqueues).
+2. Allow the worker bounded time for graceful completion.
+3. Escalate to forced termination after a deadline.
+4. Delete the test RedBeat entry through the library's public API.
+5. Clear only the designated Redis logical database (`FLUSHDB`).
+6. Delete committed test rows from PostgreSQL in FK-safe order.
+7. Restore/remove the test registry entry in the pytest process.
+8. Verify that processes are dead and test artifacts are absent.
+
+A cleanup failure MUST fail the test — including when the primary
+assertion already failed.
+
+### Parallel Safety
+
+- Uses the worker-specific Redis logical database (same isolation as
+  the ordinary suite).
+- `FLUSHALL` is forbidden.
+- PostgreSQL cleanup predicates are restricted to test-fetcher-
+  specific names and IDs (no table-wide deletions).
+- Worker hostname, temporary files, and diagnostic paths are unique
+  per test invocation.
+- The suite remains safe if assigned to a pytest-xdist worker.
+
+### Relationship to Other Test Suites
+
+The local process system suite is **additive**. It does NOT replace:
+
+- Focused unit and integration tests for `BaseFetcher` lifecycle,
+  config bootstrap, task acquisition, reconciliation, or API
+  serialization (owned by their respective introducing work items).
+- Image smoke tests for shipped-image startup, task registration,
+  reconciliation behavior, and fail-fast assertions.
+- The production-exclusion assertion that the shipped image and
+  normal API output do not contain the test-only fetcher (owned by
+  the image smoke suite).
+
+### Automation
+
+The system suite MUST be executed automatically:
+
+- **Pre-push hook**: invoked after the ordinary full suite completes
+  successfully.
+- **CI pipeline**: a separate blocking invocation alongside the
+  existing gates (not merged into the coverage-measured run).
+
+No manual invocation is required for normal development workflow.
 
 ---
 
@@ -1512,7 +1697,9 @@ comprehensive test coverage:
 - `docs/features/identity/identity-audit-log.md` — IdentityAuditEvent
   contract
 - `docs/features/platform/fetcher-infrastructure.md` — FetcherAuditEvent
-  contract, test helper extension rule
+  contract, test helper extension rule, test-only fetcher exception
+- `docs/features/platform/fetcher-operations.md` — Public fetcher API
+  fields (consumed by the system suite's API assertions)
 - `docs/features/packages/cpe-package-mapping.md` — canonical mapping
   file, parser, loader, cache, and resolver test contract
 - `docs/features/platform/system-settings.md` — SettingAuditEvent

@@ -437,6 +437,17 @@ CI drift check.
 is pinned by digest (`python:3.13-slim@sha256:...`) in both Dockerfile
 stages, in addition to the tag — the tag documents the intent (Python
 3.13, slim variant) while the digest guarantees immutability. Dependabot
+
+**Test code exclusion.** The runtime image MUST NOT contain test code.
+`backend/tests/` is excluded by `.dockerignore` and is never copied
+into any Dockerfile stage. No runtime environment variable, alternate
+image target, compose override that changes image contents, or
+test-fetcher-enabled runtime variant may be introduced to make test
+code executable inside the shipped image. The local process system
+test suite (see `docs/features/platform/testing-strategy.md`, Local
+Process System Testing) uses the normal local installation with
+test-owned process launchers — it does not require changes to the
+shipped image.
 does NOT track this reference: both the tag and the digest are supplied
 through Dockerfile `ARG` values (`PYTHON_VERSION`, `PYTHON_BASE_DIGEST`),
 and Dependabot's `docker` ecosystem parser only recognizes literal tag
