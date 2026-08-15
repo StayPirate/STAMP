@@ -290,7 +290,7 @@ process.
 
 ## Provisioning Mechanism (Placeholder)
 
-No provisioning mechanism is active in the current phase. Users are
+No provisioning mechanism is active currently. Users are
 created as local users through the authenticated administrator API or the
 bootstrap/recovery CLI.
 

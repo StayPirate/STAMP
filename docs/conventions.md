@@ -1867,8 +1867,8 @@ behavior, or whether a given planning artifact still exists.
   rationale, and stable work-item IDs
 - The GitHub issue tracking a specific work item — its description and
   comments are the right place to record phase-specific notes,
-  implementation decisions, and reviewer findings for that piece of work
-  (see "Issues and work units" above)
+  implementation decisions, and notes on how reviewer findings were
+  addressed for that piece of work (see "Issues and work units" above)
 
 **Rationale**: work-item identifiers get renumbered as a roadmap
 evolves, and planning artifacts are retired once fully consumed. A spec

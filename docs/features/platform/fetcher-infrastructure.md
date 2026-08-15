@@ -442,15 +442,14 @@ class names and Celery task names follow their own naming convention
 
 ## Per-Ticket Catch-Up: `catch_up()` Method
 
-This section defines the generic `BaseFetcher` extension points for
-catch-up: the `catch_up()` override point, the
-`participates_in_catch_up` class attribute, the
-`get_catch_up_fetchers()` registry accessor, and the import-time
-validation rules for catch-up signatures and flag consistency. The
-`run_catch_up` Celery task wrapper, `CVENotInSource` handling,
-ticket/CVE invocation from `reconcile_ticket_status()`, the default
-`BaseCVEFetcher.catch_up()` implementation, the production fetcher
-catch-up inventory, and all domain-specific orchestration are defined in
+This section defines the per-ticket catch-up mechanism: the
+`catch_up()` override point, the `participates_in_catch_up` class
+attribute, the `get_catch_up_fetchers()` registry accessor, the
+import-time validation rules for catch-up signatures and flag
+consistency, the `run_catch_up` Celery task wrapper, the invocation
+point in `reconcile_ticket_status()`, and the fetcher participation
+inventory. The default `BaseCVEFetcher.catch_up()` implementation and
+the `CVENotInSource` signal class are defined in
 `docs/features/platform/cve-fetcher-infrastructure.md`.
 
 Fetchers whose `execute()` scope is filtered by ticket status (e.g.,
