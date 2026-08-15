@@ -442,16 +442,15 @@ class names and Celery task names follow their own naming convention
 
 ## Per-Ticket Catch-Up: `catch_up()` Method
 
-**Implementation phase boundary**: Phase 3 owns only the generic
-extension points defined in this section: the `catch_up()` override
-point on `BaseFetcher`, the `participates_in_catch_up` class attribute,
-the `get_catch_up_fetchers()` registry accessor, and the import-time
-validation rules for catch-up signatures and flag consistency. The
-`run_catch_up` Celery task wrapper, `CVENotInSource` handling,
-ticket/CVE invocation from `reconcile_ticket_status()`, the default
-`BaseCVEFetcher.catch_up()` implementation, the production fetcher
-catch-up inventory, and all domain-specific orchestration belong to
-`P4-23` (see `docs/drafts/implementation-plan.md`, Phase 4).
+This section defines the per-ticket catch-up mechanism: the
+`catch_up()` override point, the `participates_in_catch_up` class
+attribute, the `get_catch_up_fetchers()` registry accessor, the
+import-time validation rules for catch-up signatures and flag
+consistency, the `run_catch_up` Celery task wrapper, the invocation
+point in `reconcile_ticket_status()`, and the fetcher participation
+inventory. The default `BaseCVEFetcher.catch_up()` implementation and
+the `CVENotInSource` signal class are defined in
+`docs/features/platform/cve-fetcher-infrastructure.md`.
 
 Fetchers whose `execute()` scope is filtered by ticket status (e.g.,
 `sync_redhat_cves` scopes to CVEs with active tickets) skip inactive
@@ -2581,13 +2580,12 @@ behavior.
 | Task | Status | Owning specification |
 |------|--------|---------------------|
 | `cleanup_sessions` | Implemented | `docs/features/identity/authentication.md` (Session cleanup) |
-| `cleanup_stale_ticket_access_grants` | Future (`P4-15`) | `docs/features/tickets/tickets.md` (Stale Access Grant Cleanup) |
+| `cleanup_stale_ticket_access_grants` | Not yet registered | `docs/features/tickets/tickets.md` (Stale Access Grant Cleanup) |
 
-**Phase 3 scope**: during Phase 3 implementation, only
-`cleanup_sessions` exists in the `beat_schedule` dict. The
-`cleanup_stale_ticket_access_grants` entry is added by `P4-15` when
-the ticket confidentiality feature is implemented. Reconciliation
-step 4 handles both current and future entries identically (the
+Tasks with status "Not yet registered" are defined in their owning
+specification but not yet present in the `beat_schedule` dict. They are
+added when their owning feature is implemented. Reconciliation step 4
+handles all non-fetcher entries identically (the
 `task != "run_fetcher"` pre-filter protects them regardless of when
 they are added).
 

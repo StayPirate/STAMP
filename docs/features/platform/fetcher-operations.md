@@ -14,9 +14,9 @@ This feature depends on the fetcher infrastructure defined in
 `BaseFetcher` contract, data model (`FetcherRun`, `FetcherConfig`,
 `FetcherAuditEvent`), concurrency control, and stale run detection.
 
-## Phase 3 Scope
+## Scope
 
-This specification defines the **eight Phase 3 fetcher endpoints**:
+This specification defines the following fetcher endpoints:
 
 1. `GET /api/v1/fetchers` — list all fetchers
 2. `GET /api/v1/fetchers/{fetcher_name}/runs` — run history
@@ -27,10 +27,10 @@ This specification defines the **eight Phase 3 fetcher endpoints**:
 7. `PATCH /api/v1/fetchers/{fetcher_name}/config` — update config
 8. `GET /api/v1/fetchers/{fetcher_name}/audit-log` — admin audit trail
 
-**Excluded from Phase 3**: `GET /api/v1/ibs-consumer/status` remains
-with its owning integration
-(`docs/features/integrations/ibs-rabbitmq-integration.md`). It will be
-implemented when the IBS RabbitMQ consumer integration is enabled.
+The `GET /api/v1/ibs-consumer/status` endpoint is defined in
+`docs/features/integrations/ibs-rabbitmq-integration.md`, not here. It
+will be implemented when the IBS RabbitMQ consumer integration is
+enabled.
 
 ## Fetcher Operations Service
 

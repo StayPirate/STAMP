@@ -538,7 +538,7 @@ connection):
 The consumer state is exposed via the `GET /api/v1/ibs-consumer/status`
 endpoint, accessible without authentication. This endpoint is owned by
 this specification and will be implemented when the IBS RabbitMQ consumer
-integration is enabled (Phase 7+). See the Endpoint Permission Map in
+integration is enabled. See the Endpoint Permission Map in
 `docs/features/identity/rbac.md` for the cross-reference.
 
 ## Known Limitations

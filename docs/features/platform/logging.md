@@ -119,7 +119,7 @@ operational guidance. No code-level safety mechanism restricts
 
 **Log level changes require a process restart.** `LOG_LEVEL` is read
 once at process startup. Runtime log level modification without
-restart is out of scope for this phase.
+restart is not specified here.
 
 ## Standard Log Record Schema
 
@@ -295,8 +295,8 @@ emit sensitive data. This is an explicit operator choice, not an
 accidental side effect. Operators should use `LOG_LEVEL=DEBUG` in
 production only for time-bounded diagnostics and revert promptly.
 
-Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are
-explicitly deferred to a future phase. If production experience shows
+Per-logger override env vars (e.g., `LOG_LEVEL_SQLALCHEMY`) are not
+currently specified. If production experience shows
 the need for "verbose httpx only, quiet everything else", per-logger
 vars can be added without breaking changes.
 
