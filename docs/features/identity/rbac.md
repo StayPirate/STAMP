@@ -35,7 +35,7 @@ Endpoints are protected by a single capability via the
 | `manage_users` | Create local users, update user fields, manage user roles, reset password, deactivate/reactivate, unlock, view deactivation impact, view/revoke all API keys, view admin-scoped identity audit log |
 | `manage_role_mappings` | Group-to-role mapping CRUD, preview role mapping |
 | `manage_settings` | View/update system settings, trigger CVSS recalculation, view settings audit log |
-| `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, modify fetcher config, view fetcher audit log, view error details, view error tracebacks |
+| `manage_fetchers` | Trigger manual fetcher run, enable/disable fetchers, view/modify fetcher config, view fetcher audit log, view error details, view error tracebacks, view triggered_by_user identity, view disabled_by/enabled_by actors |
 | `admin_ticket_ops` | Force track to FIXED status |
 
 > **Design note — capability granularity**: capabilities are intentionally
@@ -171,10 +171,13 @@ Any logged-in user, regardless of role. Includes all Public access plus:
 | View settings audit log | `manage_settings` |
 | Trigger manual fetcher run | `manage_fetchers` |
 | Enable/disable fetchers | `manage_fetchers` |
+| View fetcher config | `manage_fetchers` |
 | Modify fetcher config | `manage_fetchers` |
 | View fetcher audit log | `manage_fetchers` |
 | View fetcher error details | `manage_fetchers` |
 | View fetcher error tracebacks | `manage_fetchers` |
+| View triggered_by_user identity | `manage_fetchers` |
+| View disabled_by/enabled_by actors | `manage_fetchers` |
 
 > **Assignment target constraint**: the `triage_ticket` capability allows
 > performing assignment operations, but the target user MUST hold the

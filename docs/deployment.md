@@ -1086,7 +1086,9 @@ ingestion):
 This signal is derivable from `GET /api/v1/fetchers` without any code
 changes to Sentinel. It detects not only empty schedules but also dead
 workers, database unavailability, or any other cause of stalled
-processing.
+processing. Runs still in progress have `last_run.finished_at = null`
+and are covered by the `last_run.stale` condition once the timeout
+threshold is reached.
 
 **Why not `/health` or `/ready`**: these endpoints report API server
 instance health for the load balancer. Returning non-200 for a Beat

@@ -81,7 +81,7 @@ All exceptions inherit from `FetcherOperationsServiceError(ServiceError)`.
 
 | Exception | HTTP | Code | Raised when |
 |-----------|------|------|-------------|
-| `FetcherNotFoundError` | 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record) |
+| `FetcherNotFoundError` | 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists (not in the registry and no `FetcherConfig` record), or the fetcher is in the registry but has no `FetcherConfig` row (bootstrap prerequisite for mutations) |
 | `FetcherRunNotFoundError` | 404 | `FETCHER_NOT_FOUND` | The specified run does not exist or does not belong to the named fetcher |
 | `FetcherDeregisteredError` | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed) |
 | `FetcherDisabledError` | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false`) |
@@ -92,9 +92,10 @@ All exceptions inherit from `FetcherOperationsServiceError(ServiceError)`.
 
 #### System-Internal Exceptions
 
-| Exception | Raised when | Handling |
-|-----------|-------------|----------|
-| `RedBeatPropagationWarning` | Post-commit RedBeat write fails (Redis unreachable) | Logged at WARNING; not propagated to caller — the API returns 200 |
+No system-internal exceptions are defined in this module. Post-commit
+RedBeat propagation failure is handled inline by the API workflow (log
+WARNING, continue with 200 response) without raising or catching a
+dedicated exception type.
 
 ### Public Functions
 
@@ -281,8 +282,11 @@ disabled, derived from `FetcherAuditEvent` records with
 **Q3 (behavior)**:
 
 1. **Input-only validation**: validate `schedule_override` cron syntax,
-   `run_timeout` bounds (60–604800), `request_delay` bounds (0–300)
-   before any database operation.
+   `run_timeout` bounds (60–604800), `request_delay` bounds (0–300).
+   These constraints are enforced at the request-schema layer (Pydantic
+   validators) and produce the global `422 VALIDATION_ERROR` response
+   per `docs/api-spec.md`. They execute before any database operation
+   and before the service function is called.
 2. **Lock**: `SELECT ... FOR UPDATE` on `FetcherConfig` where
    `fetcher_name` matches. This is the first database operation.
 3. **Guards**: evaluate guards 1–5 in order. On any failure, raise the
@@ -296,9 +300,11 @@ disabled, derived from `FetcherAuditEvent` records with
    - If **not stale**: raise `FetcherAlreadyRunningError`. The entire
      PATCH fails atomically — no field is modified, no audit event is
      created, no RedBeat propagation occurs.
-   - If **stale**: the run is outdated. The guard passes (the stale run
-     is NOT finalized here — that is the trigger's responsibility).
-     Proceed with mutation.
+   - If **stale**: finalize the stale run under the same lock (same
+     semantics as `trigger_fetcher` step 4 — see
+     `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+     Detection, for the finalization message and fields). Proceed with
+     mutation.
    - If `run_timeout` is present but equal to the current value: no-op
      for this field, guard does not apply.
 5. **Compute diff**: for each field in the payload, compare with current
@@ -358,12 +364,18 @@ After the API workflow commits the transaction containing
 
 1. Read the propagation descriptor returned by the service function.
 2. If no schedule-affecting field changed: skip propagation.
-3. Execute the RedBeat write as described in
-   `docs/features/platform/fetcher-infrastructure.md` (Runtime
-   Propagation):
-   - `enabled` → `false`: delete entry.
-   - `enabled` → `true`: create entry.
-   - `schedule_override` or `run_timeout` changed: upsert entry.
+3. Evaluate propagation with the following **precedence** (first
+   matching rule wins):
+   - If `enabled` changed to `false`: delete the RedBeat entry. All
+     other field changes in the same PATCH are moot for scheduling —
+     skip remaining propagation. A disabled fetcher has no entry.
+   - If `enabled` changed to `true`: create the RedBeat entry with the
+     effective schedule and time limit options (incorporating any
+     `schedule_override` or `run_timeout` changes from the same PATCH).
+   - If `schedule_override` or `run_timeout` changed (without `enabled`
+     change) **and the fetcher is currently enabled**: upsert the entry
+     with updated values. If the fetcher is disabled (and stays
+     disabled), skip — no entry exists to update.
 4. On any `RedisError`: log WARNING, do NOT roll back the committed
    PostgreSQL change. The system self-heals at the next Beat restart.
 5. The API response is transmitted AFTER the propagation attempt
@@ -430,10 +442,11 @@ and transactions.
    for triggering).
 3. Evaluate guards 2–4 in order.
 4. **Stale run handling**: if an active run exists and IS stale (using
-   current `run_timeout + 60`): finalize it as `failure` with
-   `error_message = "Run exceeded timeout and was terminated"`,
-   `finished_at = now()`, computed `duration_seconds`. This finalization
-   occurs under the same lock before creating the new run.
+   current `run_timeout + 60`): finalize it per
+   `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+   Detection) — `status = failure`, specified error message, computed
+   fields. This finalization occurs under the same lock before creating
+   the new run.
 5. Create `FetcherRun`:
    - `fetcher_name`: from input
    - `status`: `running`
@@ -469,27 +482,48 @@ and transactions.
 
 11. If `apply_async` raises any exception:
     a. Open a new session from `session_factory`.
-    b. Retrieve the `FetcherRun` by `id` (the committed run from step 5).
-    c. If the run's status is no longer `running` (worker adopted it
-       before the client received the error — ambiguous acknowledgement):
-       log WARNING and skip finalization. Raise
-       `FetcherBrokerUnavailableError` with the sanitized public message.
-    d. Update the run:
-       - `status`: `failure`
-       - `finished_at`: `now()`
-       - `duration_seconds`: computed from `started_at`
+    b. Attempt a **conditional atomic UPDATE**: `UPDATE FetcherRun SET
+       status = 'failure', finished_at = now(), duration_seconds = ...,
+       error_message = ..., error_detail = ..., error_traceback = ...
+       WHERE id = :run_id AND status = 'running'`. If zero rows are
+       affected (the worker already finalized the run — ambiguous
+       acknowledgement, outcome 2 below): log WARNING and skip to
+       step 11g.
+    c. The update uses:
        - `error_message`: fixed sanitized message:
          `"Manual run could not be dispatched to the task broker"`
-       - `error_detail`: `f"{type(exc).__name__}: {exc}"` (restricted
-         field — only visible with `manage_fetchers`)
+       - `error_detail`: `f"{type(exc).__name__}"` followed by a
+         redacted summary (exclude any connection URI, credentials, or
+         host:port information from the exception string). This
+         restricted field is visible only with `manage_fetchers`.
        - `error_traceback`: formatted traceback string (restricted)
-    e. Commit.
-    f. Close session.
+    d. Commit.
+    e. Close session.
+    f. The `triggered` audit event created in step 6 is **retained**
+       regardless of publication outcome.
     g. Raise `FetcherBrokerUnavailableError`.
 
-The `triggered` audit event created in step 6 is **retained** regardless
-of publication outcome. It records the admin's intent; the run record
-captures the operational result.
+##### Process Crash Between Commit and Enqueue
+
+If the API process is killed (OOM, pod eviction, node failure) after
+step 7 commits but before step 9 executes, `apply_async` never runs and
+the Publication Failure Path never fires. The pre-created `FetcherRun`
+remains at `status = running` with no corresponding Celery task.
+
+This is covered by the same stale run detection mechanism that handles
+worker crashes: after `run_timeout + 60` seconds, the orphaned row is
+finalized by the next trigger attempt or scheduled acquisition. During
+the stale-detection window:
+- Scheduled triggers are silently discarded (non-stale active run).
+- Manual triggers return `409 FETCHER_ALREADY_RUNNING`.
+- `GET /api/v1/fetchers` shows `stale: true` once the threshold is
+  reached, alerting the operator.
+
+This crash scenario is functionally equivalent to the
+"worker dies after accepting the task" case that stale detection is
+designed to cover. The recovery window is bounded by `run_timeout + 60`
+(default ~61 minutes). No additional mechanism (outbox, heartbeat, or
+lease) is introduced.
 
 ##### Ambiguous Broker Acknowledgement
 
@@ -503,22 +537,26 @@ race can occur:
 
 Two outcomes are possible:
 
-1. **Step 11 wins** (most common): the run is finalized as `failure`.
-   The worker finds `status != running` during adoption (step 6 of
+1. **Step 11 wins** (common case): the conditional UPDATE succeeds
+   (run was still `running`). The run is finalized as `failure`. The
+   worker later finds `status != running` during adoption (step 6 of
    the acquisition protocol) and skips execution — see
    `docs/features/platform/fetcher-infrastructure.md` (Atomic Run
    Acquisition Protocol, step 6, manual trigger predicate failure).
-2. **Worker wins**: the worker adopts the run (sets it to execution).
-   Step 11c detects `status != running` and skips finalization. The
-   worker completes normally — the run's final status reflects actual
-   execution. The API still returns 503 because the publication error
-   already occurred. This is a benign false-negative: the operator sees
-   a 503 but the run executes successfully.
+2. **Worker wins** (narrow window): the worker completes execution and
+   finalizes the run before step 11's UPDATE executes. The conditional
+   UPDATE affects zero rows (status is already `success`/`failure`/
+   `partial`). Step 11b skips finalization. The API still returns 503
+   because the publication error already occurred — a benign
+   false-negative: the operator sees a 503 but the run executed
+   successfully. The operator can verify via the run list.
 
 No new database column, status value, or distributed lock is introduced
 to eliminate this race. The residual ambiguity is accepted because:
 - The race window is extremely narrow (network error timing).
 - Both outcomes leave the system in a consistent state.
+- The single-instance invariant is preserved: in outcome 1 the worker
+  skips; in outcome 2 only one execution occurs.
 - The audit trail accurately records what happened.
 - The operator can verify via the run list whether execution occurred.
 
@@ -822,6 +860,10 @@ represents an individual `FetcherRun` record.
 interval exceeds this limit, the endpoint returns 400 Bad Request with
 code `DATE_RANGE_TOO_WIDE`.
 
+**Pagination**: not paginated. The response size is bounded by the
+maximum date-range interval above combined with fetcher execution
+frequency (~1–4 runs/day yields ~7,300 points for a full 5-year window).
+
 **Response** (200 OK):
 
 ```json
@@ -921,9 +963,9 @@ Redis URL, socket path, or traceback information.
 
 **Note on trigger-then-disable race condition**: if an admin triggers a
 fetcher (passing the enabled check) and another admin disables the
-fetcher before the Celery worker picks up the task, `BaseFetcher.run()`
-detects the disabled state during the acquisition protocol and finalizes
-the pre-created `FetcherRun` as `failure`. See
+fetcher before the Celery worker picks up the task, the `run_fetcher`
+task wrapper detects the disabled state during the acquisition protocol
+(step 2) and finalizes the pre-created `FetcherRun` as `failure`. See
 `fetcher-infrastructure.md`, "Atomic Run Acquisition Protocol" step 2.
 
 **Note on on-demand CVE fetch**: when Sentinel encounters an unknown
@@ -1075,8 +1117,8 @@ Returns the audit trail of admin actions for a fetcher.
 | `per_page` | int | 20 | Items per page (max 100) |
 | `event_type` | string (repeatable) | — | Filter by event type. Multiple values use OR semantics. See `docs/api-spec.md` (Enum Filter Validation) |
 | `actor` | string | — | Filter by actor: user UUID or username. Follows User Identifier Resolution. Unknown actor → empty results, not 404 |
-| `from_date` | string | — | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
-| `to_date` | string | — | ISO 8601 date/datetime. Include events up to this date (inclusive) |
+| `from_date` | datetime | — | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
+| `to_date` | datetime | — | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
 **Sorting**: fixed `created_at DESC, id DESC` (most recent first).
 Client-controlled sorting is not supported — audit trail has a single
@@ -1304,10 +1346,17 @@ Custom settings (schema unavailable — raw stored values):
 registered and deregistered).
 
 **Value display** (registered fetchers):
-- If a setting is explicitly configured (key in JSONB): show
-  `key = value  (default: X, range: Y–Z)`
+- If a setting is explicitly configured (key in JSONB and in schema):
+  show `key = value  (default: X, range: Y–Z)`
 - If a setting uses its default (key absent from JSONB): show
   `key = value  (default, range: Y–Z)`
+- If a key exists in JSONB but is absent from the current `Settings`
+  schema (orphaned key): display in a separate sub-section
+  `"Orphaned settings (no longer in schema):"` as raw `key = value`
+  without defaults, ranges, or descriptions. This alerts the operator
+  that stored values exist for a removed setting. Orphaned keys cannot
+  be removed via the PATCH endpoint (unknown keys are rejected); manual
+  database cleanup is required if removal is desired.
 - `range` shown only for `int`/`float` with `ge`/`le` constraints
 - `choices` shown as `choices: a, b, c` for fields with enum/Literal
 
@@ -1366,7 +1415,8 @@ on `FetcherRun`.
   contracts (BaseFetcher, FetcherConfig, FetcherRun, FetcherAuditEvent,
   concurrency control, stale detection, RedBeat scheduling, audit trail)
 - `docs/features/platform/audit-trail-infrastructure.md` — shared audit
-  trail query builder (`build_audit_query`, `actor` filter resolution)
+  trail conventions (immutability, `apply_date_filters()`,
+  `filter_by_actor()` resolution)
 - `docs/features/platform/cli-infrastructure.md` — shared CLI session
   mechanism, error-to-exit-code mapping
 - `docs/features/tickets/cve-service.md` — Global CVE Source Listing
