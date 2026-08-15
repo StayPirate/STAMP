@@ -677,7 +677,13 @@ This property is guaranteed by the following mechanisms:
   first. If Beat starts first, it creates them; if a worker starts first,
   Beat's bootstrap is a no-op (records already exist); if all start
   simultaneously, the first `INSERT` wins and concurrent duplicates are
-  no-ops.
+  no-ops. The function receives a caller-supplied `AsyncSession`, flushes
+  without committing, and leaves transaction ownership to the calling
+  startup workflow (see
+  `docs/features/platform/fetcher-infrastructure.md`, FetcherConfig).
+  Worker and Beat signal handlers that invoke bootstrap live under
+  `app/tasks/` (not `app/core/`) — see `docs/architecture.md` (Backend
+  Layer Architecture).
 - **`system_setting` seeding** uses `ON CONFLICT DO NOTHING` (Alembic
   data migration is the primary mechanism; FastAPI lifespan is
   defense-in-depth). The API lifespan completes this bootstrap transaction

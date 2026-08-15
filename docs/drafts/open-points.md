@@ -559,7 +559,7 @@ by spec authors.
 
 **Resolution**: the reconciliation is invoked via a `beat_init`
 signal handler (`@beat_init.connect`), registered in
-`backend/app/core/beat_init.py` and imported by the Celery app
+`backend/app/tasks/beat_startup.py` and imported by the Celery app
 module. The handler runs `bootstrap_fetcher_configs()` followed by
 the reconciliation procedure, with `sys.exit(1)` on any failure
 (explicit fail-fast). The `beat_scheduler` setting remains
