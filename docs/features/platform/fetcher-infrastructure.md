@@ -2162,31 +2162,37 @@ request.
 
 | Change | Propagation |
 |--------|-------------|
-| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron |
+| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron (only if fetcher is currently enabled) |
 | `enabled` changed to `false` | Remove the redbeat entry |
 | `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
-| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values. |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values (only if fetcher is currently enabled) |
 | `request_delay` changed | No propagation needed (read from DB at execution time) |
 | `custom_settings` changed | No propagation needed (read from DB at execution time) |
 
 #### Propagation Mechanism
 
-The PATCH endpoint handler:
+The PATCH configuration workflow (service mutation committed by the API
+transaction dependency, followed by post-commit propagation — see
+`docs/features/platform/fetcher-operations.md`, RedBeat Post-Commit
+Propagation):
 
-1. Updates `FetcherConfig` in PostgreSQL (within a transaction)
-2. Commits the PostgreSQL transaction
-3. Propagates to redbeat (if any propagation-requiring field changed):
+1. The service function updates `FetcherConfig` in PostgreSQL and flushes
+   (within the caller-owned transaction)
+2. The API transaction dependency commits the PostgreSQL transaction
+3. Post-commit, the API workflow propagates to redbeat (if any
+   propagation-requiring field changed):
    - If `enabled` changed to `false`: delete the redbeat entry. Any
      other field changes in the same PATCH are moot (a disabled fetcher
      has no entry) — skip remaining propagation steps
    - If `enabled` changed to `true`: create the redbeat entry with the
      effective schedule and time limit options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH)
-   - If `schedule_override` changed (without `enabled` change): update
-     the redbeat entry's schedule with the new effective cron expression
-    - If `run_timeout` changed (without `enabled` change): update the
-      redbeat entry's Options with the new `time_limit` and
-      `soft_time_limit` values
+   - If `schedule_override` changed (without `enabled` change) **and the
+     fetcher is currently enabled**: update the redbeat entry's schedule
+     with the new effective cron expression
+    - If `run_timeout` changed (without `enabled` change) **and the
+      fetcher is currently enabled**: update the redbeat entry's Options
+      with the new `time_limit` and `soft_time_limit` values
    - Uses the `redbeat.RedBeatSchedulerEntry` API to write/delete the
      entry
    - If multiple non-enable propagation-requiring fields changed in the
@@ -2253,14 +2259,15 @@ consistency model is safe because:
 ### `next_run_at` Calculation
 
 The `next_run_at` field in the `GET /api/v1/fetchers` response is
-calculated by the API endpoint at request time:
+calculated by the `list_fetchers` service function at request time (see
+`docs/features/platform/fetcher-operations.md`, `list_fetchers`):
 
 1. For each registered and enabled fetcher: read the redbeat entry's
    `due_at` attribute (the timestamp of the next scheduled execution,
    maintained by redbeat automatically)
-2. Access pattern: the API endpoint reads the redbeat entry by fetcher
-   name via the `RedBeatSchedulerEntry` API. This is an O(1) read per
-   fetcher — no full schedule scan.
+2. Access pattern: the service function reads the redbeat entry by
+   fetcher name via the `RedBeatSchedulerEntry` API. This is an O(1)
+   read per fetcher — no full schedule scan.
 3. If the entry does not exist in Redis (Beat not started, Redis flushed,
    or entry lost): `next_run_at = null`
 4. If the fetcher is disabled: `next_run_at = null` (no entry exists —
@@ -2292,10 +2299,11 @@ exclusively at Beat startup. There is no periodic reconciliation task
 during normal operation.
 
 **Rationale**: during normal operation, the only legitimate source of
-redbeat changes is the PATCH endpoint (which updates both PostgreSQL and
-redbeat). A periodic reconciliation would add complexity (timing, locking,
-performance impact of scanning all entries) for a failure mode (drift
-during normal operation) that cannot occur without either:
+redbeat changes is the PATCH configuration workflow (which updates both
+PostgreSQL and redbeat). A periodic reconciliation would add complexity
+(timing, locking, performance impact of scanning all entries) for a
+failure mode (drift during normal operation) that cannot occur without
+either:
 
 - An external actor directly modifying Redis (operator error) — handled
   by restart-based reconciliation (entry is silently overwritten)
@@ -2928,9 +2936,9 @@ of 3660 seconds. The minimum allowed `run_timeout` is 60 seconds
 (threshold: 120s); the maximum is 604800 seconds (7 days, threshold:
 604860s). Stale detection is always active for every fetcher.
 
-When a stale run is detected (by the Celery task or the API trigger
-endpoint), it is resolved by updating the stale `FetcherRun`
-record:
+When a stale run is detected (by the Celery task, the API trigger
+endpoint, or the PATCH config endpoint's Run Timeout Active Guard), it
+is resolved by updating the stale `FetcherRun` record:
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
@@ -3175,7 +3183,7 @@ Each event type uses `old_value`, `new_value`, and `detail` as follows:
 | Event Type | `old_value` | `new_value` | `detail` |
 |---|---|---|---|
 | `config_changed` (standard field) | Previous value (e.g., `"0 */6 * * *"`) | New value (e.g., `"0 */4 * * *"`) | `{"field": "<field_name>"}` where field is `schedule_override`, `run_timeout`, or `request_delay` |
-| `config_changed` (custom setting) | Previous value as string (e.g., `"2.0"`), or `null` if set for the first time | New value as string (e.g., `"5.0"`), or `null` if reset to default | `{"field": "custom_settings", "key": "<setting_key>"}` |
+| `config_changed` (custom setting) | Previous value as canonical JSON scalar (e.g., `"2.0"` for float, `"500"` for int, `"true"` for bool), or `null` if set for the first time | New value as canonical JSON scalar, or `null` if reset to default | `{"field": "custom_settings", "key": "<setting_key>"}` |
 | `disabled` | `null` | `null` | `null` |
 | `enabled` | `null` | `null` | `null` |
 | `triggered` | `null` | `null` | `null` |
@@ -3202,7 +3210,7 @@ executions per day, the table grows by approximately 20,000 rows per
 year — negligible for PostgreSQL. No cleanup task or retention policy is
 necessary. Orphaned runs (stuck in `running` status due to unclean
 process termination) are resolved automatically by the existing Stale Run
-Detection mechanism at the next trigger attempt.
+Detection mechanism at the next trigger attempt or config PATCH.
 
 **Manual purge**: if an operator needs to reduce table size for
 operational reasons (disaster recovery, database refresh), a simple
@@ -3313,7 +3321,7 @@ fetcher audit event. If `user_id` is `None`, the method raises
 
 | Event type | `old_value` | `new_value` | `detail` |
 |---|---|---|---|
-| `config_changed` | Required (previous value as string, or `None` if set for the first time) | Required (new value as string, or `None` if reset to default) | Required: `{"field": "<field_name>"}` for standard fields, `{"field": "custom_settings", "key": "<setting_key>"}` for custom setting changes |
+| `config_changed` | Required (previous value as `str()` for standard fields or canonical JSON scalar for custom settings; SQL `NULL` if the field was previously unset) | Required (new value as `str()` for standard fields or canonical JSON scalar for custom settings; SQL `NULL` if reset to default) | Required: `{"field": "<field_name>"}` for standard fields, `{"field": "custom_settings", "key": "<setting_key>"}` for custom setting changes |
 | `disabled` | Must be `None` | Must be `None` | Must be `None` |
 | `enabled` | Must be `None` | Must be `None` | Must be `None` |
 | `triggered` | Must be `None` | Must be `None` | Must be `None` |
