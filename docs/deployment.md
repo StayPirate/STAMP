@@ -448,6 +448,17 @@ this Dockerfile. Base image freshness is monitored instead by the weekly
 Trivy scan — see Image Vulnerability Monitoring below for the resulting
 manual remediation step.
 
+**Test code exclusion.** The runtime image MUST NOT contain test code.
+`backend/tests/` is excluded by `.dockerignore` and is never copied
+into any Dockerfile stage. No runtime environment variable, alternate
+image target, compose override that changes image contents, or
+test-fetcher-enabled runtime variant may be introduced to make test
+code executable inside the shipped image. The local process system
+test suite (see `docs/features/platform/testing-strategy.md`, Local
+Process System Testing) uses the normal local installation with
+test-owned process launchers — it does not require changes to the
+shipped image.
+
 ---
 
 ## Release Process

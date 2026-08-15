@@ -1491,6 +1491,16 @@ Documentation Requirements"). This includes the classification rule
 (dedicated spec vs. embedded section), the minimum documentation
 template, and the Fetcher Registry maintenance obligation.
 
+**Test-only exception**: a concrete `BaseFetcher` subclass that exists
+exclusively under `backend/tests/support/` for the local process
+system test suite is exempt from the per-fetcher specification
+template and the Fetcher Registry documentation obligation. Its
+complete contract is defined in
+`docs/features/platform/testing-strategy.md` (Local Process System
+Testing). This exception does not extend to production fetchers,
+stubs, internal fetchers, or any class outside that specific test
+support module.
+
 ### Function Specification Completeness
 
 Every function documented in a feature specification MUST provide enough

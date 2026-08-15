@@ -464,6 +464,20 @@ mutation piece begins. `SG3-02` owns worker handling of supplied run records.
 `P3-11` validates the complete generic pipeline without introducing
 production-facing test scaffolding; `SG3-04` owns the test-harness contract.
 
+**`P3-11` ownership boundaries**:
+
+- The test-only `BaseFetcher` subclass, system marker, process launchers,
+  harness fixtures, bounded polling, deterministic cleanup, and the happy-path
+  pipeline assertion.
+- Production-exclusion assertion: the shipped image and normal API output do
+  not contain the test-only fetcher.
+- Integration of the system suite into the pre-push hook and a separate
+  blocking CI gate.
+- P3-11 does NOT replace focused unit/integration tests owned by P3-02
+  (BaseFetcher lifecycle), P3-03 (task and concurrency), P3-04 (bootstrap and
+  startup), P3-05 (RedBeat reconciliation), or P3-06 (API serialization).
+  Each introducing piece retains its own verification.
+
 The IBS RabbitMQ consumer status endpoint remains with its owning disabled
 integration in Phase 7+.
 

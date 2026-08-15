@@ -1535,6 +1535,14 @@ NOT considered compliant. Compliance requires real content in all
 mandatory sections. TBD placeholders indicate that the fetcher's design
 is pending and must be completed before implementation begins.
 
+**Test-only exception**: the test-only system-fetcher under
+`backend/tests/support/` is exempt from the minimum documentation
+template and the Fetcher Registry row obligation. Its complete
+behavioral contract is defined in
+`docs/features/platform/testing-strategy.md` (Local Process System
+Testing). This exception does not apply to production fetchers,
+stubs, internal fetchers, or fixtures outside that specific module.
+
 ### Cross-Reference Summaries
 
 Specs that consume data produced by a fetcher defined elsewhere may
@@ -1560,6 +1568,19 @@ When defining a new fetcher:
 
 When removing a fetcher, both entries (registry table row and discovery
 module import line) MUST be removed.
+
+**Test-only system-fetcher exception**: a concrete `BaseFetcher`
+subclass that exists exclusively under `backend/tests/support/` for
+the local process system test suite (see
+`docs/features/platform/testing-strategy.md`, Local Process System
+Testing) is exempt from the registry maintenance obligations above. It
+MUST NOT be added to `docs/data-sources.md`, MUST NOT be imported by
+`fetcher_discovery.py`, and MUST NOT be found by the production
+discovery drift test (whose package scan is confined to `app.services.*`
+domain directories). All normal `BaseFetcher` lifecycle behavior —
+registration validation, `run()`, metrics, schedule, acquisition, and
+finalization — still applies. Only the production documentation and
+discovery obligations are waived.
 
 ### Domain Placement
 
