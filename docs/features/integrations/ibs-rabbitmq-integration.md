@@ -463,7 +463,7 @@ not fit its continuous execution model.
 
 Instead, the consumer reports its state via a **Redis heartbeat** and is
 surfaced via the `GET /api/v1/ibs-consumer/status` endpoint (see
-`docs/features/platform/fetcher-operations.md#ibs-rabbitmq-consumer-status`).
+Operations API Integration below).
 
 ### Redis Heartbeat
 
@@ -536,9 +536,10 @@ connection):
 ### Operations API Integration
 
 The consumer state is exposed via the `GET /api/v1/ibs-consumer/status`
-endpoint, accessible without authentication. See
-`docs/features/platform/fetcher-operations.md#ibs-rabbitmq-consumer-status`
-for the response schema.
+endpoint, accessible without authentication. This endpoint is owned by
+this specification and will be implemented when the IBS RabbitMQ consumer
+integration is enabled (Phase 7+). See the Endpoint Permission Map in
+`docs/features/identity/rbac.md` for the cross-reference.
 
 ## Known Limitations
 

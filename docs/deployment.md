@@ -1081,7 +1081,7 @@ ingestion):
 
 > Alert when at least one fetcher with `enabled = true` has a
 > `last_run.finished_at` older than 2× its configured schedule interval,
-> or has never run (`last_run = null`).
+> has never run (`last_run = null`), or has `last_run.stale = true`.
 
 This signal is derivable from `GET /api/v1/fetchers` without any code
 changes to Sentinel. It detects not only empty schedules but also dead

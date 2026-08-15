@@ -492,7 +492,12 @@ here with the required authorization level and a link to the owning spec.
 | GET | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-config) |
 | PATCH | `/api/v1/fetchers/{fetcher_name}/config` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#update-fetcher-config) |
 | GET | `/api/v1/fetchers/{fetcher_name}/audit-log` | `manage_fetchers` | [fetcher-operations](../platform/fetcher-operations.md#get-fetcher-audit-log) |
-| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [fetcher-operations](../platform/fetcher-operations.md#ibs-rabbitmq-consumer-status) |
+
+### IBS Consumer
+
+| Method | Endpoint | Authorization | Owning Spec |
+|--------|----------|---------------|-------------|
+| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#operations-api-integration) |
 
 ### Maintainer Operations
 

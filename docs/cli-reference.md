@@ -163,7 +163,8 @@ Full specification:
 
 Lists all fetchers (registered and deregistered) with their current
 state: enabled status, last run time, run status, and custom settings
-count.
+count. Registered fetchers sorted alphabetically, followed by
+deregistered fetchers (also alphabetical, in a separate section).
 
 ```
 sentinel fetcher list
@@ -176,7 +177,7 @@ sentinel fetcher list
 Displays the full configuration of a fetcher, including custom
 settings with current values, defaults, and descriptions. Works for
 both registered and deregistered fetchers (with reduced output for
-the latter).
+the latter). Custom settings listed in alphabetical order by key.
 
 ```
 sentinel fetcher config <name>
