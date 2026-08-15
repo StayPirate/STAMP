@@ -2162,10 +2162,10 @@ request.
 
 | Change | Propagation |
 |--------|-------------|
-| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron |
+| `schedule_override` changed (new value or set to null) | Update the redbeat entry's schedule with the new effective cron (only if fetcher is currently enabled) |
 | `enabled` changed to `false` | Remove the redbeat entry |
 | `enabled` changed to `true` | Create the redbeat entry with effective schedule and time limit options |
-| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values. |
+| `run_timeout` changed | Update the redbeat entry's Options (`time_limit`, `soft_time_limit`) with the new derived values (only if fetcher is currently enabled) |
 | `request_delay` changed | No propagation needed (read from DB at execution time) |
 | `custom_settings` changed | No propagation needed (read from DB at execution time) |
 
@@ -2187,11 +2187,12 @@ Propagation):
    - If `enabled` changed to `true`: create the redbeat entry with the
      effective schedule and time limit options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH)
-   - If `schedule_override` changed (without `enabled` change): update
-     the redbeat entry's schedule with the new effective cron expression
-    - If `run_timeout` changed (without `enabled` change): update the
-      redbeat entry's Options with the new `time_limit` and
-      `soft_time_limit` values
+   - If `schedule_override` changed (without `enabled` change) **and the
+     fetcher is currently enabled**: update the redbeat entry's schedule
+     with the new effective cron expression
+    - If `run_timeout` changed (without `enabled` change) **and the
+      fetcher is currently enabled**: update the redbeat entry's Options
+      with the new `time_limit` and `soft_time_limit` values
    - Uses the `redbeat.RedBeatSchedulerEntry` API to write/delete the
      entry
    - If multiple non-enable propagation-requiring fields changed in the
@@ -2935,9 +2936,9 @@ of 3660 seconds. The minimum allowed `run_timeout` is 60 seconds
 (threshold: 120s); the maximum is 604800 seconds (7 days, threshold:
 604860s). Stale detection is always active for every fetcher.
 
-When a stale run is detected (by the Celery task or the API trigger
-endpoint), it is resolved by updating the stale `FetcherRun`
-record:
+When a stale run is detected (by the Celery task, the API trigger
+endpoint, or the PATCH config endpoint's Run Timeout Active Guard), it
+is resolved by updating the stale `FetcherRun` record:
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
@@ -3209,7 +3210,7 @@ executions per day, the table grows by approximately 20,000 rows per
 year — negligible for PostgreSQL. No cleanup task or retention policy is
 necessary. Orphaned runs (stuck in `running` status due to unclean
 process termination) are resolved automatically by the existing Stale Run
-Detection mechanism at the next trigger attempt.
+Detection mechanism at the next trigger attempt or config PATCH.
 
 **Manual purge**: if an operator needs to reduce table size for
 operational reasons (disaster recovery, database refresh), a simple
@@ -3320,7 +3321,7 @@ fetcher audit event. If `user_id` is `None`, the method raises
 
 | Event type | `old_value` | `new_value` | `detail` |
 |---|---|---|---|
-| `config_changed` | Required (previous value as canonical JSON scalar, or `None` if set for the first time) | Required (new value as canonical JSON scalar, or `None` if reset to default) | Required: `{"field": "<field_name>"}` for standard fields, `{"field": "custom_settings", "key": "<setting_key>"}` for custom setting changes |
+| `config_changed` | Required (previous value as `str()` for standard fields or canonical JSON scalar for custom settings; SQL `NULL` if the field was previously unset) | Required (new value as `str()` for standard fields or canonical JSON scalar for custom settings; SQL `NULL` if reset to default) | Required: `{"field": "<field_name>"}` for standard fields, `{"field": "custom_settings", "key": "<setting_key>"}` for custom setting changes |
 | `disabled` | Must be `None` | Must be `None` | Must be `None` |
 | `enabled` | Must be `None` | Must be `None` | Must be `None` |
 | `triggered` | Must be `None` | Must be `None` | Must be `None` |

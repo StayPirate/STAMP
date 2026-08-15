@@ -122,11 +122,12 @@ dedicated exception type.
    from the RedBeat entry's `due_at` attribute. On any `RedisError`, set
    `next_run_at = null` for all fetchers and log WARNING (single attempt,
    no per-fetcher retry).
-6. Sort the merged list by `name` ascending (alphabetical).
+6. Sort the merged list by `fetcher_name` ascending (alphabetical).
 7. For `last_run`, compute `stale: bool` — `true` when the run has
    `status = running` and `now() - started_at > run_timeout + 60` (using
-   the fetcher's current `FetcherConfig.run_timeout`). For deregistered
-   fetchers without a config row, use the default 3600.
+   the fetcher's `FetcherConfig.run_timeout`, which always exists for any
+   fetcher that has runs — a `FetcherRun` requires a `FetcherConfig` row
+   via its foreign key).
 8. `custom_settings_count`: number of keys in
    `FetcherConfig.custom_settings` JSONB that exist in the current
    `Settings` schema (registered fetchers only). Orphaned keys are
@@ -223,6 +224,8 @@ disabled, derived from `FetcherAuditEvent` records with
    `created_at ASC, id ASC`.
 2. Walk the ordered events and pair each `disabled` event with the next
    `enabled` event to form an interval `[disabled_at, enabled_at]`.
+   Consecutive `disabled` events without an intervening `enabled`: the
+   earliest opens the interval, subsequent ones are ignored.
 3. If the last event is `disabled` (no subsequent `enabled`), the
    interval is open-ended: `enabled_at = null`.
 4. Include every interval that **intersects** the requested range
@@ -249,11 +252,14 @@ disabled, derived from `FetcherAuditEvent` records with
 
 **Q1 (inputs)**: `db: AsyncSession`, `fetcher_name: str`.
 
-**Q2 (guards)**: `FetcherNotFoundError` if unknown.
+**Q2 (guards)**: `FetcherNotFoundError` if `fetcher_name` is neither in
+the registry nor has a `FetcherConfig` row. Also raised if the fetcher
+is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
+— consistent with `trigger_fetcher` and `update_fetcher_config`).
 
 **Q3 (behavior)**:
 
-1. Validate fetcher existence.
+1. Validate fetcher existence (must have a `FetcherConfig` row).
 2. Return configuration fields from `FetcherConfig` merged with
    registry metadata.
 3. For registered fetchers: include `settings_schema` from
@@ -346,7 +352,9 @@ ensures deterministic comparison and avoids ambiguity between `"true"`
 (string) and `true` (boolean).
 
 Standard fields (`schedule_override`, `run_timeout`, `request_delay`)
-store their `str()` representation as `old_value`/`new_value`.
+store their `str()` representation as `old_value`/`new_value`. A `NULL`
+value (e.g., `schedule_override` reset to default) is stored as SQL
+`NULL` — not as the string `"None"`.
 
 **Q5 (re-invocation)**: conditionally idempotent. If all submitted
 values match current state, the function is a no-op (no mutation, no
@@ -367,8 +375,11 @@ After the API workflow commits the transaction containing
 3. Evaluate propagation with the following **precedence** (first
    matching rule wins):
    - If `enabled` changed to `false`: delete the RedBeat entry. All
-     other field changes in the same PATCH are moot for scheduling —
-     skip remaining propagation. A disabled fetcher has no entry.
+      other field changes in the same PATCH are moot for scheduling —
+      skip remaining propagation. A disabled fetcher has no entry.
+      Disabling does not interrupt an in-flight run; the current run
+      completes normally and the disable takes effect from the next
+      scheduled cycle.
    - If `enabled` changed to `true`: create the RedBeat entry with the
      effective schedule and time limit options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH).
@@ -378,12 +389,24 @@ After the API workflow commits the transaction containing
      disabled), skip — no entry exists to update.
 4. On any `RedisError`: log WARNING, do NOT roll back the committed
    PostgreSQL change. The system self-heals at the next Beat restart.
+   Note: concurrent PATCHes on the same fetcher may also propagate out
+   of order (the row lock serializes mutations but not post-commit Redis
+   writes). The same self-healing mechanism applies — the Beat restart
+   reconciles from the authoritative PostgreSQL state.
 5. The API response is transmitted AFTER the propagation attempt
    completes (success or failure) — guaranteed by the
    `scope="function"` transaction dependency.
 
 No Redis or network I/O occurs while the `FetcherConfig` row lock is
 held. The lock is released at commit (step before propagation).
+
+**No-op PATCH limitation**: a PATCH that submits only values identical
+to the current state is a no-op (step 8) and does NOT trigger RedBeat
+propagation. This means a no-op PATCH cannot be used to repair a missing
+RedBeat entry for an already-enabled fetcher. The remedy for a missing
+entry is a Beat restart (which reconciles all entries from PostgreSQL —
+see `docs/features/platform/fetcher-infrastructure.md`, "Startup
+Validation").
 
 #### `list_fetcher_audit_events`
 
@@ -451,7 +474,7 @@ and transactions.
    - `fetcher_name`: from input
    - `status`: `running`
    - `triggered_by`: `manual`
-   - `user_id`: from input
+   - `triggered_by_user_id`: from input (`user_id`)
    - `started_at`: `now()`
    - All other fields: `null` / zero
 6. Create `FetcherAuditEvent`:
@@ -492,11 +515,15 @@ and transactions.
     c. The update uses:
        - `error_message`: fixed sanitized message:
          `"Manual run could not be dispatched to the task broker"`
-       - `error_detail`: `f"{type(exc).__name__}"` followed by a
-         redacted summary (exclude any connection URI, credentials, or
-         host:port information from the exception string). This
-         restricted field is visible only with `manage_fetchers`.
-       - `error_traceback`: formatted traceback string (restricted)
+       - `error_detail`: `type(exc).__name__` only (e.g.,
+         `"OperationalError"`). Do NOT include the exception string —
+         broker connection errors routinely contain host:port, connection
+         URIs, or credentials in their string representation. Diagnostic
+         detail belongs in the API process logs.
+       - `error_traceback`: `NULL`. Tracebacks contain the full exception
+         string on their final line, defeating any redaction applied to
+         `error_detail`. Operational debugging uses structured logs, not
+         persisted tracebacks for this code path.
     d. Commit.
     e. Close session.
     f. The `triggered` audit event created in step 6 is **retained**
@@ -595,10 +622,11 @@ deregistered fetchers grow at most by units over the application's
 lifetime (see `fetcher-infrastructure.md`). The full list is always
 returned.
 
-**Sorting**: fixed `name` ascending (alphabetical). Client-controlled
-sorting is not supported — the bounded dataset has a single natural
-ordering. Registered and deregistered fetchers are interleaved
-alphabetically; the `registered` field provides the distinction.
+**Sorting**: fixed `fetcher_name` ascending (alphabetical).
+Client-controlled sorting is not supported — the bounded dataset has a
+single natural ordering. Registered and deregistered fetchers are
+interleaved alphabetically; the `registered` field provides the
+distinction.
 
 **Response** (200 OK):
 
@@ -606,11 +634,11 @@ alphabetically; the `registered` field provides the distinction.
 {
   "data": [
     {
-      "name": "sync_nvd_cves",
+      "fetcher_name": "sync_nvd_cves",
       "registered": true,
       "description": "Incremental CVE sync from NVD",
       "enabled": true,
-      "schedule": "0 */6 * * *",
+      "effective_schedule": "0 */6 * * *",
       "schedule_is_override": false,
       "default_schedule": "0 */6 * * *",
       "cve_source_type": "nvd",
@@ -632,11 +660,11 @@ alphabetically; the `registered` field provides the distinction.
       }
     },
     {
-      "name": "old_fetcher",
+      "fetcher_name": "old_fetcher",
       "registered": false,
       "description": null,
       "enabled": true,
-      "schedule": null,
+      "effective_schedule": null,
       "schedule_is_override": null,
       "default_schedule": null,
       "cve_source_type": null,
@@ -674,10 +702,10 @@ alphabetically; the `registered` field provides the distinction.
   non-CVE fetchers and deregistered fetchers.
 - `enabled`: whether the fetcher is active. For deregistered fetchers,
   reflects the stored DB value — it has no practical effect.
-- `schedule`: the effective schedule (override if set, otherwise default).
-  For deregistered fetchers: the stored `schedule_override` if set,
-  otherwise `null`.
-- `schedule_is_override`: `true` if the schedule comes from
+- `effective_schedule`: the effective schedule (override if set, otherwise
+  default). For deregistered fetchers: the stored `schedule_override` if
+  set, otherwise `null`.
+- `schedule_is_override`: `true` if the effective schedule comes from
   `FetcherConfig`. `null` for deregistered fetchers.
 - `default_schedule`: the schedule defined in code. `null` for
   deregistered fetchers.
@@ -771,8 +799,8 @@ ensures stable pagination.
 - For runs with `status = running`: `finished_at = null`,
   `duration_seconds = null`
 - `stale`: `true` when `status = running` and elapsed time exceeds the
-  fetcher's `run_timeout + 60`. For deregistered fetchers, uses 3600 as
-  the default timeout
+  fetcher's `run_timeout + 60` (from `FetcherConfig.run_timeout`, which
+  always exists for any fetcher that has runs)
 
 **Error responses**:
 
@@ -863,6 +891,11 @@ code `DATE_RANGE_TOO_WIDE`.
 **Pagination**: not paginated. The response size is bounded by the
 maximum date-range interval above combined with fetcher execution
 frequency (~1–4 runs/day yields ~7,300 points for a full 5-year window).
+Aggressive schedule overrides (e.g., `*/5 * * * *`) or frequent manual
+triggers can produce larger responses; this is an admin-created
+condition and the endpoint does not enforce a point-count ceiling.
+External rate limiting (proxy layer) mitigates abuse of the public
+endpoint.
 
 **Response** (200 OK):
 
@@ -903,7 +936,10 @@ frequency (~1–4 runs/day yields ~7,300 points for a full 5-year window).
 
 **Fields**:
 - `points[].run_id`: UUID of the `FetcherRun` record
-- `points[].timestamp`: `started_at` of the `FetcherRun`
+- `points[].timestamp`: `started_at` of the `FetcherRun`. Named
+  `timestamp` (not `started_at`) as a deliberate chart-axis alias — the
+  chart consumer interprets this as "the x-axis value" without needing to
+  know the underlying column name
 - `points[].status`: `success`, `failure`, `partial`, or `running`
 - `points[].duration_seconds`: actual duration. `null` for runs with
   `status = running`
@@ -934,6 +970,8 @@ POST /api/v1/fetchers/{fetcher_name}/trigger
 Enqueues a manual run of the specified fetcher. Delegates to
 `trigger_fetcher()` service function (orchestration boundary).
 
+**Request body**: None.
+
 **Response** (202 Accepted):
 
 ```json
@@ -944,6 +982,10 @@ Enqueues a manual run of the specified fetcher. Delegates to
   }
 }
 ```
+
+**Progress tracking**: poll run status via
+`GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}` using the returned
+`run_id`.
 
 **Error responses**:
 
@@ -1073,7 +1115,10 @@ with a caller-owned transaction.
 
 **Validation rules**:
 - `schedule_override`: must be a valid 5-field cron expression, or `null`
-  to revert to the default schedule
+  to revert to the default schedule. Validated by constructing a
+  `celery.schedules.crontab` object — the same parser used by RedBeat at
+  runtime — ensuring that any value accepted at PATCH time is guaranteed
+  parseable at Beat startup
 - `run_timeout`: must be an integer between 60 and 604800 (1 minute
   to 7 days). Controls Celery hard/soft time limits and the stale run
   detection threshold. Default: 3600 (1 hour)
@@ -1194,6 +1239,19 @@ endpoints in the system (`identity-audit-log.md`,
 | View fetcher config | `manage_fetchers` |
 | View audit log | `manage_fetchers` |
 
+**`has_manage_fetchers` derivation**: the four Public endpoints accept an
+optional principal (via the optional authentication mechanism defined in
+`docs/features/identity/rbac.md`, Optional Authentication). The
+`has_manage_fetchers` boolean passed to the service is derived as follows:
+- If no authenticated principal is present (anonymous request):
+  `has_manage_fetchers = false`.
+- If an authenticated principal is present: `has_manage_fetchers = true`
+  if and only if the capabilities resolved from the principal's current
+  roles include `manage_fetchers`.
+- This derivation never produces a 401 or 403 on Public endpoints — it
+  only controls field-level visibility (null vs populated, present vs
+  absent).
+
 ## Background Tasks
 
 ### run_fetcher
@@ -1271,8 +1329,8 @@ exist. If there are none, the section is omitted.
      `Xh Ym` for >=60m. Always rounded down to the nearest whole unit.
    - If elapsed exceeds `run_timeout + 60` (the stale threshold),
      append `, stale?` — e.g., `running (1h 2m elapsed, stale?)`.
-   - The `run_timeout` used is from `FetcherConfig`. For deregistered
-     fetchers without a `FetcherConfig` row, use 3600.
+     Uses `FetcherConfig.run_timeout` (which always exists for any
+     fetcher that has runs).
 2. If no running record exists but completed runs exist: show the
    status of the most recent `FetcherRun` (by `started_at DESC,
    id DESC`) with its duration:
