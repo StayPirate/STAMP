@@ -1824,3 +1824,57 @@ exceptions lives in the owning service spec's exception table.
 Global and scoped responses (defined in `api-spec.md`) are never
 included as table rows — they are derivable from the endpoint's access
 level and path (see Response Applicability Derivation in `api-spec.md`).
+
+### Roadmap Independence
+
+Behavioral specifications — everything in `docs/features/`,
+`docs/architecture.md`, `docs/api-spec.md`, `docs/data-model.md`,
+`docs/data-sources.md`, `docs/deployment.md`, `docs/configuration.md`,
+`docs/cli-reference.md`, and `docs/system-map.md` — describe what the
+system does. They MUST remain fully valid regardless of implementation
+sequencing: which phase is in progress, which work item introduced a
+behavior, or whether a given planning artifact still exists.
+
+**Forbidden** in behavioral specifications:
+
+- A roadmap phase label used to scope, justify, or explain a documented
+  boundary (e.g., "Phase 3 owns...", "Excluded from Phase N",
+  "(Phase N+)")
+- A work-item, piece, or gate identifier (e.g., `P3-10`, `SG3-01`,
+  `RG-01`) cited as the reason for a behavior or a scope boundary
+- A cross-reference into a roadmap or planning document as the
+  explanation for why something is or is not specified here
+- A reviewer-finding identifier (e.g., "G-01", "GAP-3") or a reference
+  to a "Reviewer Findings" section that does not exist in the spec
+  itself
+
+**Allowed**:
+
+- "Phase" as a generic English word for a step within an algorithm,
+  transaction, or lifecycle (e.g., "Phase 1 — lock and validate roots",
+  "run() phase 4", or a product/domain lifecycle stage such as
+  "Local-only phase (current)")
+- A scope statement expressed purely in ownership terms, with a
+  cross-reference to the actual owning spec (e.g., "The
+  `GET /api/v1/ibs-consumer/status` endpoint is defined in
+  `ibs-rabbitmq-integration.md`, not here") — without naming a roadmap
+  phase or work-item ID
+
+**Where this information belongs instead**:
+
+- A living execution roadmap, if one is in use (see `docs/drafts/` for
+  current planning material) — owns phase/piece sequencing, dependency
+  rationale, and stable work-item IDs
+- The GitHub issue tracking a specific work item — its description and
+  comments are the right place to record phase-specific notes,
+  implementation decisions, and reviewer findings for that piece of work
+  (see "Issues and work units" above)
+
+**Rationale**: work-item identifiers get renumbered as a roadmap
+evolves, and planning artifacts are retired once fully consumed. A spec
+that cites a phase number, work-item ID, or planning document by name
+will silently go stale when the roadmap changes shape or the planning
+document disappears, with no code or behavioral change to signal the
+drift. The information worth keeping — which specification owns which
+behavior — is always expressible as a spec-to-spec cross-reference,
+independent of any roadmap state.
