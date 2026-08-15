@@ -465,10 +465,35 @@ mutation piece begins. `SG3-02` owns worker handling of supplied run records.
 production-facing test scaffolding; `SG3-04` owns the test-harness contract.
 
 The IBS RabbitMQ consumer status endpoint remains with its owning disabled
-integration in Phase 7+. `P3-02` owns the generic catch-up extension points and
-registry validation retained by `SG3-02`; ticket/CVE invocation, the generic
-task that depends on that domain, `BaseCVEFetcher`, and all real fetchers remain
-outside Phase 3.
+integration in Phase 7+.
+
+**Ownership boundaries clarified by `SG3-02`**:
+
+- `P3-02` owns BaseFetcher lifecycle (`run()` execution, finalization, status
+  determination, cursor persistence, metric helpers, error sanitization,
+  detached runtime config snapshot, stored-settings validation,
+  `FetcherConfigError`, lazy HTTP client lifecycle), registry
+  (`FETCHER_REGISTRY`, `__init_subclass__` validation, `fetcher_discovery`),
+  and the generic catch-up extension points (override-point declaration,
+  `participates_in_catch_up` flag, registry accessor
+  `get_catch_up_fetchers()`, import-time catch-up signature validation).
+  It does NOT own the `run_catch_up` Celery task, `CVENotInSource`,
+  ticket/CVE symbols, `BaseCVEFetcher`, or any production fetcher.
+- `P3-03` owns the `run_fetcher` Celery task wrapper, atomic run
+  acquisition (FetcherConfig-root locking, active-run evaluation,
+  scheduled-run insertion, stale finalization, manual `run_id` adoption),
+  and concurrency control enforcement. It delegates execution to
+  `BaseFetcher.run()` after acquisition completes and the transaction
+  commits.
+- `P3-04` owns `bootstrap_fetcher_configs()` (caller-supplied session,
+  flush without commit), worker and Beat signal handler placement under
+  `app/tasks/` (not `app/core/`), engine disposal before worker fork,
+  and fail-fast startup behavior across all processes.
+- `P4-23` owns `BaseCVEFetcher`, the default CVE `catch_up()`
+  implementation, the `run_catch_up` Celery task wrapper, `CVENotInSource`
+  handling, ticket/CVE invocation from `reconcile_ticket_status()`,
+  the production fetcher catch-up inventory, and all real fetcher
+  registrations.
 
 ## Phase 4 — Ticket, CVE, and Package Domain Core
 

@@ -216,7 +216,7 @@ not import from upper layers.
 | **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
 | **Schema** | `app/schemas/` | Pydantic models for request/response validation and serialization. | Model (for `from_attributes`), Core |
 | **Core** | `app/core/` | Cross-cutting concerns: authentication, authorization, configuration, exceptions, enums. | (no application imports) |
-| **Task** | `app/tasks/` | Celery task definitions: thin wrappers that call service-layer functions. | Service, Core |
+| **Task** | `app/tasks/` | Celery task definitions: thin wrappers that call service-layer functions. Celery process lifecycle integration (worker and Beat signal handlers) also resides here — signal handlers necessarily depend on services and therefore cannot live in Core. | Service, Core |
 
 **Key rules:**
 

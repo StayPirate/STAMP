@@ -54,7 +54,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    automatically registers each concrete fetcher in a global registry
    keyed by the fetcher's `name` property
 2. **Run lifecycle management**: a `run()` method (not meant to be
-   overridden) that wraps the fetcher's `execute()` method with:
+   overridden) that manages execution and finalization after the
+   `run_fetcher` task wrapper has completed the atomic run acquisition
+   (see "Concurrency Control" below).
 
    Signature:
 
@@ -62,129 +64,219 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    async def run(
        self,
        *,
-       triggered_by: str = "schedule",
-       triggered_by_user_id: UUID | None = None,
-       run_id: UUID | None = None,
+       run_id: UUID,
+       config: FetcherRunConfig,
    ) -> None:
    ```
 
-   `run()` manages its own database sessions internally — callers do
-   not pass a session. Each database operation (record creation,
-   finalization) uses a short-lived session. The connection is not held
-   open during `execute()`. The session passed to `execute()` may be
-   committed and rolled back multiple times during execution (per-item
-   transaction boundaries). This is a documented pattern for both
-   git-based and API-based CVE fetchers — see
-   `docs/features/platform/cve-fetcher-infrastructure.md` (Session
-   Lifecycle for API-based CVE Fetchers) and
-   `docs/features/platform/git-fetcher-infrastructure.md` (BaseGitFetcher
-   Class, step 10, transaction boundaries).
+   **Parameters**:
 
-   - **FetcherRun record acquisition**:
-     - When `run_id` is `None` (scheduled runs): creates a new
-       `FetcherRun` record with `status = running`, `triggered_by` and
-       `triggered_by_user_id` set from the corresponding parameters
-      - When `run_id` is provided (API trigger): retrieves the existing
-        `FetcherRun` record (created synchronously by the API trigger
-        endpoint). The record already has `status = running` and its
-        `triggered_by`/`triggered_by_user_id` fields already set.
-        `run()` continues its lifecycle without creating a new record
-      - `run()` binds `fetcher_run_id` into the logging context after
-        acquiring the `FetcherRun` record and resets it before
-        returning, so log lines emitted during the finalization phase
-        (status determination, cursor persistence) also carry it — see
-        `docs/features/platform/logging.md` (Correlation IDs).
-   - Reset of all metric counters (`items_created`, `items_updated`,
-     `items_failed`) to zero before each execution. This ensures correct
-     behavior regardless of instance lifecycle (singleton vs. per-run
-     instantiation)
-   - Automatic `started_at` timestamp capture
-   - Automatic `finished_at` timestamp and `duration_seconds` calculation
-   - Exception handling: if `execute()` raises, the run is marked `failure`
-     with `error_message`, `error_detail`, and `error_traceback` populated
-     (see "Error Message Sanitization" for the three-tier field
-     architecture)
-         - Final status determined by status precedence rules (see below)
-   - **Cursor persistence**: if `execute()` returns normally, the final
-     status is `success` or `partial`, and `self._cursor` is set (a
-     dict), `run()` writes it to the `FetcherRun.cursor` column in the
-     same transaction that sets `status` and `finished_at`. Cursor is
-     NOT written when: `self._cursor` is None (not set), `execute()`
-     raised an exception (failure path), or the all-items-failed safety
-     check triggers (status set to `failure` despite normal return). See
-     `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the full mechanism
-     and query pattern
-   - **Status determination precedence**: the final status is assigned as
-     follows (evaluated in order):
-     1. If `execute()` raises an exception: `failure`. Metric counters are
-         preserved for diagnostics but do not influence the status.
-         This includes `SoftTimeLimitExceeded` — when the soft time limit
-         is reached, the exception propagates to `run()`, resulting in
-         `failure` status with an enriched error message (see the generic
-         fallback table entry for `SoftTimeLimitExceeded` above).
-         The hard time limit (`time_limit`) terminates the process if the
-         soft limit fails to stop execution within the grace window (5% of
-         `run_timeout`).
-     2. If `execute()` returns normally and all items failed
-        (`items_failed > 0` and `items_created + items_updated == 0`):
-        `failure`. `error_message` is set to
-        `"All {items_failed} items failed"`. `error_detail` and
-        `error_traceback` are NULL (no exception). The cursor is NOT
-        persisted (same behavior as exception-driven failure)
-     3. If `execute()` returns normally and `items_failed > 0` (with at
-        least one item created or updated): `partial`
-     4. Otherwise: `success`
+   - `run_id`: the UUID of the already-committed `FetcherRun` record
+     (created by the task wrapper for scheduled triggers, or pre-created
+     by the API for manual triggers and adopted by the task wrapper).
+     The record has `status = running` at this point.
+   - `config`: an immutable, detached runtime configuration snapshot
+     built from the locked `FetcherConfig` row during the acquisition
+     transaction. Contains `run_timeout`, `request_delay`,
+     `custom_settings`, `schedule_override`, `fetcher_name`, and
+     `enabled`. See "Runtime Configuration Snapshot" below.
+
+   `run()` manages its own database sessions internally — callers do
+   not pass a session. Each database operation (settings validation,
+   previous cursor load, finalization) uses a short-lived session. The
+   connection is not held open during `execute()`. The session passed
+   to `execute()` may be committed and rolled back multiple times
+   during execution (per-item transaction boundaries). This is a
+   documented pattern for both git-based and API-based CVE fetchers —
+   see `docs/features/platform/cve-fetcher-infrastructure.md` (Session
+   Lifecycle for API-based CVE Fetchers) and
+   `docs/features/platform/git-fetcher-infrastructure.md`
+   (BaseGitFetcher Class, step 10, transaction boundaries).
+
+   **Lifecycle phases** (in order):
+
+   1. **Logging context**: bind `fetcher_run_id` into the structlog
+      context. Reset it before returning, so log lines emitted during
+      finalization also carry it — see
+      `docs/features/platform/logging.md` (Correlation IDs).
+
+   2. **Metric reset**: reset all counters (`items_created`,
+      `items_updated`, `items_failed`) to zero. This ensures correct
+      behavior regardless of instance lifecycle (singleton vs. per-run
+      instantiation).
+
+   3. **Stored-settings validation**: instantiate the fetcher's
+      `Settings` model with the `custom_settings` from the config
+      snapshot merged over the defaults. If validation fails (Pydantic
+      `ValidationError`), the run terminates with `failure` status:
+      finalize the `FetcherRun` with `error_message` identifying the
+      fetcher name, invalid field(s), stored value(s), and constraint
+      violated (see `FetcherConfigError` below). The `FetcherConfigError`
+      exception is then re-raised after successful finalization so the
+      Celery task reports a task failure — see "Exception Propagation"
+      below. No silent fallback to the default is performed.
+
+   4. **Previous cursor load**: query the last `FetcherRun` with
+      `status IN ('success', 'partial')` for the same `fetcher_name`,
+      ordered by `started_at DESC`, limit 1. Read its `cursor` JSONB
+      column. The result is available to `execute()` via
+      `self.previous_cursor` (see "Previous Cursor Access" below).
+      If no prior successful run exists, `self.previous_cursor` is
+      `None`. This is a separate short-lived session (read-only).
+
+   5. **Timestamp capture**: record execution start time in-memory.
+      This is the reference for `duration_seconds` calculation. It
+      does NOT overwrite `FetcherRun.started_at` (which was set
+      during acquisition and reflects when the run was created/adopted,
+      not when execution began). `duration_seconds` is computed as
+      `finished_at - FetcherRun.started_at` (the column value), so it
+      includes any queue wait time for manual triggers.
+
+   6. **Execution**: open an execution session, call
+      `self.execute(session)`. If `execute()` raises, capture the
+      exception for finalization. `SoftTimeLimitExceeded` propagates
+      normally — it is not caught per-item (see
+      "`SoftTimeLimitExceeded` handling convention" below).
+
+      **Execution session transaction contract**: `run()` opens the
+      execution session without an explicit transaction. `execute()`
+      is responsible for its own commit/rollback boundaries — the base
+      class does NOT commit or roll back the session on behalf of
+      `execute()`. When `execute()` returns normally, `run()` closes
+      the session (releasing the connection back to the pool) without
+      committing any uncommitted work — uncommitted mutations are
+      discarded. When `execute()` raises, `run()` rolls back the
+      session before closing it, ensuring no partial mutations from
+      the failing iteration persist.
+
+      This means concrete fetchers MUST commit their work explicitly
+      within `execute()`. The per-item transaction pattern (commit
+      after each item, rollback on item failure, continue) is the
+      standard approach documented in
+      `docs/features/platform/cve-fetcher-infrastructure.md` (Session
+      Lifecycle) and
+      `docs/features/platform/git-fetcher-infrastructure.md`
+      (BaseGitFetcher Class, step 10). A fetcher that performs a
+      single bulk operation may commit once at the end of `execute()`.
+      A fetcher that returns without committing produces
+      `items_created = N` in the `FetcherRun` but persists nothing —
+      this is a programming error, not a supported pattern.
+
+   7. **Finalization**: in a separate short-lived session, update the
+      `FetcherRun` record with final status, metrics, timing, error
+      fields, and cursor. See "Finalization" below for the complete
+      contract.
+
+   8. **HTTP client teardown**: close `self._http_client` if it was
+      created during execution. Exceptions from `aclose()` are logged
+      at WARNING level and suppressed — they MUST NOT mask the original
+      execution exception. See "BaseFetcher HTTP Client Integration".
+
+   9. **Exception propagation**: see "Exception Propagation" below.
+
+   10. **Logging context reset**: unbind `fetcher_run_id`.
+
+   ### Finalization
+
+   Finalization updates the `FetcherRun` record in a separate
+   short-lived session. It runs regardless of whether `execute()`
+   succeeded or raised.
+
+   **Status determination precedence** (evaluated in order):
+
+   1. If `execute()` raised an exception: `failure`. Metric counters are
+      preserved for diagnostics but do not influence the status.
+      This includes `SoftTimeLimitExceeded` — when the soft time limit
+      is reached, the exception propagates to `run()`, resulting in
+      `failure` status with an enriched error message (see the generic
+      fallback table entry for `SoftTimeLimitExceeded` in "Error Message
+      Sanitization" below).
+      The hard time limit (`time_limit`) terminates the process if the
+      soft limit fails to stop execution within the grace window (5% of
+      `run_timeout`).
+   2. If `execute()` returned normally and all items failed
+      (`items_failed > 0` and `items_created + items_updated == 0`):
+      `failure`. `error_message` is set to
+      `"All {items_failed} items failed"`. `error_detail` and
+      `error_traceback` are NULL (no exception). The cursor is NOT
+      persisted (same behavior as exception-driven failure).
+   3. If `execute()` returned normally and `items_failed > 0` (with at
+      least one item created or updated): `partial`.
+   4. Otherwise: `success`.
+
+   **Cursor persistence**: if `execute()` returned normally, the final
+   status is `success` or `partial`, and `self._cursor` is set (a
+   dict), `run()` writes it to the `FetcherRun.cursor` column in the
+   same finalization transaction that sets `status` and `finished_at`.
+   Cursor is NOT written when: `self._cursor` is None (not set),
+   `execute()` raised an exception (failure path), or the
+   all-items-failed safety check triggers (status set to `failure`
+   despite normal return). The cursor value must be a
+   JSON-serializable dict. `run()` validates via `json.dumps()` before
+   writing; a non-serializable value causes a `TypeError` — the run
+   is finalized as `failure` with `error_message =
+   "Cursor serialization failed"` and the `TypeError` is recorded in
+   `error_detail`. See
+   `docs/features/platform/git-fetcher-infrastructure.md` (Cursor
+   Persistence) for the git-specific usage pattern and query.
+
+   **Finalization fields**: `finished_at = now()`,
+   `duration_seconds = finished_at - started_at`, `status` (per
+   precedence above), `items_created`, `items_updated`,
+   `items_failed`, `error_message`, `error_detail`,
+   `error_traceback` (per "Error Message Sanitization"), and `cursor`
+   (when applicable).
+
+   **Finalization database failure**: if the finalization session
+   cannot connect to the database or the UPDATE/commit fails:
+
+   - Log CRITICAL:
+     `"Fetcher '%s' run '%s' finalization failed — FetcherRun record may remain in 'running' status: %s"`.
+   - The original execution outcome (success or exception) is
+     preserved as the primary error. The finalization failure is
+     chained as `__cause__` when re-raising.
+   - No retry — the stale run detection mechanism recovers the
+     orphaned record at the next trigger attempt.
+   - The exception propagated to the Celery task is the finalization
+     failure (with the original execution exception as `__cause__`
+     if both failed).
+
+   ### Exception Propagation
+
+   `run()` always re-raises after finalization. This ensures that the
+   Celery task reports a task failure for observability (worker logs,
+   Celery flower). The specific behavior:
+
+   | Execution outcome | Finalization outcome | Exception propagated |
+   |---|---|---|
+   | `execute()` succeeded | Finalization succeeded | None — `run()` returns normally |
+   | `execute()` succeeded, all-items-failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`, not as a task exception) |
+   | `execute()` raised | Finalization succeeded | Original execution exception re-raised |
+   | Settings validation failed | Finalization succeeded | `FetcherConfigError` re-raised |
+   | Cursor serialization failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`) |
+   | `execute()` succeeded | Finalization failed | Finalization exception raised |
+   | `execute()` raised | Finalization failed | Finalization exception raised (with original as `__cause__`) |
+
+   Because `run_fetcher` has no top-level retry, propagated exceptions
+   result in a permanent Celery task failure. Recovery happens at the
+   next scheduled cycle.
+
 3. **Metric helpers**: methods that concrete fetchers call within their
    `execute()` to report work done:
    - `self.record_created(count=1)` — increment `items_created`
    - `self.record_updated(count=1)` — increment `items_updated`
    - `self.record_failed(count=1)` — increment `items_failed`
-4. **Enabled check**: before executing, `run()` checks `FetcherConfig` for
-   the fetcher. If `enabled` is `false`:
-   - If a pre-existing `FetcherRun` record was passed via `run_id` (manual
-     trigger case), `run()` updates it to `status = failure`,
-     `error_message = 'Fetcher disabled between trigger and execution'`,
-     `finished_at = now()`, `duration_seconds = 0`, then returns. This
-     prevents the record from remaining in `running` status indefinitely
-   - Otherwise (scheduled run, no pre-existing record), the run is
-     skipped — no `FetcherRun` record is created, the task returns
-     immediately
-   In both cases, a DEBUG-level log is emitted:
-   `logger.debug("Fetcher '%s' is disabled — skipping run", self.name)`
-5. **Shared HTTP client**: a pre-configured `self.http_client` lazy
+4. **Shared HTTP client**: a pre-configured `self.http_client` lazy
    property for outgoing HTTP requests. See "BaseFetcher HTTP Client
    Integration" section for the local integration, and `networking.md`
    ("Shared HTTP Client") for the full client factory specification.
 
-**FetcherRun creation failure**: if the database INSERT for the `FetcherRun`
-record fails (e.g., database connection error), the task MUST:
-
-1. Log a CRITICAL-level message:
-   `CRITICAL: Fetcher '{name}' aborted — failed to create FetcherRun record before execution: {error}`
-2. Re-raise the exception immediately — Celery does NOT retry top-level
-   fetcher tasks
-
-No `FetcherRun` record is produced (since the database is unreachable).
-Visibility of this failure is provided by: application logs (CRITICAL level)
-and Celery worker logs (task failure traceback). Recovery happens at
-the next scheduled cycle — no explicit Celery retry is configured for
-top-level fetcher tasks.
-
-**FetcherRun retrieval failure**: when `run_id` is provided (API-trigger
-flow), the task retrieves an existing `FetcherRun` record instead of creating
-one. Two failure modes apply:
-
-1. **Database unreachable during retrieval** — same behavior as creation
-   failure: log a CRITICAL-level message
-   (`CRITICAL: Fetcher '{name}' aborted — failed to retrieve FetcherRun record '{run_id}': {error}`)
-   and re-raise the exception immediately without retry.
-2. **Record not found** (valid UUID but no corresponding row exists) — log an
-   ERROR-level message
-   (`ERROR: Fetcher '{name}' aborted — FetcherRun '{run_id}' not found`)
-   and raise an appropriate exception (e.g., `ValueError`) without retry.
-
-In both cases, visibility is provided by: application logs and Celery
-worker logs (task failure traceback). No explicit Celery retry is configured.
+**Acquisition failure handling**: failures during the acquisition
+transaction (database unreachable, FetcherConfig row missing, run_id
+not found, fetcher_name mismatch) are handled by the `run_fetcher`
+task wrapper, not by `run()`. See "Concurrency Control" below
+(Atomic Run Acquisition Protocol) for the complete error behavior.
+`run()` is only called after a successful acquisition commit.
 
 ## Abstract Interface
 
@@ -349,6 +441,17 @@ class names and Celery task names follow their own naming convention
 (`<verb>_<source>_<noun>`) independently.
 
 ## Per-Ticket Catch-Up: `catch_up()` Method
+
+**Implementation phase boundary**: Phase 3 owns only the generic
+extension points defined in this section: the `catch_up()` override
+point on `BaseFetcher`, the `participates_in_catch_up` class attribute,
+the `get_catch_up_fetchers()` registry accessor, and the import-time
+validation rules for catch-up signatures and flag consistency. The
+`run_catch_up` Celery task wrapper, `CVENotInSource` handling,
+ticket/CVE invocation from `reconcile_ticket_status()`, the default
+`BaseCVEFetcher.catch_up()` implementation, the production fetcher
+catch-up inventory, and all domain-specific orchestration belong to
+`P4-23` (see `docs/drafts/implementation-plan.md`, Phase 4).
 
 Fetchers whose `execute()` scope is filtered by ticket status (e.g.,
 `sync_redhat_cves` scopes to CVEs with active tickets) skip inactive
@@ -578,8 +681,9 @@ execution. The following additional rules apply:
      Classification"
   - **CVE fetchers** (default `catch_up()`): the default
     `catch_up()` implementation MUST catch `CVENotInSource` internally
-    and treat it as a no-op (the CVE is not in this source — nothing
-    to catch up on). `CVENotInSource` MUST NOT propagate to the
+     and handle it internally without propagating to the wrapper (the
+     CVE is not in this source — the fetcher handles this case per its
+     own spec). `CVENotInSource` MUST NOT propagate to the
     `run_catch_up` wrapper. Transient errors (network, HTTP 5xx)
     propagate to the wrapper for retry
   - **Post-exhaustion (CVE fetchers)**: when the task fails (whether
@@ -720,9 +824,9 @@ the failure without revealing infrastructure details:
 async def execute(self, session: AsyncSession) -> None:
     try:
         response = await self.http_client.get(IBS_API_URL)
-    except ConnectionError as e:
+    except httpx.NetworkError as e:
         raise FetcherError("Failed to connect to IBS") from e
-    except HTTPStatusError as e:
+    except httpx.HTTPStatusError as e:
         raise FetcherError(f"IBS returned HTTP {e.response.status_code}") from e
 ```
 
@@ -750,9 +854,9 @@ fallback** — it maps the exception type to a safe, generic message:
 
 | Exception category | `error_message` |
 |--------------------|-----------------|
-| `ConnectionError`, `Timeout` | `"External service unreachable"` |
-| `HTTPStatusError` (4xx) | `"External service rejected request"` |
-| `HTTPStatusError` (5xx) | `"External service returned server error"` |
+| `httpx.NetworkError`, `httpx.TimeoutException` | `"External service unreachable"` |
+| `httpx.HTTPStatusError` (4xx) | `"External service rejected request"` |
+| `httpx.HTTPStatusError` (5xx) | `"External service returned server error"` |
 | `SoftTimeLimitExceeded` | `f"Execution timed out after {self.config.run_timeout}s ({processed} items processed before timeout). Consider increasing run_timeout via FetcherConfig for fetcher '{self.name}'."` (where `processed = self._created + self._updated + self._failed`) |
 | Any other exception | `"Unexpected error"` |
 
@@ -945,6 +1049,8 @@ the invalid field.
 3. All fields in `Settings` MUST have a default value (no required
    fields) — see "Design decisions" below
 4. All field types MUST be scalar (`int`, `float`, `str`, `bool`).
+   `Literal[...]` types whose members are all of a scalar type, and
+   `StrEnum`/`IntEnum` subclasses, are treated as scalar for this rule.
    Complex types (lists, dicts, nested models) are rejected
 5. Field names MUST be `snake_case` (lowercase letters, digits, and
    underscores only)
@@ -961,11 +1067,29 @@ the invalid field.
    `participates_in_catch_up` resolves to `False`, emit
    `warnings.warn()` at import time (catches silent-exclusion bugs where
    a developer defines catch-up logic but forgets the flag)
-9. `default_request_delay` MUST be a non-negative float (`>= 0`).
-   Negative values are structurally invalid (delay cannot be negative).
-   The operational upper bound (currently 300) is enforced exclusively
-   by the PATCH endpoint's Pydantic validation, not at import time —
-   keeping the upper limit defined in a single location.
+9. `default_request_delay` MUST be a non-negative float in the range
+   `0` to `300` (inclusive). Values outside this range are rejected at
+   import time. This matches the operational range enforced by the
+   PATCH endpoint's Pydantic validation, ensuring that a freshly
+   registered fetcher cannot create a `FetcherConfig` record with an
+   out-of-range `request_delay` default.
+10. `description` MUST be a non-empty string. A fetcher without a
+    description cannot be meaningfully presented in the dashboard or
+    CLI.
+11. `default_schedule` MUST be a valid 5-field cron expression. Invalid
+    syntax is rejected at import time (not deferred to Beat startup).
+12. The concrete class MUST define an `execute()` coroutine (checked
+    via `inspect.iscoroutinefunction` or equivalent). A class that
+    inherits `execute()` from `BaseFetcher` without overriding it
+    (the abstract stub) is rejected.
+13. `name` MUST match `[a-z][a-z0-9_]*` (lowercase, starts with a
+    letter, only lowercase letters, digits, and underscores) and not
+    exceed 100 characters.
+14. If `queue` is not `None`, it MUST be a non-empty string.
+15. **Validate-before-register**: all validations (rules 1–14 and
+    Settings validation) MUST complete successfully before the class
+    is added to `FETCHER_REGISTRY`. If any validation fails, the
+    registry is not modified — no partial registration can occur.
 
 CVE-specific validation (`cve_source_type` uniqueness, Enum membership)
 is handled by `BaseCVEFetcher.__init_subclass__` — see
@@ -998,9 +1122,11 @@ a unit test on the `CVESourceType` Enum definition — not at fetcher
 registration time, since `BaseCVEFetcher.__init_subclass__` already
 guarantees that any declared `cve_source_type` is a valid Enum member.
 
-Pydantic itself enforces type correctness of defaults, constraint
-consistency (e.g., `default` respects `ge`/`le`), and field descriptor
-validity at class definition time — no custom validation is needed for
+Pydantic itself enforces type correctness of defaults and field
+descriptor validity at class definition time. With
+`validate_default=True` (required by the Design Decisions above),
+default values are also validated against field constraints (`ge`,
+`le`, etc.) at definition time — no custom validation is needed for
 these.
 
 ### Accessing settings at runtime
@@ -1027,10 +1153,10 @@ At the start of each `run()`, all stored values from
 `FetcherConfig.custom_settings` are validated by instantiating the
 `Settings` model with the stored values merged over the defaults. If
 Pydantic validation fails, `run()` terminates with status `failure` and
-raises a `FetcherConfigError`. The error message must identify: the
-fetcher name, the invalid field(s), the stored value(s), the constraint
-violated, and a suggested corrective action (update the setting via the
-API). No silent fallback to the default is performed.
+raises a `FetcherConfigError`. The public `error_message` is sanitized
+(see "FetcherConfigError" in the Design decisions section below for the
+exact three-tier field allocation). No silent fallback to the default is
+performed.
 
 This situation only occurs after a code change (fetcher Settings model
 modification + redeploy) or direct DB manipulation — both moments when
@@ -1079,6 +1205,102 @@ present in the schema output.
   Pydantic for fetcher settings provides type safety, validation,
   JSON Schema generation, and IDE support for free — avoiding a custom
   validator, custom serialization, and custom documentation format.
+- **Default validation**: every `Settings` model MUST enable
+  `model_config = ConfigDict(extra="ignore", validate_default=True)`.
+  `validate_default=True` ensures Pydantic validates default values
+  against field constraints at class definition time — without it,
+  a default that violates its own `ge`/`le`/`max_length` constraint
+  would pass definition but fail at runtime when no stored override
+  exists. `extra="ignore"` ensures orphaned keys are inert (see above).
+- **Choice enforcement**: to declare allowed choices for string or
+  integer fields, use `Literal` types or Python `Enum` types — not
+  `json_schema_extra={"choices": [...]}` alone. `json_schema_extra`
+  is metadata only; Pydantic does not enforce choices declared via
+  `json_schema_extra`. `Literal["json", "xml", "csv"]` or a `StrEnum`
+  provides both enforcement and schema generation. The `choices` key
+  in `json_schema_extra` MAY be retained alongside `Literal` for UI
+  rendering convenience but is not the enforcement mechanism.
+
+### Runtime Configuration Snapshot
+
+The `run_fetcher` task wrapper creates an immutable runtime
+configuration snapshot from the locked `FetcherConfig` row during the
+acquisition transaction (see "Concurrency Control", step 3). This
+snapshot is passed to `BaseFetcher.run()` as the `config` parameter
+and is available to `execute()` via `self.config`.
+
+The snapshot is a plain Python object (not an ORM model) that contains:
+
+| Field | Type | Source |
+|---|---|---|
+| `fetcher_name` | `str` | `FetcherConfig.fetcher_name` |
+| `enabled` | `bool` | `FetcherConfig.enabled` |
+| `run_timeout` | `int` | `FetcherConfig.run_timeout` |
+| `request_delay` | `float` | `FetcherConfig.request_delay` |
+| `custom_settings` | `dict` | `FetcherConfig.custom_settings` (JSONB) |
+| `schedule_override` | `str | None` | `FetcherConfig.schedule_override` |
+
+The snapshot is constructed once and never refreshed — mid-run
+configuration changes by an admin do not take effect until the next
+run. This is by design: the locked read at acquisition time provides a
+consistent view, and holding no ORM reference prevents expired-state
+or lazy-load database access during external I/O.
+
+`self.config` is read-only. The `get_setting(key)` method reads from
+`self.config.custom_settings` (not from the database).
+
+### Previous Cursor Access
+
+`BaseFetcher` provides a `self.previous_cursor` property:
+
+```python
+@property
+def previous_cursor(self) -> dict | None:
+    """The cursor from the last successful or partial run.
+
+    Loaded during run() phase 4 (before execute()). Returns None
+    if no prior successful run exists or if the prior run left
+    cursor as NULL.
+    """
+    return self._previous_cursor
+```
+
+The value is loaded once per run in a short-lived read-only session
+(see `run()` phase 4) and cached for the duration of `execute()`.
+Git-based fetchers use `self.previous_cursor` to extract
+`cursor_sha` and `cursor_committed_at` — see
+`docs/features/platform/git-fetcher-infrastructure.md` (Cursor
+Persistence).
+
+### FetcherConfigError
+
+`FetcherConfigError` is a subclass of `FetcherError`:
+
+```python
+class FetcherError(Exception):
+    """Base exception for fetcher infrastructure errors."""
+    pass
+
+class FetcherConfigError(FetcherError):
+    """Raised when stored settings fail validation at run start."""
+    pass
+```
+
+When `FetcherConfigError` is raised by the settings validation phase
+of `run()`:
+
+- **`error_message`** (public): a sanitized message that identifies
+  the problem without exposing stored values:
+  `"Fetcher '{name}' has invalid stored settings — update via the API"`
+- **`error_detail`** (restricted): the full Pydantic `ValidationError`
+  message string, which includes the invalid field(s), stored value(s),
+  and constraint violated.
+- **`error_traceback`** (restricted): full traceback.
+
+This follows the same three-tier error architecture as all fetcher
+errors (see "Error Message Sanitization"). The sanitized public
+message avoids exposing potentially sensitive configuration values
+to unauthenticated dashboard users.
 
 ### Referencing custom settings in fetcher specifications
 
@@ -1448,7 +1670,7 @@ Each registered fetcher corresponds to a Celery task in
 all fetchers:
 
 ```python
-@celery_app.task(bind=True)
+@celery_app.task(bind=True, name="run_fetcher")
 def run_fetcher(self, fetcher_name: str, triggered_by: str = "schedule",
                 user_id: str | None = None,
                 run_id: str | None = None) -> None:
@@ -1458,15 +1680,83 @@ def run_fetcher(self, fetcher_name: str, triggered_by: str = "schedule",
         fetcher_name: registry key identifying the fetcher
         triggered_by: "schedule" (Beat) or "manual" (API)
         user_id: UUID of the user who triggered (None for scheduled
-                 runs). Passed to run() as triggered_by_user_id after
-                 conversion to UUID.
+                 runs). Stored on the FetcherRun.triggered_by_user_id
+                 column after conversion to UUID.
         run_id: UUID of a pre-created FetcherRun record (API trigger
-                flow). When provided, run() updates this record instead
-                of creating a new one. When None, run() creates a new
-                record. Passed to run() after conversion to UUID.
+                flow). When provided, the acquisition protocol adopts
+                this record. When None, a new record is created.
+                Converted to UUID before use.
     """
     ...
 ```
+
+**Task registration name**: the decorator MUST include
+`name="run_fetcher"` explicitly. Without it, Celery derives a
+qualified name from the module path (e.g.,
+`app.tasks.fetchers.run_fetcher`), which would not match the
+`"run_fetcher"` string used by RedBeat entries and the reconciliation
+step 4 pre-filter. The explicit name ensures identity consistency
+across Beat, reconciliation, and the trigger endpoint.
+
+**Accepted argument combinations**:
+
+| `triggered_by` | `user_id` | `run_id` | Valid | Notes |
+|---|---|---|---|---|
+| `"schedule"` | `None` | `None` | Yes | Normal scheduled execution |
+| `"schedule"` | present | any | **No** | Scheduled runs have no human actor |
+| `"manual"` | present | present | Yes | Normal manual trigger |
+| `"manual"` | `None` | present | **No** | Manual runs require a human actor |
+| `"manual"` | present | `None` | **No** | Manual runs require a pre-created run |
+
+Invalid combinations cause an immediate task failure (log ERROR,
+raise `ValueError`, no retry).
+
+**Argument validation order**:
+
+1. Validate `triggered_by` is `"schedule"` or `"manual"`. If not,
+   log ERROR and raise `ValueError`.
+2. If `"manual"`: validate `user_id` is a non-empty string parseable
+   as UUID, and `run_id` is a non-empty string parseable as UUID.
+   If either fails, log ERROR and raise `ValueError`.
+3. If `"schedule"`: validate `user_id` is `None` and `run_id` is
+   `None`. If either is present, log ERROR and raise `ValueError`.
+4. Convert `user_id` and `run_id` from `str` to `UUID` where present.
+
+**Unknown and deregistered fetcher handling**:
+
+- If `fetcher_name` is not in `FETCHER_REGISTRY`:
+  - **Scheduled trigger** (`run_id` is `None`): log WARNING
+    `"Scheduled run for unknown fetcher '%s' — skipping"` and return
+    without creating any record. This handles the narrow window where
+    a fetcher was removed between RedBeat scheduling the task and the
+    worker executing it. The next Beat reconciliation removes the
+    stale entry.
+  - **Manual trigger** (`run_id` is present): the pre-created
+    `FetcherRun` record must be finalized. Open a short session,
+    retrieve the record by `run_id`, update it to
+    `status = failure`,
+    `error_message = "Fetcher deregistered between trigger and execution"`,
+    `finished_at = now()`, `duration_seconds = 0`, commit, and return.
+    If the record cannot be retrieved (database error or not found),
+    log ERROR and raise without retry.
+
+**Synchronous bridge**: the task function uses a single
+`asyncio.run()` call wrapping the complete async acquisition-and-
+execution workflow (per `docs/conventions.md`, Sync-to-async
+bridging). The async function is the independently testable unit.
+
+**No top-level retry**: `run_fetcher` does not configure
+`max_retries` or call `self.retry()`. Failures result in a permanent
+task failure. Recovery happens at the next scheduled cycle.
+
+**Return value**: always `None`. Celery's result backend is disabled
+(`task_ignore_result = True`).
+
+**Exception behavior**: exceptions from the acquisition protocol or
+from `BaseFetcher.run()` propagate to Celery, producing a task
+failure in the worker logs. This is intentional — it provides
+observability for infrastructure failures (database unreachable,
+unexpected errors).
 
 The Celery Beat schedule is built dynamically from the registry at Beat
 startup, using each fetcher's effective schedule (config override or
@@ -1638,7 +1928,7 @@ This happens **before** Beat begins firing any tasks.
 The fetcher startup reconciliation is invoked via a Celery **`beat_init`
 signal handler** registered in the Celery app module.
 
-- **Handler location**: `backend/app/core/beat_init.py`
+- **Handler location**: `backend/app/tasks/beat_startup.py`
 - **Registration**: the handler is connected to the `beat_init` signal
   at module import time (`@beat_init.connect`)
 - **Import**: the Celery app module (`backend/app/celery_app.py`)
@@ -1943,11 +2233,12 @@ consistency model is safe because:
   limit is longer (admin increased it), the task might time out
   prematurely once — recoverable on the next scheduled run after Beat
   restart.
-- If an enable→disable failed to propagate: the fetcher's `run()` method
-  checks `FetcherConfig.enabled` at execution time. Even if Beat fires
-  the task, `run()` skips it (the enabled check is the safety net
-  documented in the "Enabled check" section). The next Beat restart
-  removes the entry.
+- If an enable→disable failed to propagate: the `run_fetcher` task
+  wrapper checks `FetcherConfig.enabled` during the acquisition
+  protocol (step 2). Even if Beat fires the task, the acquisition
+  skips it or finalizes the pre-created run as failure (see
+  "Concurrency Control", Atomic Run Acquisition Protocol). The next
+  Beat restart removes the entry.
 - If a disable→enable failed to propagate: the fetcher simply doesn't
   run until Beat restarts. No data corruption.
 
@@ -1955,7 +2246,7 @@ consistency model is safe because:
 
 | Action | Effect on redbeat |
 |--------|-------------------|
-| `enabled` → `false` | **Remove** the redbeat entry entirely. This prevents Beat from firing the task at all (no log noise, no wasted task dispatch). The `enabled` check in `BaseFetcher.run()` is a safety net for the race window between disable and an already-enqueued task. |
+| `enabled` → `false` | **Remove** the redbeat entry entirely. This prevents Beat from firing the task at all (no log noise, no wasted task dispatch). The `run_fetcher` task wrapper's acquisition protocol (step 2) is the safety net for the race window between disable and an already-enqueued task. |
 | `enabled` → `true` | **Create** a new redbeat entry with the effective schedule. The entry is immediately active on the next Beat tick. |
 | Fetcher disabled at startup | Entry is NOT created during reconciliation (step 3 removes it if it exists from a previous state) |
 
@@ -2258,10 +2549,18 @@ behavior.
 
 #### Current Inventory
 
-| Task | Owning specification |
-|------|---------------------|
-| `cleanup_sessions` | `docs/features/identity/authentication.md` (Session cleanup) |
-| `cleanup_stale_ticket_access_grants` | `docs/features/tickets/tickets.md` (Stale Access Grant Cleanup) |
+| Task | Status | Owning specification |
+|------|--------|---------------------|
+| `cleanup_sessions` | Implemented | `docs/features/identity/authentication.md` (Session cleanup) |
+| `cleanup_stale_ticket_access_grants` | Future (`P4-15`) | `docs/features/tickets/tickets.md` (Stale Access Grant Cleanup) |
+
+**Phase 3 scope**: during Phase 3 implementation, only
+`cleanup_sessions` exists in the `beat_schedule` dict. The
+`cleanup_stale_ticket_access_grants` entry is added by `P4-15` when
+the ticket confidentiality feature is implemented. Reconciliation
+step 4 handles both current and future entries identically (the
+`task != "run_fetcher"` pre-filter protects them regardless of when
+they are added).
 
 The business logic, deletion criteria, and schedule of each task are
 owned by their respective specifications — this section owns only the
@@ -2432,7 +2731,7 @@ Reconciliation" above) implicitly validates:
 
 #### Worker Startup Handler
 
-**Location**: `backend/app/core/worker_startup.py`
+**Location**: `backend/app/tasks/worker_startup.py`
 
 **Registration**: connected to Celery's `celeryd_after_setup` signal
 with a stable `dispatch_uid`. The Celery app module imports the
@@ -2491,30 +2790,111 @@ Beat and the IBS consumer do not emit `celeryd_after_setup`.
 Only one instance of a given fetcher can run at a time. The concurrency
 check is performed at **two levels**:
 
-1. **API level** (for manual triggers): the trigger endpoint checks for
-   an active `FetcherRun` **synchronously** before enqueuing the Celery
-   task. If a run is already active and not stale, the API returns 409
-   Conflict immediately — no task is enqueued. If the active run is
-   stale, it is marked as `failure` and the new run proceeds (see
-   "Stale Run Detection" below).
-2. **Task level** (for scheduled triggers): before invoking `execute()`,
-   the `run_fetcher` task checks whether a `FetcherRun` record with
-   `status = running` already exists for the requested `fetcher_name`.
+1. **API level** (for manual triggers): the trigger endpoint's service
+   function checks for an active `FetcherRun` **synchronously** before
+   enqueuing the Celery task. If a run is already active and not stale,
+   the API returns 409 Conflict immediately — no task is enqueued. If
+   the active run is stale, it is marked as `failure` and the new run
+   proceeds (see "Stale Run Detection" below). The API-level
+   acquisition uses the same FetcherConfig-root locking protocol
+   described below and specified in detail in
+   `docs/features/platform/fetcher-operations.md` (Trigger Fetcher).
+2. **Task level** (for scheduled triggers and manual `run_id` adoption):
+   the `run_fetcher` task acquires the run using the atomic acquisition
+   protocol below before delegating execution to `BaseFetcher.run()`.
 
-At the task level:
+### Atomic Run Acquisition Protocol
 
-- **If a run is already active and NOT stale**: the new attempt is
-  discarded silently. No `FetcherRun` record is created. An
-  application-level log message is emitted for observability:
-  ```
-  logger.info("Skipping scheduled run for '%s': already running (run_id=%s)",
-              fetcher_name, active_run_id)
-  ```
-- **If a run is already active and stale**: the stale run is marked as
-  `failure` (see "Stale Run Detection" below), then execution proceeds
-  normally with a new `FetcherRun`.
-- **If no run is active**: execution proceeds normally (a new `FetcherRun`
-  is created with `status = running`).
+The single-instance invariant is enforced by locking the **stable
+`FetcherConfig` row** — the only row guaranteed to exist for every
+registered fetcher — before inspecting or creating `FetcherRun`
+records. This prevents the empty-result race where two concurrent
+transactions both observe no active run and both proceed.
+
+The protocol is used by both the API trigger service and the
+`run_fetcher` Celery task wrapper. The steps below are the
+task-level sequence; the API trigger service applies the same
+locking root with its own guard order (see
+`docs/features/platform/fetcher-operations.md`, Trigger Fetcher).
+
+**Task-level acquisition steps** (executed inside a short-lived
+transaction owned by the `run_fetcher` task wrapper):
+
+1. **Lock the FetcherConfig row**: `SELECT ... FOR UPDATE` on
+   `FetcherConfig` where `fetcher_name = <name>`. This serializes all
+   concurrent acquisition attempts for the same fetcher at the database
+   level.
+
+2. **Check enabled state**: if `enabled = false`:
+   - If `run_id` was supplied (manual trigger): retrieve the
+     pre-created `FetcherRun` and update it to
+     `status = failure`,
+     `error_message = 'Fetcher disabled between trigger and execution'`,
+     `finished_at = now()`, `duration_seconds = 0`. Commit and return.
+   - If no `run_id` (scheduled trigger): log DEBUG
+     `"Fetcher '%s' is disabled — skipping run"` and return without
+     creating any record.
+
+3. **Snapshot the runtime configuration**: read `run_timeout`,
+   `request_delay`, `custom_settings`, and `schedule_override` from
+   the locked `FetcherConfig` row. Construct an immutable, detached
+   runtime configuration object (see "Runtime Configuration Snapshot"
+   below). This snapshot is used by `BaseFetcher.run()` for the
+   remainder of the execution — no further database reads of
+   `FetcherConfig` occur.
+
+4. **Query active runs**: query `FetcherRun` where
+   `fetcher_name = <name>` AND `status = 'running'`. Under the
+   `FetcherConfig` lock, this query's result is stable — no concurrent
+   transaction can insert a new running row for this fetcher.
+
+5. **Evaluate active runs**:
+   - **Active run exists and is NOT stale**: for scheduled triggers,
+     discard silently (log INFO, no `FetcherRun` created, return). For
+     manual triggers with a supplied `run_id`, this case was already
+     handled by the API-level guard — if it reaches the task, the
+     supplied `run_id` row IS the active run (see step 6).
+   - **Active run exists and IS stale**: finalize the stale run under
+     the same lock (see "Stale Run Detection" below). Continue to
+     step 6.
+   - **No active run**: continue to step 6.
+
+6. **Acquire or adopt the run record**:
+   - **Scheduled trigger** (`run_id` is `None`): INSERT a new
+     `FetcherRun` with `status = running`, `triggered_by = schedule`,
+     `started_at = now()`. The new row is visible to subsequent
+     lock-holders after commit.
+   - **Manual trigger** (`run_id` is provided): retrieve the
+     pre-created `FetcherRun` by `run_id`. The row is adopted (not
+     treated as a competing run) only when ALL of the following
+     predicates hold:
+     - Row exists.
+     - `fetcher_name` matches the task's `fetcher_name`.
+     - `status` is `running` (not already finalized).
+     If any predicate fails:
+     - Row does not exist: log ERROR, raise `ValueError` (no retry).
+     - `fetcher_name` mismatch: log ERROR, raise `ValueError`
+       (no retry).
+     - Status is not `running` (already finalized — e.g., by
+       broker-failure handling): log INFO
+       `"FetcherRun '%s' already finalized (status=%s) — skipping"`,
+       return without execution (no retry, no error).
+
+7. **Commit the acquisition transaction**: the `FetcherRun` row
+   (new or adopted) is now committed with `status = running`. The
+   `FetcherConfig` lock is released.
+
+8. **Delegate to `BaseFetcher.run()`**: pass the runtime configuration
+   snapshot and the acquired `FetcherRun` identity. `run()` manages
+   execution and finalization in its own sessions (see
+   "BaseFetcher Base Class").
+
+**No partial unique index is required**: the `FetcherConfig`-root lock
+serializes all acquisition paths. A partial unique index on
+`(fetcher_name) WHERE status = 'running'` would provide defense-in-depth
+but is not necessary for correctness and is not introduced.
+
+### Behavior Matrix
 
 This applies to all trigger sources:
 
@@ -2534,13 +2914,6 @@ The distinction is:
   directly.
 - **Schedule-triggered attempts**: there is no caller to notify, so the
   task logs the skip and returns without side effects.
-
-The concurrency check MUST use a database query with row-level locking
-(`SELECT ... FOR UPDATE`) or an equivalent atomic mechanism to prevent
-race conditions between concurrent task starts. In multi-worker
-deployments, without atomic locking two workers can simultaneously read
-"no active run", both proceed, and execute the same fetcher in parallel
-— violating the single-instance invariant.
 
 ## Stale Run Detection
 
@@ -2673,6 +3046,14 @@ deployments).
 The bootstrap routine:
 - **Location**: `backend/app/services/fetcher_bootstrap.py`
 - **Signature**: `async def bootstrap_fetcher_configs(db: AsyncSession) -> None`
+- **Transaction contract**: the function receives a caller-supplied
+  `AsyncSession`, performs a batch `INSERT ... ON CONFLICT DO NOTHING`,
+  and flushes before returning. It MUST NOT commit or roll back — the
+  caller's startup workflow owns the transaction (consistent with the
+  caller-owned service transaction convention in `docs/conventions.md`).
+  Each startup workflow (API lifespan, worker handler, Beat handler)
+  opens one session, calls `bootstrap_fetcher_configs(db)`, then
+  commits on success or rolls back on failure.
 - **Sync callers**: worker and Beat startup invoke this function via
   the sync-to-async bridging pattern (`docs/conventions.md`) — a
   single `asyncio.run()` wrapping the extracted async startup
@@ -2895,6 +3276,63 @@ The `FetcherAuditLog` subclass of `BaseAuditLog` provides the event
 creation helper and registers the fetcher audit trail in the global
 registry. See `docs/features/platform/audit-trail-infrastructure.md`
 for the base class contract.
+
+### FetcherAuditLog Service
+
+```python
+class FetcherAuditLog(BaseAuditLog):
+    name = "fetcher"
+    description = "Administrative actions on fetchers"
+    model_class = FetcherAuditEvent
+
+    @classmethod
+    async def log_event(
+        cls,
+        session: AsyncSession,
+        *,
+        event_type: FetcherAuditEventType,
+        fetcher_name: str,
+        user_id: UUID | None,
+        old_value: str | None = None,
+        new_value: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
+        ...
+```
+
+**Typed signature**: the method accepts only a `FetcherAuditEventType`
+member. The currently valid members are `DISABLED`, `ENABLED`,
+`TRIGGERED`, and `CONFIG_CHANGED`. Invalid values raise `ValueError`.
+
+**Human actor validation**: `user_id` MUST be non-null. All fetcher
+admin actions are human-initiated — there is no system-initiated
+fetcher audit event. If `user_id` is `None`, the method raises
+`ValueError` before creating the record.
+
+**Field validation per event type**:
+
+| Event type | `old_value` | `new_value` | `detail` |
+|---|---|---|---|
+| `config_changed` | Required (previous value as string, or `None` if set for the first time) | Required (new value as string, or `None` if reset to default) | Required: `{"field": "<field_name>"}` for standard fields, `{"field": "custom_settings", "key": "<setting_key>"}` for custom setting changes |
+| `disabled` | Must be `None` | Must be `None` | Must be `None` |
+| `enabled` | Must be `None` | Must be `None` | Must be `None` |
+| `triggered` | Must be `None` | Must be `None` | Must be `None` |
+
+The `detail` dict, when provided, MUST contain only the keys shown
+above. Unknown keys are rejected with `ValueError`. This prevents
+unbounded schema drift in the JSONB column.
+
+**Transaction contract**: the method creates exactly one
+`FetcherAuditEvent` record and flushes it before returning. It MUST
+NOT commit — the caller's transaction governs durability. Each
+invocation creates a new event and is therefore not idempotent;
+callers MUST invoke it only when a mutation actually occurs.
+
+**Exception propagation**: `ValueError` (invalid event type, missing
+actor, invalid field combinations, unknown detail keys) and all
+database/flush exceptions propagate to the caller. The caller's
+transaction rolls back both the business mutation and the audit
+event — no mutation can exist without its corresponding audit event.
 
 ## Open Questions
 

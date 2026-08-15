@@ -406,6 +406,15 @@ exemption removal there so it is not forgotten.
      event loop; multiple calls add overhead and risk subtle state leaks
      between loops
 
+  **Celery signal handler placement**: worker startup
+  (`celeryd_after_setup`) and Beat startup (`beat_init`) signal handlers
+  live under `app/tasks/`, not `app/core/`, because they import and call
+  service-layer functions (`bootstrap_fetcher_configs`, reconciliation).
+  Core has no application-level imports (see `docs/architecture.md`,
+  Backend Layer Architecture). The handlers are thin synchronous
+  wrappers that use the sync-to-async bridging pattern above and
+  `sys.exit(1)` on failure (explicit fail-fast).
+
   See `docs/features/platform/testing-strategy.md` (Sync Entry-Point
   Tests) for the corresponding test convention (why sync entry-point
   tests must be `def`, not `async def`).
