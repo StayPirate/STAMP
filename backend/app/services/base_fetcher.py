@@ -280,7 +280,9 @@ def _warn_catch_up_flag_mismatch(cls: type[BaseFetcher]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _sanitize_error(exc: BaseException, run_timeout: int) -> tuple[str, str | None]:
+def _sanitize_error(
+    exc: BaseException, run_timeout: int, fetcher_name: str, processed: int
+) -> tuple[str, str | None]:
     """Map an execution exception to a sanitized public/restricted pair.
 
     Returns `(error_message, error_detail)`. `error_message` is always
@@ -301,8 +303,9 @@ def _sanitize_error(exc: BaseException, run_timeout: int) -> tuple[str, str | No
         return "External service unreachable", str(exc)
     if isinstance(exc, SoftTimeLimitExceeded):
         return (
-            f"Execution timed out after {run_timeout}s. Consider increasing "
-            "run_timeout via FetcherConfig for this fetcher.",
+            f"Execution timed out after {run_timeout}s ({processed} items "
+            "processed before timeout). Consider increasing run_timeout via "
+            f"FetcherConfig for fetcher '{fetcher_name}'.",
             str(exc),
         )
     return "Unexpected error", str(exc)
@@ -538,8 +541,9 @@ class BaseFetcher:
 
         if execution_exc is not None:
             status = FetcherRunStatus.FAILURE.value
+            processed = self._created + self._updated + self._failed
             error_message, error_detail = _sanitize_error(
-                execution_exc, config.run_timeout
+                execution_exc, config.run_timeout, self.name, processed
             )
             error_traceback = "".join(
                 traceback.format_exception(

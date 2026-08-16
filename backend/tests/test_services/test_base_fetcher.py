@@ -1803,7 +1803,9 @@ class TestSanitizeErrorHelper:
         response = httpx.Response(200, request=request)
         exc = httpx.HTTPStatusError("Unusual", request=request, response=response)
 
-        message, detail = base_fetcher_module._sanitize_error(exc, run_timeout=3600)
+        message, detail = base_fetcher_module._sanitize_error(
+            exc, run_timeout=3600, fetcher_name="sync_example", processed=0
+        )
 
         assert message == "Unexpected error"
         assert detail is not None
@@ -1917,13 +1919,30 @@ class TestErrorSanitization:
         fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
         real_session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        exc = SoftTimeLimitExceeded()
-        run = await self._run_with_exception(
-            fetcher_lifecycle, real_session_factory, exc
+        """Matches the exact template mandated by `fetcher-infrastructure.md`
+        (Error Message Sanitization, BaseFetcher fallback), including the
+        items-processed count and fetcher name."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            self.record_created(2)
+            self.record_failed(1)
+            raise SoftTimeLimitExceeded()
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with pytest.raises(SoftTimeLimitExceeded):
+            await fetcher_cls().run(
+                run_id=run_id, config=_make_config(fetcher_name, run_timeout=3600)
+            )
+        run = await _get_run(real_session_factory, run_id)
+
+        assert run.error_message == (
+            "Execution timed out after 3600s (3 items processed before "
+            "timeout). Consider increasing run_timeout via FetcherConfig "
+            f"for fetcher '{fetcher_name}'."
         )
-        assert run.error_message is not None
-        assert "timed out" in run.error_message
-        assert "run_timeout" in run.error_message or "3600" in run.error_message
+        assert run.items_created == 2
+        assert run.items_failed == 1
 
     async def test_unknown_exception_maps_to_unexpected_error(
         self,
