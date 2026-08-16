@@ -111,9 +111,12 @@ def create_celery_app(app_settings: Settings) -> Celery:
     """Build and validate the Sentinel Celery application.
 
     Registers the static `beat_schedule` entry for the non-fetcher
-    `cleanup_sessions` periodic task (see `_BEAT_SCHEDULE` above). No
-    fetcher task, registry, or fetcher Beat schedule is registered here
-    — deferred to Phase 3 (`run_fetcher`, `FETCHER_REGISTRY` discovery).
+    `cleanup_sessions` periodic task (see `_BEAT_SCHEDULE` above). The
+    dynamic, per-fetcher RedBeat schedule (built from `FETCHER_REGISTRY`
+    and `FetcherConfig`) is populated at Beat startup by a later work
+    item, not here — see
+    `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
+    Schedule Synchronization).
     """
     app = Celery("sentinel")
     app.conf.update(
@@ -201,8 +204,8 @@ celery_app = create_celery_app(settings)
 
 # Import task modules so they register (via `@celery_app.task(...)`)
 # against the singleton constructed above. Must come after
-# construction — `app.tasks.session_cleanup` imports `celery_app` from
-# this module, which would otherwise be a circular import (this
-# module's `beat_schedule` entry above references the task by name only,
-# precisely to avoid needing this import any earlier).
-from app.tasks import session_cleanup  # noqa: E402,F401
+# construction — these modules import `celery_app` from this module,
+# which would otherwise be a circular import (this module's
+# `beat_schedule` entry above references the `cleanup_sessions` task by
+# name only, precisely to avoid needing this import any earlier).
+from app.tasks import fetchers, session_cleanup  # noqa: E402,F401

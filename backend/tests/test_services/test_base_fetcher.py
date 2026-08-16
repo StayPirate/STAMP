@@ -107,7 +107,7 @@ async def fetcher_lifecycle(
     that reference to `real_session_factory` so `run()`'s internal
     sessions target the test database, and commits the
     `FetcherConfig`/`FetcherRun` rows that the atomic run acquisition
-    protocol (owned by a later work item) would normally have
+    protocol (`app.services.fetcher_execution`) would normally have
     committed before delegating to `run()`.
 
     Returns an async callable `(**overrides) -> (fetcher_name, run_id)`.

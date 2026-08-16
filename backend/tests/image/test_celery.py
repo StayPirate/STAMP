@@ -324,6 +324,33 @@ class TestWorkerStartup:
         for registered_tasks in replies.values():
             assert "cleanup_sessions" in registered_tasks, registered_tasks
 
+    def test_run_fetcher_registered_under_exact_unqualified_name(
+        self,
+        compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+    ) -> None:
+        """The generic fetcher task MUST be registered as exactly
+        `run_fetcher` — not a qualified module path — since RedBeat
+        entries and startup reconciliation consume that exact string
+        (see docs/features/platform/fetcher-infrastructure.md, Celery
+        Integration — Task registration name)."""
+        result = compose_exec(
+            "worker",
+            "celery",
+            "-A",
+            "app.celery_app",
+            "inspect",
+            "registered",
+            "--json",
+        )
+        assert result.returncode == 0, (
+            f"expected exit 0 for inspect registered "
+            f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
+        )
+        replies = json.loads(result.stdout)
+        assert replies, f"no worker replied to inspect registered: {result.stdout!r}"
+        for registered_tasks in replies.values():
+            assert "run_fetcher" in registered_tasks, registered_tasks
+
 
 @pytest.mark.image
 class TestBeatSchedule:
