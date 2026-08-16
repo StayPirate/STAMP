@@ -61,6 +61,16 @@ jobs:
       # deliberately not enabled here — no CI job or Action performs
       # secret scanning (see docs/features/platform/testing-strategy.md,
       # Pre-Commit Hooks); that coverage is local-only via gitleaks.
+      #
+      # No explicit Trivy binary `version` is pinned here — deliberately.
+      # aquasecurity/trivy-action bundles its own default Trivy version in
+      # action.yml, and that default is bumped by the action's maintainers
+      # on every action release. Letting the scan follow that default means
+      # the Trivy binary version advances automatically whenever Dependabot
+      # bumps aquasecurity/trivy-action (already tracked by the
+      # `github-actions` ecosystem in dependabot.yml), instead of requiring
+      # a separate manual bump of a pinned string that Dependabot cannot
+      # see. Do not reintroduce a `version:` pin without updating this note.
       - name: Scan for fixable HIGH/CRITICAL OS vulnerabilities
         id: trivy-fixable
         continue-on-error: true
@@ -74,7 +84,6 @@ jobs:
           vuln-type: "os"
           scanners: "vuln"
           severity: "HIGH,CRITICAL"
-          version: "v0.72.0"
 
       # Complete report: every OS-level finding regardless of fix
       # availability or severity, for awareness only. Never fails the
