@@ -368,6 +368,14 @@ the SHA-pinned actions and opens a PR bumping both the SHA and the
 trailing version comment when a new release is published — no
 additional Dependabot configuration is required for this pinning style.
 
+**Exception**: `image-scan.yml`'s Trivy binary version is intentionally
+not pinned via `version:` — it tracks `aquasecurity/trivy-action`'s own
+bundled default, which advances only when the SHA-pinned action
+reference itself is bumped (tracked by Dependabot's `github-actions`
+ecosystem). This avoids a manually-maintained version string that has
+previously gone stale without weakening the pin — the effective Trivy
+version is still fixed to a specific, reviewed action release.
+
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
 literals. Literal values are permitted only for obviously non-production
