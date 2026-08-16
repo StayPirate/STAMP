@@ -1761,6 +1761,30 @@ class TestRunLifecycleFinalizationFailure:
         assert isinstance(exc_info.value.__cause__, FetcherError)
         assert "original execution failure" in str(exc_info.value.__cause__)
 
+    async def test_missing_run_row_logs_critical_with_identifying_fields(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        fetcher_name, _run_id = await fetcher_lifecycle()
+        bogus_run_id = uuid4()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            pass
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with (
+            caplog.at_level("CRITICAL"),
+            pytest.raises(RuntimeError, match="not found during finalization"),
+        ):
+            await fetcher_cls().run(
+                run_id=bogus_run_id, config=_make_config(fetcher_name)
+            )
+
+        assert "fetcher_finalization_failed" in caplog.text
+        assert fetcher_name in caplog.text
+        assert str(bogus_run_id) in caplog.text
+
 
 @pytest.mark.integration
 class TestRunLifecycleAuditTrail:
