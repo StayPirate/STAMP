@@ -45,6 +45,7 @@ class TestFetcherAuditEventCreation:
 
     async def test_create_config_changed_event_with_detail(
         self,
+        db_session: AsyncSession,
         fetcher_audit_event_factory: Callable[..., Awaitable[FetcherAuditEvent]],
     ) -> None:
         event = await fetcher_audit_event_factory(
@@ -53,6 +54,11 @@ class TestFetcherAuditEventCreation:
             new_value="0 */4 * * *",
             detail={"field": "schedule_override"},
         )
+        # Force a round-trip through PostgreSQL's JSONB column instead of
+        # asserting against the in-memory, never-expired Python object —
+        # see test_identity_audit_event.py::test_detail_jsonb_round_trip
+        # for the sibling pattern this mirrors.
+        await db_session.refresh(event)
 
         assert event.event_type == "config_changed"
         assert event.old_value == "0 */6 * * *"

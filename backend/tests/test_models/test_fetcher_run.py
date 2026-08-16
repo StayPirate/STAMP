@@ -308,6 +308,27 @@ class TestFetcherRunNoCascadeOnConfigDeletion:
 
 
 @pytest.mark.integration
+class TestFetcherRunNoCascadeOnUserDeletion:
+    """`triggered_by_user_id` has no explicit `ondelete`, so PostgreSQL's
+    default `NO ACTION` applies: deleting the admin who manually
+    triggered a run must fail loudly instead of silently destroying or
+    altering the historical run record."""
+
+    async def test_deleting_triggered_by_user_raises(
+        self,
+        db_session: AsyncSession,
+        user_factory: Callable[..., Awaitable[User]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        admin = await user_factory()
+        await fetcher_run_factory(triggered_by="manual", triggered_by_user_id=admin.id)
+
+        await db_session.delete(admin)
+        with pytest.raises(IntegrityError):
+            await db_session.flush()
+
+
+@pytest.mark.integration
 class TestFetcherRunRelationships:
     async def test_config_relationship_resolves(
         self,
