@@ -368,7 +368,7 @@ the SHA-pinned actions and opens a PR bumping both the SHA and the
 trailing version comment when a new release is published — no
 additional Dependabot configuration is required for this pinning style.
 
-**Exception**: `image-scan.yml`'s Trivy binary version is intentionally
+**Exception.** `image-scan.yml`'s Trivy binary version is intentionally
 not pinned via `version:` — it tracks `aquasecurity/trivy-action`'s own
 bundled default, which advances only when the SHA-pinned action
 reference itself is bumped (tracked by Dependabot's `github-actions`
