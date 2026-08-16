@@ -11,6 +11,9 @@ import pytest
 from app.core.enums import (
     Capability,
     CredentialKind,
+    FetcherAuditEventType,
+    FetcherRunStatus,
+    FetcherRunTriggeredBy,
     HealthCheckStatus,
     IdentityAuditEventType,
     Role,
@@ -122,6 +125,55 @@ class TestSettingAuditEventTypeEnum:
 
     def test_count(self) -> None:
         assert len(list(SettingAuditEventType)) == 1
+
+
+@pytest.mark.unit
+class TestFetcherRunStatusEnum:
+    """FetcherRunStatus must have exactly the four members defined in
+    fetcher-infrastructure.md (FetcherRunStatus Enum)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in FetcherRunStatus} == {
+            "running",
+            "success",
+            "failure",
+            "partial",
+        }
+
+    def test_count(self) -> None:
+        assert len(list(FetcherRunStatus)) == 4
+
+
+@pytest.mark.unit
+class TestFetcherRunTriggeredByEnum:
+    """FetcherRunTriggeredBy must have exactly the two members defined
+    in fetcher-infrastructure.md (FetcherRunTriggeredBy Enum)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in FetcherRunTriggeredBy} == {
+            "schedule",
+            "manual",
+        }
+
+    def test_count(self) -> None:
+        assert len(list(FetcherRunTriggeredBy)) == 2
+
+
+@pytest.mark.unit
+class TestFetcherAuditEventTypeEnum:
+    """FetcherAuditEventType must have exactly the four members defined
+    in fetcher-infrastructure.md (FetcherAuditEventType Enum)."""
+
+    def test_exact_members(self) -> None:
+        assert {member.value for member in FetcherAuditEventType} == {
+            "disabled",
+            "enabled",
+            "triggered",
+            "config_changed",
+        }
+
+    def test_count(self) -> None:
+        assert len(list(FetcherAuditEventType)) == 4
 
 
 @pytest.mark.unit

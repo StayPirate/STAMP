@@ -49,6 +49,7 @@ def _mapped_tables() -> Iterable[Table]:
 # listed here still requires every primary key column to be UUID.
 _NON_UUID_PRIMARY_KEY_TABLES: dict[str, frozenset[str]] = {
     "system_setting": frozenset({"key"}),
+    "fetcher_config": frozenset({"fetcher_name"}),
 }
 
 

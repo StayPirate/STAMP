@@ -50,6 +50,9 @@ from app.main import app
 # _engine's create_all runs.
 from app.models import (
     ApiKey,
+    FetcherAuditEvent,
+    FetcherConfig,
+    FetcherRun,
     IdentityAuditEvent,
     Session,
     SettingAuditEvent,
@@ -765,6 +768,111 @@ def setting_audit_event_factory(
         }
         defaults.update(overrides)
         instance = SettingAuditEvent(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def fetcher_config_factory(
+    db_session: AsyncSession,
+) -> Callable[..., Awaitable[FetcherConfig]]:
+    """Factory fixture for `FetcherConfig` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `fetcher_name`: a per-fixture-counter-derived unique name
+      (`test_fetcher_<n>`), so multiple calls within one test don't
+      collide on the string primary key.
+    """
+
+    counter = itertools.count(1)
+
+    async def _create(**overrides: Any) -> FetcherConfig:
+        n = next(counter)
+        defaults: dict[str, Any] = {"fetcher_name": f"test_fetcher_{n}"}
+        defaults.update(overrides)
+        instance = FetcherConfig(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def fetcher_run_factory(
+    db_session: AsyncSession,
+    fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+) -> Callable[..., Awaitable[FetcherRun]]:
+    """Factory fixture for `FetcherRun` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Defaults:
+    - `fetcher_name`: a freshly created `FetcherConfig` row's name, when
+      not overridden.
+    - `started_at`: the current UTC time.
+    - `status`: `"running"` (a fictional, valid string value; not
+      validated against `FetcherRunStatus` at this layer).
+    - `triggered_by`: `"schedule"`.
+    """
+
+    async def _create(**overrides: Any) -> FetcherRun:
+        if "fetcher_name" not in overrides:
+            overrides["fetcher_name"] = (await fetcher_config_factory()).fetcher_name
+        defaults: dict[str, Any] = {
+            "started_at": datetime.now(UTC),
+            "status": "running",
+            "triggered_by": "schedule",
+        }
+        defaults.update(overrides)
+        instance = FetcherRun(**defaults)
+        db_session.add(instance)
+        await db_session.flush()
+        return instance
+
+    return _create
+
+
+@pytest.fixture
+def fetcher_audit_event_factory(
+    db_session: AsyncSession,
+    user_factory: Callable[..., Awaitable[User]],
+    fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+) -> Callable[..., Awaitable[FetcherAuditEvent]]:
+    """Factory fixture for `FetcherAuditEvent` model instances.
+
+    See docs/features/platform/testing-strategy.md (Model Factory
+    Fixtures) for the canonical shape this fixture follows.
+
+    Bypasses `FetcherAuditLog.log_event()` validation on purpose —
+    model-layer tests (`tests/test_models/test_fetcher_audit_event.py`)
+    exercise the raw persistence contract (columns, constraints,
+    indexes) independently of the service-layer validation rules,
+    which are covered by `tests/test_services/test_fetcher_audit_log.py`.
+
+    Defaults:
+    - `fetcher_name`: a freshly created `FetcherConfig` row's name, when
+      not overridden.
+    - `user_id`: a freshly created user, when not overridden.
+    - `event_type`: `"disabled"` (a fictional, valid string value; not
+      validated against `FetcherAuditEventType` at this layer).
+    """
+
+    async def _create(**overrides: Any) -> FetcherAuditEvent:
+        if "fetcher_name" not in overrides:
+            overrides["fetcher_name"] = (await fetcher_config_factory()).fetcher_name
+        if "user_id" not in overrides:
+            overrides["user_id"] = (await user_factory()).id
+        defaults: dict[str, Any] = {"event_type": "disabled"}
+        defaults.update(overrides)
+        instance = FetcherAuditEvent(**defaults)
         db_session.add(instance)
         await db_session.flush()
         return instance

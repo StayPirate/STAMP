@@ -1,5 +1,5 @@
-"""Image smoke assertions for the identity and system-settings schema
-migrations.
+"""Image smoke assertions for the identity, system-settings, and
+fetcher-persistence schema migrations.
 
 Verifies container-observable outcomes of the one-shot `migrate` service
 in docker-compose.smoke.yml, which runs `alembic upgrade head` as the
@@ -215,3 +215,118 @@ def test_identity_and_settings_schema_tables_and_constraints_exist(
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert "SCHEMA-OK" in result.stdout
+
+
+# Inline Python snippet run inside the `api` container to inspect the
+# live (already-migrated) fetcher persistence and audit tables via
+# SQLAlchemy's inspector. Kept as a single string (not a helper script
+# file) for the same reason as `_SCHEMA_CHECK_SCRIPT` above.
+_FETCHER_SCHEMA_CHECK_SCRIPT = """
+import asyncio
+
+from sqlalchemy import inspect
+
+from app.database import engine
+
+
+async def main() -> None:
+    async with engine.connect() as conn:
+        def _inspect(sync_conn):
+            insp = inspect(sync_conn)
+            tables = set(insp.get_table_names())
+            fetcher_run_checks = {
+                c["name"] for c in insp.get_check_constraints("fetcher_run")
+            }
+            fetcher_run_indexes = {
+                idx["name"]: idx for idx in insp.get_indexes("fetcher_run")
+            }
+            fetcher_run_fks = insp.get_foreign_keys("fetcher_run")
+            fetcher_audit_event_indexes = {
+                idx["name"]: idx
+                for idx in insp.get_indexes("fetcher_audit_event")
+            }
+            fetcher_audit_event_fks = insp.get_foreign_keys(
+                "fetcher_audit_event"
+            )
+            return (
+                tables,
+                fetcher_run_checks,
+                fetcher_run_indexes,
+                fetcher_run_fks,
+                fetcher_audit_event_indexes,
+                fetcher_audit_event_fks,
+            )
+
+        (
+            tables,
+            fetcher_run_checks,
+            fetcher_run_indexes,
+            fetcher_run_fks,
+            fetcher_audit_event_indexes,
+            fetcher_audit_event_fks,
+        ) = await conn.run_sync(_inspect)
+
+    assert "fetcher_config" in tables, f"'fetcher_config' table missing: {tables}"
+    assert "fetcher_run" in tables, f"'fetcher_run' table missing: {tables}"
+    assert "fetcher_audit_event" in tables, (
+        f"'fetcher_audit_event' table missing: {tables}"
+    )
+    assert "chk_fetcher_run_status_valid" in fetcher_run_checks, fetcher_run_checks
+    assert (
+        "ix_fetcher_run_fetcher_name_started_at" in fetcher_run_indexes
+    ), fetcher_run_indexes
+    composite_index = fetcher_run_indexes["ix_fetcher_run_fetcher_name_started_at"]
+    assert composite_index["column_names"] == ["fetcher_name", "started_at"], (
+        composite_index
+    )
+    fetcher_run_fk_by_column = {
+        fk["constrained_columns"][0]: fk for fk in fetcher_run_fks
+    }
+    assert fetcher_run_fk_by_column["fetcher_name"]["referred_table"] == (
+        "fetcher_config"
+    ), fetcher_run_fk_by_column
+    assert fetcher_run_fk_by_column["fetcher_name"]["options"].get("ondelete") == (
+        "RESTRICT"
+    ), fetcher_run_fk_by_column
+    assert fetcher_run_fk_by_column["triggered_by_user_id"]["referred_table"] == (
+        "user"
+    ), fetcher_run_fk_by_column
+    assert (
+        "ix_fetcher_audit_event_created_at" in fetcher_audit_event_indexes
+    ), fetcher_audit_event_indexes
+    assert (
+        "ix_fetcher_audit_event_user_id" in fetcher_audit_event_indexes
+    ), fetcher_audit_event_indexes
+    assert (
+        "ix_fetcher_audit_event_fetcher_name" in fetcher_audit_event_indexes
+    ), fetcher_audit_event_indexes
+    fetcher_audit_event_fk_tables = {
+        fk["referred_table"] for fk in fetcher_audit_event_fks
+    }
+    assert fetcher_audit_event_fk_tables == {"fetcher_config", "user"}, (
+        fetcher_audit_event_fks
+    )
+    print("FETCHER-SCHEMA-OK")
+    await engine.dispose()
+
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.image
+def test_fetcher_persistence_schema_tables_and_constraints_exist(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """`fetcher_config`/`fetcher_run`/`fetcher_audit_event` tables, the
+    named CHECK constraint on `fetcher_run.status`, the `fetcher_run`
+    composite index, the `fetcher_audit_event` indexes, and both
+    tables' foreign keys all exist in the migrated database (see
+    docs/features/platform/fetcher-infrastructure.md, Data Model).
+    """
+    result = compose_exec("api", "python", "-c", _FETCHER_SCHEMA_CHECK_SCRIPT)
+    assert result.returncode == 0, (
+        f"schema check failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "FETCHER-SCHEMA-OK" in result.stdout

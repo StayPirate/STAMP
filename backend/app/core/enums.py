@@ -118,6 +118,51 @@ class SettingAuditEventType(StrEnum):
     SETTING_CHANGED = "setting_changed"
 
 
+class FetcherRunStatus(StrEnum):
+    """Execution outcome of a `FetcherRun`.
+
+    Category A — state-machine (VARCHAR + CHECK constraint
+    `chk_fetcher_run_status_valid`; adding a value requires an Alembic
+    migration). See `docs/features/platform/fetcher-infrastructure.md`
+    (FetcherRunStatus Enum) for the full status determination
+    precedence.
+    """
+
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILURE = "failure"
+    PARTIAL = "partial"
+
+
+class FetcherRunTriggeredBy(StrEnum):
+    """How a `FetcherRun` was initiated.
+
+    Category B — classification (Python Enum only, no CHECK constraint;
+    adding a value requires only a code change). See
+    `docs/features/platform/fetcher-infrastructure.md`
+    (FetcherRunTriggeredBy Enum).
+    """
+
+    SCHEDULE = "schedule"
+    MANUAL = "manual"
+
+
+class FetcherAuditEventType(StrEnum):
+    """Classifies the action recorded in a `FetcherAuditEvent`.
+
+    Category B — classification (Python Enum only, no CHECK constraint;
+    adding a value requires only a code change). See
+    `docs/features/platform/fetcher-infrastructure.md`
+    (FetcherAuditEventType Enum, Event Field Values) for the full event
+    type contract: field values and the one-event-per-field rule.
+    """
+
+    DISABLED = "disabled"
+    ENABLED = "enabled"
+    TRIGGERED = "triggered"
+    CONFIG_CHANGED = "config_changed"
+
+
 class SessionCreationReason(StrEnum):
     """The login provider that created a `Session`.
 
