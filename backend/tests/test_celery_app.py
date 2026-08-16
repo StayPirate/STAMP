@@ -6,8 +6,11 @@ docs/features/platform/logging.md (Correlation IDs, Integration with
 Third-Party Loggers) for the specifications exercised here.
 
 Scope note: this module registers the static non-fetcher
-`cleanup_sessions` schedule. Fetcher task, registry, and dynamic schedule
-registration remain deferred to Phase 3 — see issue #27.
+`cleanup_sessions` schedule and the generic `run_fetcher` fetcher task
+(see `app/tasks/fetchers.py`, tested separately in
+`tests/test_tasks/test_fetchers.py`). Fetcher registry population via
+`fetcher_discovery` (worker/Beat/API startup bootstrap) and the
+dynamic per-fetcher Beat schedule remain deferred to later work items.
 """
 
 from __future__ import annotations
@@ -157,6 +160,9 @@ class TestCreateCeleryAppDefaults:
 
     def test_cleanup_sessions_task_is_registered_on_singleton(self) -> None:
         assert "cleanup_sessions" in celery_app.tasks
+
+    def test_run_fetcher_task_is_registered_on_singleton(self) -> None:
+        assert "run_fetcher" in celery_app.tasks
 
 
 @pytest.mark.unit

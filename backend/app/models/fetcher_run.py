@@ -5,8 +5,8 @@ See `docs/data-model.md` (FetcherRun) and
 FetcherRun) for the full specification, including the status
 determination precedence and cursor persistence rules (implemented by
 `BaseFetcher.run()`) and stale run detection (implemented by the
-atomic run acquisition protocol in a later work item — this model only
-defines the persistence root).
+atomic run acquisition protocol in `app/services/fetcher_execution.py`
+— this model only defines the persistence root).
 """
 
 from __future__ import annotations

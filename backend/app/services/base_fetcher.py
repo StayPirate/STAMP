@@ -8,9 +8,12 @@ validation (`__init_subclass__`), the custom Settings schema, error
 message sanitization, and the BaseFetcher HTTP client integration.
 
 Out of scope for this module (owned by later work items):
-`BaseCVEFetcher`, `BaseGitFetcher`, `run_fetcher`/`run_catch_up` Celery
-tasks, the atomic run acquisition protocol, bootstrap, RedBeat
-synchronization, and any concrete production fetcher.
+`BaseCVEFetcher`, `BaseGitFetcher`, the `run_catch_up` Celery task,
+bootstrap, RedBeat synchronization, and any concrete production
+fetcher. The `run_fetcher` Celery task and the atomic run acquisition
+protocol are implemented in `app/tasks/fetchers.py` and
+`app/services/fetcher_execution.py`, which build on this module's
+`FETCHER_REGISTRY`, `FetcherRunConfig`, and `BaseFetcher.run()`.
 """
 
 from __future__ import annotations
