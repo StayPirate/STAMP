@@ -20,15 +20,21 @@ Also wires:
 - Task correlation binding (`celery_task_id`) via the
   `task_prerun`/`task_postrun` signals (see
   `docs/features/platform/logging.md`, Correlation IDs).
+- Fetcher module discovery (`app.services.fetcher_discovery`) and the
+  worker/Beat fetcher config bootstrap handlers
+  (`app.tasks.worker_startup`, `app.tasks.beat_startup` — see
+  `docs/features/platform/fetcher-infrastructure.md`, FetcherConfig
+  and Worker Startup Handler). The dynamic, per-fetcher RedBeat
+  schedule reconciliation is wired by a later work item — see
+  `docs/drafts/implementation-plan.md` (P3-05).
 
 Also registers the static, code-authoritative `beat_schedule` entry for
 the `cleanup_sessions` non-fetcher periodic task — see
 `docs/features/platform/fetcher-infrastructure.md` (Non-Fetcher
 Periodic Tasks). This is a fixed maintenance-task schedule declared
 directly in code, distinct from the fetcher framework's
-PostgreSQL-backed, admin-configurable schedules (still deferred, see
-issue #27). No `FETCHER_REGISTRY`, `FetcherConfig`,
-or `FetcherRun` machinery is introduced here.
+PostgreSQL-backed, admin-configurable schedules. No `FETCHER_REGISTRY`,
+`FetcherConfig`, or `FetcherRun` machinery is introduced here.
 """
 
 from __future__ import annotations
@@ -202,10 +208,25 @@ task_postrun.connect(
 
 celery_app = create_celery_app(settings)
 
+# Fetcher module discovery MUST run before the worker/Beat startup
+# handlers below import and call `bootstrap_fetcher_configs()`, so
+# `FETCHER_REGISTRY` is fully populated by the time either handler's
+# bootstrap runs — see docs/features/platform/fetcher-infrastructure.md
+# (Fetcher Discovery (Module Import)).
+import app.services.fetcher_discovery  # noqa: E402,F401
+
 # Import task modules so they register (via `@celery_app.task(...)`)
 # against the singleton constructed above. Must come after
 # construction — these modules import `celery_app` from this module,
 # which would otherwise be a circular import (this module's
 # `beat_schedule` entry above references the `cleanup_sessions` task by
 # name only, precisely to avoid needing this import any earlier).
-from app.tasks import fetchers, session_cleanup  # noqa: E402,F401
+# `beat_startup` and `worker_startup` do not need `celery_app` directly
+# (they only connect to Celery signals) but are imported here for a
+# single, discoverable startup-wiring location.
+from app.tasks import (  # noqa: E402,F401
+    beat_startup,
+    fetchers,
+    session_cleanup,
+    worker_startup,
+)

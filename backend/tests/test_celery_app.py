@@ -8,9 +8,12 @@ Third-Party Loggers) for the specifications exercised here.
 Scope note: this module registers the static non-fetcher
 `cleanup_sessions` schedule and the generic `run_fetcher` fetcher task
 (see `app/tasks/fetchers.py`, tested separately in
-`tests/test_tasks/test_fetchers.py`). Fetcher registry population via
-`fetcher_discovery` (worker/Beat/API startup bootstrap) and the
-dynamic per-fetcher Beat schedule remain deferred to later work items.
+`tests/test_tasks/test_fetchers.py`). Fetcher discovery wiring and the
+worker/Beat startup handlers are tested separately in
+`tests/test_tasks/test_worker_startup.py` and
+`tests/test_tasks/test_beat_startup.py`. The dynamic per-fetcher Beat
+schedule (RedBeat reconciliation) remains deferred to a later work
+item.
 """
 
 from __future__ import annotations
@@ -22,7 +25,13 @@ import pytest
 import structlog
 from celery import Celery
 from celery.app.log import Logging as CeleryLogging
-from celery.signals import setup_logging, task_postrun, task_prerun
+from celery.signals import (
+    beat_init,
+    celeryd_after_setup,
+    setup_logging,
+    task_postrun,
+    task_prerun,
+)
 
 from app.celery_app import (
     _CORRELATION_KEYS,
@@ -374,3 +383,29 @@ class TestTaskCorrelationBinding:
             "celery_task_id",
             "fetcher_run_id",
         }
+
+
+@pytest.mark.unit
+class TestFetcherStartupWiring:
+    """`app.celery_app` imports fetcher discovery and the worker/Beat
+    startup handler modules, registering their signal receivers as a
+    side effect of importing this module (already imported at the top
+    of this test file) — see
+    docs/features/platform/fetcher-infrastructure.md (Fetcher Discovery
+    (Module Import), Worker Startup Handler). The receiver-specific
+    contracts (ordering, orchestration, fail-fast behavior) are tested
+    in tests/test_tasks/test_worker_startup.py and
+    tests/test_tasks/test_beat_startup.py.
+    """
+
+    def test_static_tasks_remain_registered(self) -> None:
+        """Sanity check: adding the fetcher discovery/startup imports
+        does not disturb the existing task registrations."""
+        assert "cleanup_sessions" in celery_app.tasks
+        assert "run_fetcher" in celery_app.tasks
+
+    def test_worker_startup_handler_is_registered(self) -> None:
+        assert celeryd_after_setup.has_listeners()
+
+    def test_beat_startup_handler_is_registered(self) -> None:
+        assert beat_init.has_listeners()

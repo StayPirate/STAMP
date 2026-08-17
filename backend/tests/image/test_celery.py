@@ -40,6 +40,18 @@ logging handler wiring.
 docker-compose.smoke.yml as of this module's `TestWorkerStartup`,
 `TestBeatSchedule`, and `TestCleanupSessionsBrokerExecution` — see
 docs/features/platform/testing-strategy.md (Growth Rule).
+
+`TestWorkerStartupBootstrapFailFast` and `TestBeatStartupBootstrapFailFast`
+cover the fetcher config bootstrap fail-fast contract added by
+`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
+Handler, Startup Reconciliation — Wiring Mechanism): an unreachable
+PostgreSQL at startup must exit the worker/Beat process with a
+non-zero code rather than let it start consuming tasks or ticking. The
+positive bootstrap path (successful `FetcherConfig` creation) is not
+separately re-asserted here — `FETCHER_REGISTRY` has no production
+fetcher yet, and the existing `TestWorkerStartup`/`TestBeatSchedule`
+classes above already prove worker/Beat complete their full startup
+sequence successfully (which includes the bootstrap step).
 """
 
 from __future__ import annotations
@@ -49,6 +61,8 @@ import subprocess
 from collections.abc import Callable
 
 import pytest
+
+from tests.image.conftest import IsolatedComposeStack
 
 # Inline Python snippet confirming the redbeat lock and scheduler are
 # active in the app object as constructed inside the shipped image
@@ -385,3 +399,80 @@ class TestCleanupSessionsBrokerExecution:
             f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
         )
         assert "TASK-EFFECT-OK" in result.stdout
+
+
+@pytest.mark.image
+class TestWorkerStartupBootstrapFailFast:
+    """docs/features/platform/fetcher-infrastructure.md (Worker Startup
+    Handler): the `celeryd_after_setup` handler exits the worker
+    process with a non-zero code when the fetcher config bootstrap
+    fails (e.g. PostgreSQL unreachable) — the worker must never start
+    consuming tasks in that case.
+
+    Uses an isolated, independently-named compose project (not the
+    primary stack shared by every other test in this suite) so this
+    scenario's deliberately-broken worker `DATABASE_URL` cannot affect
+    other tests.
+    """
+
+    def test_unreachable_database_prevents_worker_from_starting(
+        self, isolated_compose_stack: IsolatedComposeStack
+    ) -> None:
+        override = (
+            "services:\n"
+            "  worker:\n"
+            "    environment:\n"
+            "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
+            "unreachable-postgres-smoke-test:5432/sentinel\n"
+        )
+
+        result = isolated_compose_stack.up(override)
+        assert result.returncode != 0, (
+            f"expected non-zero exit when the worker's database is "
+            f"unreachable (stdout={result.stdout!r} stderr={result.stderr!r})"
+        )
+
+        exec_result = isolated_compose_stack.exec_check("worker", "true")
+        assert exec_result.returncode != 0, (
+            "worker container unexpectedly became reachable despite the "
+            f"unreachable database (stdout={exec_result.stdout!r} "
+            f"stderr={exec_result.stderr!r})"
+        )
+
+
+@pytest.mark.image
+class TestBeatStartupBootstrapFailFast:
+    """docs/features/platform/fetcher-infrastructure.md (Startup
+    Reconciliation, Wiring Mechanism): the `beat_init` handler exits
+    the Beat process with a non-zero code when the fetcher config
+    bootstrap fails — Beat must never begin its tick loop in that case.
+
+    Uses an isolated, independently-named compose project (not the
+    primary stack shared by every other test in this suite) so this
+    scenario's deliberately-broken Beat `DATABASE_URL` cannot affect
+    other tests.
+    """
+
+    def test_unreachable_database_prevents_beat_from_starting(
+        self, isolated_compose_stack: IsolatedComposeStack
+    ) -> None:
+        override = (
+            "services:\n"
+            "  beat:\n"
+            "    environment:\n"
+            "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
+            "unreachable-postgres-smoke-test:5432/sentinel\n"
+        )
+
+        result = isolated_compose_stack.up(override)
+        assert result.returncode != 0, (
+            f"expected non-zero exit when Beat's database is unreachable "
+            f"(stdout={result.stdout!r} stderr={result.stderr!r})"
+        )
+
+        exec_result = isolated_compose_stack.exec_check("beat", "true")
+        assert exec_result.returncode != 0, (
+            "beat container unexpectedly became reachable despite the "
+            f"unreachable database (stdout={exec_result.stdout!r} "
+            f"stderr={exec_result.stderr!r})"
+        )
