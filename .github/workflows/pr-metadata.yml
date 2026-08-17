@@ -40,7 +40,7 @@ jobs:
 
           # Approved automation is exempt from issue linkage only; its title
           # is still validated above.
-          if [[ "${PR_AUTHOR}" == "dependabot[bot]" && "${PR_HEAD_REF}" == dependabot/* ]]; then
+          if [[ "${PR_AUTHOR}" == "renovate[bot]" && "${PR_HEAD_REF}" == renovate/* ]]; then
             exit 0
           fi
           if [[ "${PR_HEAD_REF}" == release-please--* ]]; then

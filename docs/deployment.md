@@ -363,18 +363,16 @@ downloaded directly or requested through an action's `version:` input.
 Their versions MUST be pinned explicitly and MUST NOT be left to resolve
 to the latest available release.
 
-Dependabot (`.github/dependabot.yml`, `github-actions` ecosystem) tracks
-the SHA-pinned actions and opens a PR bumping both the SHA and the
-trailing version comment when a new release is published — no
-additional Dependabot configuration is required for this pinning style.
-
-**Exception.** `image-scan.yml`'s Trivy binary version is intentionally
-not pinned via `version:` — it tracks `aquasecurity/trivy-action`'s own
-bundled default, which advances only when the SHA-pinned action
-reference itself is bumped (tracked by Dependabot's `github-actions`
-ecosystem). This avoids a manually-maintained version string that has
-previously gone stale without weakening the pin — the effective Trivy
-version is still fixed to a specific, reviewed action release.
+Renovate (`renovate.json`, `github-actions` manager) tracks the
+SHA-pinned actions and opens a PR bumping both the SHA and the
+trailing version comment when a new release is published. It also
+tracks `with:` version inputs of commonly used community-maintained
+actions (e.g. `astral-sh/setup-uv`'s `version:` input) — no additional
+configuration is required for either pinning style. Renovate runs as
+the hosted Mend Renovate GitHub App reading `renovate.json` from the
+repository root — there is no corresponding `.github/workflows/*.yml`
+file, since the app itself (not a workflow trigger) schedules and
+executes the scan.
 
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
@@ -444,17 +442,20 @@ CI drift check.
 **Base image pinning.** The `python:${PYTHON_VERSION}-slim` base image
 is pinned by digest (`python:3.13-slim@sha256:...`) in both Dockerfile
 stages, in addition to the tag — the tag documents the intent (Python
-3.13, slim variant) while the digest guarantees immutability. Dependabot
-does NOT track this reference: both the tag and the digest are supplied
-through Dockerfile `ARG` values (`PYTHON_VERSION`, `PYTHON_BASE_DIGEST`),
-and Dependabot's `docker` ecosystem parser only recognizes literal tag
-and digest text in a `FROM` line — a well-known upstream limitation
-(`dependabot/dependabot-core#2057`, open since 2020). This was already
-true before digest pinning (the tag alone was equally untracked); pinning
-the digest does not regress anything Dependabot previously provided for
-this Dockerfile. Base image freshness is monitored instead by the weekly
-Trivy scan — see Image Vulnerability Monitoring below for the resulting
-manual remediation step.
+3.13, slim variant) while the digest guarantees immutability. Both
+values are supplied through Dockerfile `ARG` values (`PYTHON_VERSION`,
+`PYTHON_BASE_DIGEST`); Renovate's `dockerfile` manager expands `ARG`
+references natively and proposes a PR refreshing `PYTHON_BASE_DIGEST`
+whenever the upstream digest for the current tag changes. A dedicated
+`packageRule` in `renovate.json` disables major/minor/patch updates for
+this specific dependency — bumping the `PYTHON_VERSION` tag itself
+remains the deliberate, manual process described in
+`docs/conventions.md` (Runtime Version, Version Bump Checklist), since
+it requires re-validating dependency support across the Celery stack
+and other C/Rust-extension packages, not just refreshing a digest.
+Base image freshness against known vulnerabilities is monitored
+separately by the weekly Trivy scan — see Image Vulnerability
+Monitoring below.
 
 **Test code exclusion.** The runtime image MUST NOT contain test code.
 `backend/tests/` is excluded by `.dockerignore` and is never copied
@@ -1188,11 +1189,13 @@ on-demand checks between scheduled runs.
 **Why the OS layer needs its own visibility.** `pip-audit` (see
 Pipeline Chain above) gates Python dependencies on every merge, but the
 image is Debian-based (`python:3.13-slim`) and the OS package layer is
-not covered by any dependency scanner. Dependabot cannot help here: the
-base image reference is `ARG`-templated (see Container Build
-Conventions, Base image pinning), which its `docker` ecosystem parser
-does not resolve. Trivy's weekly scan is therefore the only mechanism
-that detects known vulnerabilities in this layer.
+not covered by any dependency scanner. Renovate proposes PRs refreshing
+the `PYTHON_BASE_DIGEST` `ARG` (see Container Build Conventions, Base
+image pinning) when a new base image digest is published, but that is
+a forward-looking freshness mechanism — it does not scan the image
+version already published to `ghcr.io` for currently known
+vulnerabilities. Trivy's weekly scan is the mechanism that detects
+those vulnerabilities in the layer already shipped.
 
 **Deliberately non-blocking.** This scan never fails the workflow run
 and is not part of the publish path (`build-images.yml` is untouched).
@@ -1215,16 +1218,17 @@ pipeline without a corresponding way to resolve it.
 the existing open one if a prior run already opened it — the workflow
 never creates a duplicate issue for the same ongoing condition.
 
-**Remediation path.** Because the base image is pinned by digest (see
-Container Build Conventions, Base image pinning) and Dependabot cannot
-refresh it automatically, a fixable finding requires a maintainer to
-manually resolve the current digest for `python:3.13-slim` (e.g. `docker
-buildx imagetools inspect python:3.13-slim` or an equivalent registry
-query) and update `PYTHON_BASE_DIGEST` in `backend/Dockerfile` in a
-dedicated PR. This is intended behavior, not an oversight: the platform
-has no automated mechanism to refresh an `ARG`-templated digest, and the
-scan's non-blocking design assumes this manual step as its remediation
-trigger rather than an automatic rebuild.
+**Remediation path.** A fixable finding is usually resolved by merging
+the latest open Renovate PR that refreshes `PYTHON_BASE_DIGEST` in
+`backend/Dockerfile` (see Container Build Conventions, Base image
+pinning) — Renovate proposes this PR automatically whenever the
+upstream digest for the current `python:3.13-slim` tag changes, which
+in practice is often the same digest that resolves the finding. If no
+pending Renovate PR resolves the specific finding (e.g. the upstream
+fix has not yet propagated to a new digest), a maintainer resolves the
+current digest manually (e.g. `docker buildx imagetools inspect
+python:3.13-slim` or an equivalent registry query) and opens a PR
+directly.
 
 ### Python Forward-Compatibility Check
 

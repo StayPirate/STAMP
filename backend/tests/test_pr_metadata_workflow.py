@@ -172,7 +172,7 @@ def test_pr_metadata_human_exemption_requires_specific_reason(
 @pytest.mark.parametrize(
     ("author", "head_ref"),
     [
-        ("dependabot[bot]", "dependabot/pip/httpx-1.0"),
+        ("renovate[bot]", "renovate/pip-httpx-1.x"),
         ("github-actions[bot]", "release-please--branches--master"),
     ],
 )
@@ -189,8 +189,8 @@ def test_pr_metadata_automation_with_invalid_title_still_fails() -> None:
     result = _validate_metadata(
         title="Invalid automated title",
         body="",
-        author="dependabot[bot]",
-        head_ref="dependabot/pip/httpx-1.0",
+        author="renovate[bot]",
+        head_ref="renovate/pip-httpx-1.x",
     )
 
     assert result.returncode == 1

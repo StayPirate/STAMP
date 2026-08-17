@@ -4,12 +4,13 @@
 ARG PYTHON_VERSION=3.13
 
 # Digest pin for python:${PYTHON_VERSION}-slim (see docs/deployment.md,
-# Container Build Conventions → Base image pinning). Dependabot does
-# NOT track this reference — both the tag and the digest are supplied
-# via ARG, which Dependabot's docker ecosystem parser does not resolve
-# (see dependabot/dependabot-core#2057). Refreshing this digest is a
-# manual step; see docs/deployment.md, Image Vulnerability Monitoring
-# → Remediation path.
+# Container Build Conventions → Base image pinning). Renovate's
+# dockerfile manager resolves this ARG-templated FROM line natively and
+# proposes PRs bumping PYTHON_BASE_DIGEST when a new digest for the
+# current tag is published. PYTHON_VERSION itself is bumped manually
+# only — see docs/conventions.md, Runtime Version (Version Bump
+# Checklist) — and is excluded from Renovate's automated updates by a
+# packageRule in renovate.json.
 ARG PYTHON_BASE_DIGEST=sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
 
 # Stage 1: Install dependencies and build the project (non-editable)

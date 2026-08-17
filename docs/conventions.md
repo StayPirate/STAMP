@@ -1283,7 +1283,7 @@ against closing an issue while an open blocker remains.
 
 **Exemptions** — an issue is not required for:
 
-- a pull request generated and maintained exclusively by Dependabot or
+- a pull request generated and maintained exclusively by Renovate or
   release-please (human-directed scope added to such a PR removes the
   exemption);
 - pure exploration that creates no retained branch, commit, PR, or
@@ -1309,7 +1309,7 @@ branch from the updated `origin/master`.
 **Issue linkage**: every non-exempt pull request uses `Closes #<issue>` in
 its body so merge completion closes the tracking issue. Exempt
 human-authored PRs declare `N/A - <specific reason>` instead; approved
-automated PRs (Dependabot, release-please) are exempt entirely. See
+automated PRs (Renovate, release-please) are exempt entirely. See
 Pull Request Requirements below for the accepted formats. If a
 specification gap blocks implementation, resolve it in a separate
 documentation issue, branch, and merged PR before creating or resuming
@@ -1343,7 +1343,7 @@ becomes the squash commit subject. Format and length are validated by CI.
   reason>` for an exempt human-authored PR under "Issues and work units"
   above. Use the template's `- Issue linkage:` field, or a standalone
   `Closes #<issue>` line anywhere in the body. Approved automated PRs
-  (Dependabot, release-please) are exempt from this field. Validated by
+  (Renovate, release-please) are exempt from this field. Validated by
   CI.
 - **Manual verification**: record the exercised behavior and observed result.
   If no meaningful manual path exists, record `N/A` with a reason.
