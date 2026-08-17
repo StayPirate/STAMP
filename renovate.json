@@ -6,7 +6,7 @@
     "helpers:pinGitHubActionDigests"
   ],
   "labels": ["dependencies"],
-  "prConcurrentLimit": 5,
+  "prConcurrentLimit": 0,
   "packageRules": [
     {
       "description": "Group Python (backend) minor and patch updates into a single PR",
@@ -29,8 +29,7 @@
     {
       "description": "Docker image and ARG-templated digest updates (backend/Dockerfile)",
       "matchManagers": ["dockerfile"],
-      "commitMessagePrefix": "chore(deps):",
-      "prConcurrentLimit": 3
+      "commitMessagePrefix": "chore(deps):"
     },
     {
       "description": "The Python base image tag (major/minor/patch) is bumped manually per docs/conventions.md (Runtime Version, Version Bump Checklist) — only the digest is refreshed automatically here",
