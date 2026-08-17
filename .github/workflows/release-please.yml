@@ -35,8 +35,8 @@ jobs:
       # determinism: the release PR's atomicity relies on release-please's
       # internal generic-toml updater correctly resolving the `extra-files`
       # jsonpath configured in release-please-config.json, so an unreviewed
-      # action upgrade must not silently change that behavior. Dependabot
-      # (.github/dependabot.yml) still proposes SHA bumps for new releases.
+      # action upgrade must not silently change that behavior. Renovate
+      # (renovate.json) still proposes SHA bumps for new releases.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ secrets.RELEASE_TOKEN }}

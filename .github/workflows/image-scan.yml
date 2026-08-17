@@ -5,11 +5,12 @@ name: Image Vulnerability Scan
 # Monitoring) for the full rationale: pip-audit already gates Python
 # dependencies on every merge, but the Debian base layer
 # (python:3.13-slim) is otherwise unmonitored for known vulnerabilities.
-# Dependabot cannot help: the base image is pinned via ARG-templated
-# values in backend/Dockerfile, which Dependabot's docker ecosystem
-# parser does not resolve (dependabot/dependabot-core#2057). This
-# workflow's Trivy scan is the only mechanism that detects known
-# vulnerabilities in this layer.
+# Renovate proposes PRs bumping the ARG-templated base image digest in
+# backend/Dockerfile (its dockerfile manager resolves ARG values
+# natively), but that only refreshes the pinned layer going forward —
+# it does not scan the currently published image for known
+# vulnerabilities. This workflow's Trivy scan remains the mechanism
+# that detects those vulnerabilities in the layer already shipped.
 #
 # This workflow never fails the run because of scan findings and never
 # touches build-images.yml or the publish path. Fixable HIGH/CRITICAL
@@ -62,15 +63,11 @@ jobs:
       # secret scanning (see docs/features/platform/testing-strategy.md,
       # Pre-Commit Hooks); that coverage is local-only via gitleaks.
       #
-      # No explicit Trivy binary `version` is pinned here — deliberately.
-      # aquasecurity/trivy-action bundles its own default Trivy version in
-      # action.yml, and that default is bumped by the action's maintainers
-      # on every action release. Letting the scan follow that default means
-      # the Trivy binary version advances automatically whenever Dependabot
-      # bumps aquasecurity/trivy-action (already tracked by the
-      # `github-actions` ecosystem in dependabot.yml), instead of requiring
-      # a separate manual bump of a pinned string that Dependabot cannot
-      # see. Do not reintroduce a `version:` pin without updating this note.
+      # The Trivy binary `version` is pinned explicitly. Renovate's
+      # github-actions manager has native support for the `version:`
+      # input of aquasecurity/trivy-action, so this pin is tracked and
+      # bumped automatically — it no longer needs to piggyback on the
+      # action's own SHA bumps to stay current.
       - name: Scan for fixable HIGH/CRITICAL OS vulnerabilities
         id: trivy-fixable
         continue-on-error: true
@@ -84,6 +81,7 @@ jobs:
           vuln-type: "os"
           scanners: "vuln"
           severity: "HIGH,CRITICAL"
+          version: "v0.70.0"
 
       # Complete report: every OS-level finding regardless of fix
       # availability or severity, for awareness only. Never fails the
@@ -125,7 +123,7 @@ jobs:
           {
             echo "Automated weekly scan of \`${{ steps.image.outputs.ref }}\` found fixable HIGH/CRITICAL OS-level vulnerabilities."
             echo ""
-            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Remediation requires a maintainer to manually update \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current \`python:3.13-slim\` digest — the base image is pinned and Dependabot cannot refresh it automatically (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning)."
+            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Renovate periodically proposes a PR bumping \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current \`python:3.13-slim\` digest (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning); merging the latest such PR is the expected remediation. If no pending Renovate PR resolves this finding, a maintainer can resolve the current digest manually and open one directly."
             echo ""
             echo "<details><summary>Fixable HIGH/CRITICAL findings</summary>"
             echo ""

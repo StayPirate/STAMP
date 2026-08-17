@@ -1,0 +1,48 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "schedule:earlyMondays",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 0,
+  "packageRules": [
+    {
+      "description": "Group Python (backend) minor and patch updates into a single PR",
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "python minor and patch dependencies",
+      "commitMessagePrefix": "chore(deps):"
+    },
+    {
+      "description": "Python (backend) major updates get their own PR",
+      "matchManagers": ["pep621"],
+      "matchUpdateTypes": ["major"],
+      "commitMessagePrefix": "chore(deps):"
+    },
+    {
+      "description": "GitHub Actions updates, including with: version inputs (e.g. astral-sh/setup-uv, aquasecurity/trivy-action)",
+      "matchManagers": ["github-actions"],
+      "commitMessagePrefix": "ci(deps):"
+    },
+    {
+      "description": "Docker image and ARG-templated digest updates (backend/Dockerfile)",
+      "matchManagers": ["dockerfile"],
+      "commitMessagePrefix": "chore(deps):"
+    },
+    {
+      "description": "The Python base image tag (major/minor/patch) is bumped manually per docs/conventions.md (Runtime Version, Version Bump Checklist) — only the digest is refreshed automatically here",
+      "matchManagers": ["dockerfile"],
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["python"],
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "enabled": false
+    },
+    {
+      "description": "Keep the uv version used by astral-sh/setup-uv (CI) and the uv binary copied into the Docker image (COPY --from) in sync — see backend/Dockerfile comment",
+      "matchPackageNames": ["astral-sh/uv", "ghcr.io/astral-sh/uv"],
+      "groupName": "uv version (CI + Docker image)"
+    }
+  ]
+}
