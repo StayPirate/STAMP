@@ -32,11 +32,9 @@
       "commitMessagePrefix": "chore(deps):"
     },
     {
-      "description": "The Python base image tag (major/minor/patch) is bumped manually per docs/conventions.md (Runtime Version, Version Bump Checklist) — only the digest is refreshed automatically here",
-      "matchManagers": ["dockerfile"],
-      "matchDatasources": ["docker"],
+      "description": "The Python interpreter version (backend/Dockerfile ARG, backend/.python-version, backend/pyproject.toml requires-python) is bumped manually per docs/conventions.md (Runtime Version, Version Bump Checklist) for major/minor changes, across every manager that tracks it (dockerfile, pyenv, pep621). Patch-level freshness for the Docker base image is still delivered automatically via digest updates, which this rule does not touch.",
       "matchPackageNames": ["python"],
-      "matchUpdateTypes": ["major", "minor", "patch"],
+      "matchUpdateTypes": ["major", "minor"],
       "enabled": false
     },
     {

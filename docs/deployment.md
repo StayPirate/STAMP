@@ -447,12 +447,17 @@ values are supplied through Dockerfile `ARG` values (`PYTHON_VERSION`,
 `PYTHON_BASE_DIGEST`); Renovate's `dockerfile` manager expands `ARG`
 references natively and proposes a PR refreshing `PYTHON_BASE_DIGEST`
 whenever the upstream digest for the current tag changes. A dedicated
-`packageRule` in `renovate.json` disables major/minor/patch updates for
-this specific dependency — bumping the `PYTHON_VERSION` tag itself
+`packageRule` in `renovate.json` matches the `python` package name
+across every manager that tracks the interpreter version (`dockerfile`
+for this base image, `pyenv` for `backend/.python-version`, `pep621`
+for `backend/pyproject.toml` `requires-python`) and disables major/minor
+updates uniformly — bumping the Python interpreter version itself
 remains the deliberate, manual process described in
 `docs/conventions.md` (Runtime Version, Version Bump Checklist), since
 it requires re-validating dependency support across the Celery stack
 and other C/Rust-extension packages, not just refreshing a digest.
+Patch-level freshness for this base image continues to flow through
+the automated digest refresh described above, unaffected by that rule.
 Base image freshness against known vulnerabilities is monitored
 separately by the weekly Trivy scan — see Image Vulnerability
 Monitoring below.
