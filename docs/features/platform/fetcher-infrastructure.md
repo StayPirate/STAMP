@@ -3081,6 +3081,18 @@ The bootstrap routine:
   Each startup workflow (API lifespan, worker handler, Beat handler)
   opens one session, calls `bootstrap_fetcher_configs(db)`, then
   commits on success or rolls back on failure.
+- **Empty registry**: if `FETCHER_REGISTRY` is empty (no fetcher module
+  has been registered yet), the function MUST still issue a statement
+  against the `fetcher_config` table (e.g. a bounded `SELECT`) instead
+  of returning without touching the database. This preserves the
+  fail-fast startup contract in `docs/deployment.md` (Startup Ordering)
+  — every process MUST fail if PostgreSQL or the table schema is
+  unavailable, regardless of how many fetchers are currently
+  registered.
+- **Audit events**: this routine creates no `FetcherAuditEvent` records
+  under any condition — it is idempotent initialization, not an
+  administrative configuration change (consistent with
+  `bootstrap_system_settings()`, `docs/features/platform/system-settings.md`).
 - **Sync callers**: worker and Beat startup invoke this function via
   the sync-to-async bridging pattern (`docs/conventions.md`) — a
   single `asyncio.run()` wrapping the extracted async startup

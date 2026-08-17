@@ -22,6 +22,8 @@ from app.core.logging import configure_logging
 from app.core.middleware import RequestIDMiddleware
 from app.core.query_limits import enforce_query_parameter_length_limit
 from app.database import async_session_factory
+from app.services import fetcher_discovery  # noqa: F401
+from app.services.fetcher_bootstrap import bootstrap_fetcher_configs
 from app.services.settings import bootstrap_system_settings
 
 configure_logging(settings)
@@ -33,18 +35,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application startup/shutdown lifecycle.
 
     Runs the system-settings bootstrap (self-healing, defense-in-depth
-    — the primary mechanism is the Alembic seed migration) before the
-    API begins serving requests. See
-    `docs/features/platform/system-settings.md` (FastAPI Lifespan
-    Ordering and Failure): a database connection, schema, bootstrap,
-    flush, or commit failure rolls back the transaction and lets the
-    exception escape, which aborts FastAPI startup. The process MUST
-    NOT begin serving requests in that case — there is no degraded
-    startup mode and no fallback setting value.
+    — the primary mechanism is the Alembic seed migration) and the
+    fetcher config bootstrap (`docs/features/platform/fetcher-infrastructure.md`,
+    FetcherConfig) in the same transaction before the API begins
+    serving requests. A database connection, schema, bootstrap, flush,
+    or commit failure in either step rolls back the shared transaction
+    and lets the exception escape, which aborts FastAPI startup. The
+    process MUST NOT begin serving requests in that case — there is no
+    degraded startup mode and no fallback setting value.
     """
     async with async_session_factory() as session:
         try:
             await bootstrap_system_settings(session)
+            await bootstrap_fetcher_configs(session)
             await session.commit()
         except Exception:
             await session.rollback()

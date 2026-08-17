@@ -327,10 +327,40 @@ class IsolatedComposeStack:
         self._override_path = override_path
         self._brought_up = False
 
-    def up(self, override_yaml: str) -> subprocess.CompletedProcess[str]:
+    def up(
+        self, override_yaml: str, *services: str
+    ) -> subprocess.CompletedProcess[str]:
         """Write ``override_yaml`` to this stack's override file and run
         ``up -d --wait`` against the primary compose file plus that
-        override, under this stack's unique project name."""
+        override, under this stack's unique project name.
+
+        ``services``, when given, restricts the invocation to those
+        named services (Compose still starts their transitive
+        ``depends_on`` dependencies) instead of bringing up the entire
+        stack. A new Compose project isolates container names,
+        networks, and volumes from the primary stack — it does NOT
+        isolate host port bindings. The full stack always includes
+        ``api``, which publishes a host port (see
+        docker-compose.smoke.yml); bringing up the full stack under a
+        second project name while the primary stack is already running
+        would collide on that port. A scenario that deliberately breaks
+        one service (so it never becomes ready) MUST pass that
+        service's name explicitly to avoid this collision — unless the
+        broken service transitively blocks every path to ``api`` ever
+        starting (e.g. breaking ``migrate``, which every other service
+        depends on for successful completion), in which case ``api`` is
+        never created regardless of the service filter.
+
+        The caller MUST NOT treat this method's return code as a
+        pass/fail signal for a deliberately-broken service without a
+        container healthcheck (e.g. ``beat`` — see
+        docker-compose.smoke.yml): Compose's ``--wait`` considers a
+        service without a healthcheck "ready" as soon as it reports
+        "running", which can race ahead of a startup failure that
+        crashes the container a moment later. Use
+        ``wait_until_exited()`` and ``logs()`` below for a
+        deterministic outcome instead.
+        """
         self._override_path.write_text(override_yaml, encoding="utf-8")
         cmd = [
             *self._compose_cmd,
@@ -342,6 +372,7 @@ class IsolatedComposeStack:
             "up",
             "-d",
             "--wait",
+            *services,
         ]
         self._brought_up = True
         return _run_compose_bounded(cmd, timeout=90.0)
@@ -366,6 +397,50 @@ class IsolatedComposeStack:
             *args,
         ]
         return _run_compose_bounded(cmd, timeout=10.0)
+
+    def wait_until_exited(
+        self, service: str, *, timeout: float = 45.0, poll_interval: float = 1.0
+    ) -> None:
+        """Poll until ``service``'s container is no longer reachable via
+        ``exec_check`` (see above for why that is the portable "is it
+        running" signal across Docker and Podman Compose).
+
+        Used to deterministically confirm that a deliberately-broken
+        service's process has actually exited, instead of trusting
+        ``up()``'s return code (see ``up()`` for why that is unreliable
+        for a service without a healthcheck). Fails the test via
+        ``pytest.fail`` if the container is still reachable after
+        ``timeout`` seconds — the process under test never exited
+        within the bound.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.exec_check(service, "true").returncode != 0:
+                return
+            time.sleep(poll_interval)
+        pytest.fail(
+            f"service {service!r} in project {self.project!r} did not "
+            f"exit within {timeout}s"
+        )
+
+    def logs(self, service: str) -> str:
+        """Return ``service``'s combined stdout+stderr container logs.
+
+        Works after the container has exited, as long as ``teardown()``
+        has not run yet — Compose retains a stopped container's logs
+        until the project is torn down.
+        """
+        cmd = [
+            *self._compose_cmd,
+            "-p",
+            self.project,
+            *self._file_args,
+            "logs",
+            "--no-color",
+            service,
+        ]
+        result = _run_compose_bounded(cmd, timeout=15.0)
+        return result.stdout + result.stderr
 
     def teardown(self) -> None:
         if self._brought_up:

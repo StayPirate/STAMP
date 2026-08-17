@@ -18,20 +18,22 @@ mutating the production `app`'s shared route table.
 
 Also covers the FastAPI `lifespan` (system-settings bootstrap ordering
 and failure — `docs/features/platform/system-settings.md`, FastAPI
-Lifespan Ordering and Failure). These tests call `main_module.lifespan`
-directly (not via an ASGI round trip, since `ASGITransport` does not
-invoke `lifespan`), with `main_module.async_session_factory`
-monkeypatched to `real_session_factory` so the lifespan's own session
-targets the test database instead of the production
-`settings.database_url` connection. `real_session_factory`-created
-sessions are not covered by the per-test savepoint rollback, so every
-test that leaves a committed row cleans it up explicitly (see
+Lifespan Ordering and Failure — and the fetcher config bootstrap added
+alongside it — `docs/features/platform/fetcher-infrastructure.md`,
+FetcherConfig). These tests call `main_module.lifespan` directly (not
+via an ASGI round trip, since `ASGITransport` does not invoke
+`lifespan`), with `main_module.async_session_factory` monkeypatched to
+`real_session_factory` so the lifespan's own session targets the test
+database instead of the production `settings.database_url` connection.
+`real_session_factory`-created sessions are not covered by the
+per-test savepoint rollback, so every test that leaves a committed row
+cleans it up explicitly (see
 `docs/features/platform/testing-strategy.md`, Fixture Catalog).
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 
 import pytest
 from fastapi import FastAPI
@@ -43,8 +45,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 import app.main as main_module
 from app.core.errors import ErrorCode
 from app.main import _unhandled_exception_handler
+from app.models.fetcher_config import FetcherConfig
 from app.models.setting_audit_event import SettingAuditEvent
 from app.models.system_setting import SystemSetting
+from app.services.base_fetcher import FETCHER_REGISTRY
 from app.services.settings import get_default_cvss_version
 
 _SENSITIVE_DETAIL = "sensitive: password=hunter2 host=db.internal.example"
@@ -136,6 +140,40 @@ async def _delete_default_cvss_version_setting(
     async with session_factory() as session:
         await session.execute(
             delete(SystemSetting).where(SystemSetting.key == _DEFAULT_KEY)
+        )
+        await session.commit()
+
+
+class _StubBootstrapFetcher:
+    """Minimal `FETCHER_REGISTRY` entry stub — exposes only the two
+    class attributes `bootstrap_fetcher_configs()` reads."""
+
+    name = "test_lifespan_bootstrap_fetcher"
+    default_request_delay = 1.25
+
+
+@pytest.fixture
+def _registered_stub_fetcher() -> Generator[None]:
+    """Register `_StubBootstrapFetcher` in `FETCHER_REGISTRY` for the
+    duration of a test, restoring the original registry afterward —
+    mirrors `tests/test_services/test_base_fetcher.py` (Test
+    Independence)."""
+    original = dict(FETCHER_REGISTRY)
+    FETCHER_REGISTRY[_StubBootstrapFetcher.name] = _StubBootstrapFetcher  # type: ignore[assignment]
+    yield
+    FETCHER_REGISTRY.clear()
+    FETCHER_REGISTRY.update(original)
+
+
+async def _delete_fetcher_config(
+    session_factory: async_sessionmaker[AsyncSession], fetcher_name: str
+) -> None:
+    """Explicit cleanup for a `FetcherConfig` row committed through
+    `real_session_factory` — not covered by the per-test savepoint
+    rollback (see module docstring)."""
+    async with session_factory() as session:
+        await session.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
         )
         await session.commit()
 
@@ -250,3 +288,100 @@ class TestLifespanBootstrap:
         finally:
             monkeypatch.undo()
             await _delete_default_cvss_version_setting(real_session_factory)
+
+
+@pytest.mark.integration
+@pytest.mark.usefixtures("_registered_stub_fetcher")
+class TestLifespanFetcherConfigBootstrap:
+    """Contract under test:
+    `docs/features/platform/fetcher-infrastructure.md` (FetcherConfig)
+    — the FastAPI lifespan bootstraps `FetcherConfig` rows for every
+    registered fetcher in the same transaction as the system-settings
+    bootstrap, before the API begins serving requests.
+    """
+
+    async def test_creates_a_row_for_each_registered_fetcher(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        monkeypatch.setattr(main_module, "async_session_factory", real_session_factory)
+
+        try:
+            async with main_module.lifespan(main_module.app):
+                pass
+
+            async with real_session_factory() as session:
+                config = await session.get(FetcherConfig, _StubBootstrapFetcher.name)
+                assert config is not None
+                assert config.request_delay == 1.25
+                assert config.enabled is True
+        finally:
+            await _delete_default_cvss_version_setting(real_session_factory)
+            await _delete_fetcher_config(
+                real_session_factory, _StubBootstrapFetcher.name
+            )
+
+    async def test_preserves_an_existing_custom_fetcher_config(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        monkeypatch.setattr(main_module, "async_session_factory", real_session_factory)
+
+        async with real_session_factory() as setup_session:
+            setup_session.add(
+                FetcherConfig(
+                    fetcher_name=_StubBootstrapFetcher.name,
+                    enabled=False,
+                    request_delay=9.9,
+                )
+            )
+            await setup_session.commit()
+
+        try:
+            async with main_module.lifespan(main_module.app):
+                pass
+
+            async with real_session_factory() as session:
+                config = await session.get(FetcherConfig, _StubBootstrapFetcher.name)
+                assert config is not None
+                assert config.enabled is False
+                assert config.request_delay == 9.9
+        finally:
+            await _delete_default_cvss_version_setting(real_session_factory)
+            await _delete_fetcher_config(
+                real_session_factory, _StubBootstrapFetcher.name
+            )
+
+    async def test_fetcher_bootstrap_failure_propagates_and_aborts_startup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        monkeypatch.setattr(main_module, "async_session_factory", real_session_factory)
+
+        async def _boom(session: AsyncSession) -> None:
+            raise OperationalError("simulated", {}, Exception("boom"))
+
+        monkeypatch.setattr(main_module, "bootstrap_fetcher_configs", _boom)
+
+        try:
+            with pytest.raises(OperationalError):
+                async with main_module.lifespan(main_module.app):
+                    pass
+
+            # No degraded startup: the system-settings bootstrap ran
+            # first and flushed within the shared transaction, but the
+            # fetcher config bootstrap failure rolled back the entire
+            # shared transaction — neither row persists.
+            async with real_session_factory() as session:
+                assert await session.get(SystemSetting, _DEFAULT_KEY) is None
+                assert (
+                    await session.get(FetcherConfig, _StubBootstrapFetcher.name) is None
+                )
+        finally:
+            await _delete_default_cvss_version_setting(real_session_factory)
+            await _delete_fetcher_config(
+                real_session_factory, _StubBootstrapFetcher.name
+            )

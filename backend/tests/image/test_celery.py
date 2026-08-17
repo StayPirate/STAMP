@@ -40,6 +40,18 @@ logging handler wiring.
 docker-compose.smoke.yml as of this module's `TestWorkerStartup`,
 `TestBeatSchedule`, and `TestCleanupSessionsBrokerExecution` — see
 docs/features/platform/testing-strategy.md (Growth Rule).
+
+`TestWorkerStartupBootstrapFailFast` and `TestBeatStartupBootstrapFailFast`
+cover the fetcher config bootstrap fail-fast contract added by
+`docs/features/platform/fetcher-infrastructure.md` (Worker Startup
+Handler, Startup Reconciliation — Wiring Mechanism): an unreachable
+PostgreSQL at startup must exit the worker/Beat process with a
+non-zero code rather than let it start consuming tasks or ticking. The
+positive bootstrap path (successful `FetcherConfig` creation) is not
+separately re-asserted here — `FETCHER_REGISTRY` has no production
+fetcher yet, and the existing `TestWorkerStartup`/`TestBeatSchedule`
+classes above already prove worker/Beat complete their full startup
+sequence successfully (which includes the bootstrap step).
 """
 
 from __future__ import annotations
@@ -49,6 +61,8 @@ import subprocess
 from collections.abc import Callable
 
 import pytest
+
+from tests.image.conftest import IsolatedComposeStack
 
 # Inline Python snippet confirming the redbeat lock and scheduler are
 # active in the app object as constructed inside the shipped image
@@ -385,3 +399,95 @@ class TestCleanupSessionsBrokerExecution:
             f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
         )
         assert "TASK-EFFECT-OK" in result.stdout
+
+
+@pytest.mark.image
+class TestWorkerStartupBootstrapFailFast:
+    """docs/features/platform/fetcher-infrastructure.md (Worker Startup
+    Handler): the `celeryd_after_setup` handler exits the worker
+    process with a non-zero code when the fetcher config bootstrap
+    fails (e.g. PostgreSQL unreachable) — the worker must never start
+    consuming tasks in that case.
+
+    Uses an isolated, independently-named compose project (not the
+    primary stack shared by every other test in this suite) so this
+    scenario's deliberately-broken worker `DATABASE_URL` cannot affect
+    other tests. `up()` is restricted to the `worker` service (see
+    `IsolatedComposeStack.up()`) so this isolated project never starts
+    its own `api` container, which would otherwise collide with the
+    primary stack's published host port. The broken `DATABASE_URL`
+    targets this isolated project's own `postgres` service on a closed
+    port (`:1`) rather than an unresolvable hostname, so the connection
+    is refused immediately instead of depending on DNS-resolution
+    timing.
+    """
+
+    def test_unreachable_database_prevents_worker_from_starting(
+        self, isolated_compose_stack: IsolatedComposeStack
+    ) -> None:
+        override = (
+            "services:\n"
+            "  worker:\n"
+            "    environment:\n"
+            "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
+            "postgres:1/sentinel\n"
+        )
+
+        isolated_compose_stack.up(override, "worker")
+        isolated_compose_stack.wait_until_exited("worker")
+
+        logs = isolated_compose_stack.logs("worker")
+        assert "worker_startup_failed" in logs, (
+            f"expected the fail-fast log marker in worker logs: {logs!r}"
+        )
+        assert "worker_startup_completed" not in logs, (
+            f"worker unexpectedly completed startup despite the "
+            f"unreachable database: {logs!r}"
+        )
+
+
+@pytest.mark.image
+class TestBeatStartupBootstrapFailFast:
+    """docs/features/platform/fetcher-infrastructure.md (Startup
+    Reconciliation, Wiring Mechanism): the `beat_init` handler exits
+    the Beat process with a non-zero code when the fetcher config
+    bootstrap fails — Beat must never begin its tick loop in that case.
+
+    Uses an isolated, independently-named compose project (not the
+    primary stack shared by every other test in this suite) so this
+    scenario's deliberately-broken Beat `DATABASE_URL` cannot affect
+    other tests. `up()` is restricted to the `beat` service (see
+    `IsolatedComposeStack.up()`) so this isolated project never starts
+    its own `api` container, which would otherwise collide with the
+    primary stack's published host port. `beat` has no container
+    healthcheck (see docker-compose.smoke.yml), so `up()`'s return code
+    cannot be trusted as a pass/fail signal here — `wait_until_exited()`
+    and a log-content assertion are used instead. The broken
+    `DATABASE_URL` targets this isolated project's own `postgres`
+    service on a closed port (`:1`) rather than an unresolvable
+    hostname, so the connection is refused immediately instead of
+    depending on DNS-resolution timing.
+    """
+
+    def test_unreachable_database_prevents_beat_from_starting(
+        self, isolated_compose_stack: IsolatedComposeStack
+    ) -> None:
+        override = (
+            "services:\n"
+            "  beat:\n"
+            "    environment:\n"
+            "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
+            "postgres:1/sentinel\n"
+        )
+
+        isolated_compose_stack.up(override, "beat")
+        isolated_compose_stack.wait_until_exited("beat")
+
+        logs = isolated_compose_stack.logs("beat")
+        assert "beat_startup_failed" in logs, (
+            f"expected the fail-fast log marker in beat logs: {logs!r}"
+        )
+        assert "beat_startup_completed" not in logs, (
+            f"beat unexpectedly completed startup despite the "
+            f"unreachable database: {logs!r}"
+        )

@@ -3,8 +3,9 @@
 See `docs/data-model.md` (FetcherConfig) and
 `docs/features/platform/fetcher-infrastructure.md` (Data Model —
 FetcherConfig) for the full specification, including the
-`bootstrap_fetcher_configs()` auto-creation routine (implemented in a
-later work item — this model only defines the persistence root).
+`bootstrap_fetcher_configs()` auto-creation routine
+(`backend/app/services/fetcher_bootstrap.py`) — this model only
+defines the persistence root.
 """
 
 from __future__ import annotations
@@ -33,8 +34,9 @@ class FetcherConfig(Base):
     unique identifiers defined in code. Has no `created_at`: the row's
     creation time is not tracked, only its last modification
     (`docs/data-model.md`, Notes). A record is created automatically
-    at process startup by `bootstrap_fetcher_configs()` (a later work
-    item); this model only defines the persistence root.
+    at process startup by `bootstrap_fetcher_configs()`
+    (`backend/app/services/fetcher_bootstrap.py`); this model only
+    defines the persistence root.
     """
 
     __tablename__ = "fetcher_config"

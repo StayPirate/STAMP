@@ -45,10 +45,11 @@ _STALE_MARGIN_SECONDS = 60
 class FetcherConfigMissingError(RuntimeError):
     """Raised when a registered fetcher has no `FetcherConfig` row.
 
-    Indicates `bootstrap_fetcher_configs()` has not yet run for this
-    fetcher (bootstrap is implemented by a later work item — see
-    fetcher-infrastructure.md, Data Model — FetcherConfig). Propagates
-    uncaught to the `run_fetcher` task wrapper — no retry is attempted.
+    Indicates `bootstrap_fetcher_configs()`
+    (`app/services/fetcher_bootstrap.py`) has not yet run for this
+    fetcher — see fetcher-infrastructure.md (Data Model —
+    FetcherConfig). Propagates uncaught to the `run_fetcher` task
+    wrapper — no retry is attempted.
     """
 
 
