@@ -412,7 +412,14 @@ class TestWorkerStartupBootstrapFailFast:
     Uses an isolated, independently-named compose project (not the
     primary stack shared by every other test in this suite) so this
     scenario's deliberately-broken worker `DATABASE_URL` cannot affect
-    other tests.
+    other tests. `up()` is restricted to the `worker` service (see
+    `IsolatedComposeStack.up()`) so this isolated project never starts
+    its own `api` container, which would otherwise collide with the
+    primary stack's published host port. The broken `DATABASE_URL`
+    targets this isolated project's own `postgres` service on a closed
+    port (`:1`) rather than an unresolvable hostname, so the connection
+    is refused immediately instead of depending on DNS-resolution
+    timing.
     """
 
     def test_unreachable_database_prevents_worker_from_starting(
@@ -423,20 +430,19 @@ class TestWorkerStartupBootstrapFailFast:
             "  worker:\n"
             "    environment:\n"
             "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
-            "unreachable-postgres-smoke-test:5432/sentinel\n"
+            "postgres:1/sentinel\n"
         )
 
-        result = isolated_compose_stack.up(override)
-        assert result.returncode != 0, (
-            f"expected non-zero exit when the worker's database is "
-            f"unreachable (stdout={result.stdout!r} stderr={result.stderr!r})"
-        )
+        isolated_compose_stack.up(override, "worker")
+        isolated_compose_stack.wait_until_exited("worker")
 
-        exec_result = isolated_compose_stack.exec_check("worker", "true")
-        assert exec_result.returncode != 0, (
-            "worker container unexpectedly became reachable despite the "
-            f"unreachable database (stdout={exec_result.stdout!r} "
-            f"stderr={exec_result.stderr!r})"
+        logs = isolated_compose_stack.logs("worker")
+        assert "worker_startup_failed" in logs, (
+            f"expected the fail-fast log marker in worker logs: {logs!r}"
+        )
+        assert "worker_startup_completed" not in logs, (
+            f"worker unexpectedly completed startup despite the "
+            f"unreachable database: {logs!r}"
         )
 
 
@@ -450,7 +456,17 @@ class TestBeatStartupBootstrapFailFast:
     Uses an isolated, independently-named compose project (not the
     primary stack shared by every other test in this suite) so this
     scenario's deliberately-broken Beat `DATABASE_URL` cannot affect
-    other tests.
+    other tests. `up()` is restricted to the `beat` service (see
+    `IsolatedComposeStack.up()`) so this isolated project never starts
+    its own `api` container, which would otherwise collide with the
+    primary stack's published host port. `beat` has no container
+    healthcheck (see docker-compose.smoke.yml), so `up()`'s return code
+    cannot be trusted as a pass/fail signal here — `wait_until_exited()`
+    and a log-content assertion are used instead. The broken
+    `DATABASE_URL` targets this isolated project's own `postgres`
+    service on a closed port (`:1`) rather than an unresolvable
+    hostname, so the connection is refused immediately instead of
+    depending on DNS-resolution timing.
     """
 
     def test_unreachable_database_prevents_beat_from_starting(
@@ -461,18 +477,17 @@ class TestBeatStartupBootstrapFailFast:
             "  beat:\n"
             "    environment:\n"
             "      DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@"
-            "unreachable-postgres-smoke-test:5432/sentinel\n"
+            "postgres:1/sentinel\n"
         )
 
-        result = isolated_compose_stack.up(override)
-        assert result.returncode != 0, (
-            f"expected non-zero exit when Beat's database is unreachable "
-            f"(stdout={result.stdout!r} stderr={result.stderr!r})"
-        )
+        isolated_compose_stack.up(override, "beat")
+        isolated_compose_stack.wait_until_exited("beat")
 
-        exec_result = isolated_compose_stack.exec_check("beat", "true")
-        assert exec_result.returncode != 0, (
-            "beat container unexpectedly became reachable despite the "
-            f"unreachable database (stdout={exec_result.stdout!r} "
-            f"stderr={exec_result.stderr!r})"
+        logs = isolated_compose_stack.logs("beat")
+        assert "beat_startup_failed" in logs, (
+            f"expected the fail-fast log marker in beat logs: {logs!r}"
+        )
+        assert "beat_startup_completed" not in logs, (
+            f"beat unexpectedly completed startup despite the "
+            f"unreachable database: {logs!r}"
         )
