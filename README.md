@@ -64,7 +64,7 @@ graph TB
     end
 
     subgraph Infrastructure
-        PG[(PostgreSQL 16)]
+        PG[(PostgreSQL 18)]
         Redis[(Redis 7)]
     end
 
@@ -119,7 +119,7 @@ for detailed progress tracking.
 | Language | Python 3.13 |
 | API Framework | FastAPI |
 | ORM | SQLAlchemy 2.0 (async, asyncpg) |
-| Database | PostgreSQL 16 |
+| Database | PostgreSQL 18 |
 | Task Queue | Celery with Redis broker |
 | Cache / Coordination | Redis 7 |
 | Migrations | Alembic |

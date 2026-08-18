@@ -93,7 +93,7 @@ def _database_url() -> str:
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.postgres import PostgresContainer
 
-    container = PostgresContainer("postgres:16")
+    container = PostgresContainer("postgres:18")
     container.start()
     atexit.register(container.stop)
     # Build asyncpg URL from the container's connection params
