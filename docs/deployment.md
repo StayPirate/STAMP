@@ -61,7 +61,7 @@ For architectural decisions and design constraints, see
 |-----------|----------------|---------|
 | Docker or Podman | Docker 24+ / Podman 4+ | Container runtime |
 | PostgreSQL | 15+ | Primary database |
-| Redis | 7+ | Session cache, Celery broker, rate limiting |
+| Redis | 8+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.11+ | Manages the Python 3.13 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
 | [shellcheck](https://www.shellcheck.net/) | match `ci.yml` (shell-lint) | Optional, development only — lints shell scripts via the pre-commit hook; CI enforces regardless. See `docs/conventions.md` (Shell Scripting) |
