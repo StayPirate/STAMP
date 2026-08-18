@@ -463,9 +463,11 @@ async def list_events(
 
     Q3: returns `IdentityAuditEventPage(items, total, page, per_page)`
     with `actor` and `target_user` eagerly loaded on every item, ordered
-    `created_at DESC, id DESC` (fixed — no client-controlled sort). An
-    out-of-range page returns an empty `items` list with the correct
-    `total`. No row lock or audit event is created.
+    `id DESC` (fixed — no client-controlled sort). `id` is a UUIDv7
+    value, so this is equivalent to `created_at DESC` with a
+    deterministic tiebreak, in a single column. An out-of-range page
+    returns an empty `items` list with the correct `total`. No row lock
+    or audit event is created.
 
     Q6: propagates any underlying database exception. Infallible
     otherwise.
@@ -503,7 +505,7 @@ async def list_events(
             selectinload(IdentityAuditEvent.actor),
             selectinload(IdentityAuditEvent.target_user),
         )
-        .order_by(IdentityAuditEvent.created_at.desc(), IdentityAuditEvent.id.desc())
+        .order_by(IdentityAuditEvent.id.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )
@@ -533,11 +535,13 @@ async def list_user_events(
 
     Q3: returns only events where `target_user_id == user_id` (events
     with `target_user_id IS NULL` are inherently excluded by this
-    condition), ordered `created_at DESC, id DESC` (fixed). An
-    out-of-range page returns an empty `items` list with the correct
-    `total`. The `actor` relationship is deliberately not loaded — this
-    endpoint renders `actor` as an anonymized string, never the
-    administrator's identity. No row lock or audit event is created.
+    condition), ordered `id DESC` (fixed). `id` is a UUIDv7 value, so
+    this is equivalent to `created_at DESC` with a deterministic
+    tiebreak, in a single column. An out-of-range page returns an empty
+    `items` list with the correct `total`. The `actor` relationship is
+    deliberately not loaded — this endpoint renders `actor` as an
+    anonymized string, never the administrator's identity. No row lock
+    or audit event is created.
 
     Q6: propagates any underlying database exception. Infallible
     otherwise.
@@ -561,9 +565,7 @@ async def list_user_events(
     total = (await session.execute(count_query)).scalar_one()
 
     data_query = (
-        query.order_by(
-            IdentityAuditEvent.created_at.desc(), IdentityAuditEvent.id.desc()
-        )
+        query.order_by(IdentityAuditEvent.id.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )

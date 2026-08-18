@@ -187,7 +187,7 @@ processing"). This is not a new API contract — it is the concrete
 mechanism implementing a promise that predates this specification. The
 middleware validates the client-supplied `X-Request-ID` per the rules
 defined in `docs/api-spec.md` (Request Tracing) before adopting it as
-`request_id`; a value that fails validation is discarded and a UUIDv4 is
+`request_id`; a value that fails validation is discarded and a UUIDv7 is
 generated instead.
 
 ### Scope boundary: per-execution-unit, no cross-enqueue propagation

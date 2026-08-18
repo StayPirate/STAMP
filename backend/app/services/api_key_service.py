@@ -279,15 +279,20 @@ def _sort_clauses(
     Sorting). `last_used_at` NULLs sort last in both directions
     (`api-key-management.md`, API); `created_at` is never NULL, so
     `nullslast()` is a no-op there.
+
+    `sort_by=created_at` is translated to `ApiKey.id` alone: `id` is a
+    UUIDv7 value, so it is monotonically time-ordered and reproduces
+    `created_at` ordering while querying the primary-key index directly
+    instead of the separate `created_at` column (`docs/conventions.md`,
+    SQLAlchemy Conventions). The API contract is unchanged — `created_at`
+    remains a valid `sort_by` value and the tiebreaker is redundant with
+    the sort column itself, so it is omitted.
     """
-    column = (
-        ApiKey.created_at
-        if sort_by is ApiKeySortField.CREATED_AT
-        else ApiKey.last_used_at
-    )
+    if sort_by is ApiKeySortField.CREATED_AT:
+        return [ApiKey.id.asc()] if sort_order is SortOrder.ASC else [ApiKey.id.desc()]
     if sort_order is SortOrder.ASC:
-        return [nullslast(column.asc()), ApiKey.id.asc()]
-    return [nullslast(column.desc()), ApiKey.id.desc()]
+        return [nullslast(ApiKey.last_used_at.asc()), ApiKey.id.asc()]
+    return [nullslast(ApiKey.last_used_at.desc()), ApiKey.id.desc()]
 
 
 async def _resolve_owner_id(session: AsyncSession, owner: str) -> UUID | None:
@@ -776,11 +781,13 @@ async def list_user_keys_for_cli(
     supplied, is the shared UTC snapshot; otherwise this call captures
     its own `datetime.now(UTC)`.
 
-    Q3: resolves the user and returns all their keys ordered by
-    `created_at DESC, id DESC`. This operator-only query is
-    intentionally unpaginated. The result's `evaluated_at` is this
-    call's single status snapshot — the CLI must not capture a
-    different time per row. No row lock or audit event is created.
+    Q3: resolves the user and returns all their keys ordered by `id
+    DESC`. `id` is a UUIDv7 value, so this is equivalent to `created_at
+    DESC` with a deterministic tiebreak, in a single column. This
+    operator-only query is intentionally unpaginated. The result's
+    `evaluated_at` is this call's single status snapshot — the CLI must
+    not capture a different time per row. No row lock or audit event is
+    created.
 
     Q6: propagates `UserNotFoundError` when the username does not
     resolve, and any underlying database exception.
@@ -799,7 +806,7 @@ async def list_user_keys_for_cli(
         select(ApiKey)
         .where(ApiKey.user_id == user_id)
         .options(selectinload(ApiKey.revoking_user))
-        .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
+        .order_by(ApiKey.id.desc())
     )
     items = list((await session.execute(data_query)).scalars().all())
 

@@ -29,6 +29,7 @@ import pytest
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import Table
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql.schema import CallableColumnDefault, DefaultClause
 from sqlalchemy.types import DateTime
 
 import app.models  # noqa: F401 — import populates Base.metadata as a side effect
@@ -79,6 +80,53 @@ class TestPrimaryKeyType:
                         f"Table '{table.name}' primary key column "
                         f"'{column.name}' is not a UUID type "
                         f"(got {type(column.type).__name__})"
+                    )
+        assert not violations, "\n".join(violations)
+
+
+@pytest.mark.unit
+class TestUuidPrimaryKeyIsUuidV7:
+    """Every UUID primary key column uses UUIDv7, not UUIDv4, on both
+    sides of the generation contract.
+
+    See `docs/conventions.md` (SQLAlchemy Conventions): "Use UUIDv7
+    primary keys... Never use `uuid.uuid4` for primary keys." Applies
+    to the same tables covered by `TestPrimaryKeyType` (natural-key
+    tables in `_NON_UUID_PRIMARY_KEY_TABLES` are skipped — they have no
+    UUID column to check).
+    """
+
+    def test_every_uuid_primary_key_has_uuid7_default_and_server_default(
+        self,
+    ) -> None:
+        violations: list[str] = []
+        for table in _mapped_tables():
+            allowed_non_uuid = _NON_UUID_PRIMARY_KEY_TABLES.get(table.name, frozenset())
+            for column in table.primary_key.columns:
+                if column.name in allowed_non_uuid or not isinstance(column.type, UUID):
+                    continue
+
+                default = column.default
+                if (
+                    not isinstance(default, CallableColumnDefault)
+                    or getattr(default.arg, "__module__", None) != "uuid"
+                    or getattr(default.arg, "__qualname__", None) != "uuid7"
+                ):
+                    violations.append(
+                        f"Table '{table.name}' primary key column "
+                        f"'{column.name}' does not declare "
+                        "default=uuid.uuid7"
+                    )
+
+                server_default = column.server_default
+                if (
+                    not isinstance(server_default, DefaultClause)
+                    or str(server_default.arg) != "uuidv7()"
+                ):
+                    violations.append(
+                        f"Table '{table.name}' primary key column "
+                        f"'{column.name}' does not declare "
+                        'server_default=text("uuidv7()")'
                     )
         assert not violations, "\n".join(violations)
 

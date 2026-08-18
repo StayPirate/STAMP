@@ -1833,7 +1833,7 @@ class TestListUserKeysForCli:
         result = await list_user_keys_for_cli(db_session, "  CLITestUser  ")
         assert [item.id for item in result.items] == [key.id]
 
-    async def test_orders_by_created_at_desc_then_id_desc(
+    async def test_orders_newest_first_via_id_desc(
         self,
         db_session: AsyncSession,
         user_factory: Callable[..., Awaitable[User]],

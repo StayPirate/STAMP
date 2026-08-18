@@ -1695,10 +1695,11 @@ a value requires an Alembic migration.
 
 ## Notes
 
-- All tables use UUID primary keys (exceptions: `SystemSetting` uses a
-  VARCHAR(100) `key` as PK; `FetcherConfig` uses `fetcher_name`
-  VARCHAR(100) as PK; `TicketAccessGrant` uses a composite PK
-  `(ticket_id, user_id)`)
+- All tables use UUIDv7 primary keys — see `docs/conventions.md`
+  (SQLAlchemy Conventions) for the `default`/`server_default` pattern
+  (exceptions: `SystemSetting` uses a VARCHAR(100) `key` as PK;
+  `FetcherConfig` uses `fetcher_name` VARCHAR(100) as PK;
+  `TicketAccessGrant` uses a composite PK `(ticket_id, user_id)`)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `UserRole`, `ProductRepository`,

@@ -380,7 +380,14 @@ exemption removal there so it is not forgotten.
 
 - Use SQLAlchemy 2.0 style (mapped_column, declarative base)
 - All models inherit from a common `Base` class
-- Use UUID primary keys
+- **Use UUIDv7 primary keys**: every UUID primary key column declares
+  both `default=uuid.uuid7` (Python-side, used for pre-flush ID access)
+  and `server_default=text("uuidv7()")` (PostgreSQL-side safety net for
+  any INSERT that bypasses the ORM's Python-side default). Never use
+  `uuid.uuid4` for primary keys — UUIDv7 embeds a millisecond-precision
+  timestamp in its most-significant bits, which gives near-sequential
+  B-tree index insertion (no random page splits) and makes `ORDER BY id`
+  equivalent to chronological order. `uuidv7()` requires PostgreSQL 18+
 - Always include `created_at` and `updated_at` timestamps
 - Define relationships explicitly with `back_populates`
 - **Async-only**: Sentinel uses async-only database access everywhere —

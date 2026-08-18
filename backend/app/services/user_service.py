@@ -277,12 +277,21 @@ def _user_sort_clauses(
     both directions (`docs/features/identity/user-management.md`, List
     Users); the other three fields are never NULL, so `nullslast()` is a
     no-op there.
+
+    `sort_by=created_at` is translated to `User.id` alone: `id` is a
+    UUIDv7 value, so it is monotonically time-ordered and reproduces
+    `created_at` ordering while querying the primary-key index directly
+    instead of the separate `created_at` column (`docs/conventions.md`,
+    SQLAlchemy Conventions). The API contract is unchanged — `created_at`
+    remains a valid `sort_by` value and the tiebreaker is redundant with
+    the sort column itself, so it is omitted.
     """
+    if sort_by is UserSortField.CREATED_AT:
+        return [User.id.asc()] if sort_order is SortOrder.ASC else [User.id.desc()]
     column = {
         UserSortField.USERNAME: User.username,
         UserSortField.FULL_NAME: User.full_name,
         UserSortField.EMAIL: User.email,
-        UserSortField.CREATED_AT: User.created_at,
     }[sort_by]
     if sort_order is SortOrder.ASC:
         return [nullslast(column.asc()), User.id.asc()]
