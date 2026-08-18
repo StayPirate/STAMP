@@ -57,7 +57,7 @@ services:
   # this coexists with scripts/dev-env.sh (which owns 5432/6379 on the
   # host) without conflict.
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: sentinel
       POSTGRES_PASSWORD: sentinel
