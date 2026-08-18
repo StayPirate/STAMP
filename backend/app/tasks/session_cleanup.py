@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 import structlog
 
 from app.celery_app import celery_app
-from app.database import async_session_factory
+from app.database import async_session_factory, engine
 from app.services.session_service import cleanup_sessions
 
 logger = structlog.get_logger(__name__)
@@ -31,18 +31,27 @@ async def run_cleanup_sessions() -> int:
     `cleanup_sessions(db, now)` with one UTC snapshot, commits once on
     success, and rolls back once when an exception escapes (the
     exception then propagates to the Celery task wrapper).
+
+    This function is repeatedly invoked within the same long-lived
+    Celery worker child. `engine.dispose()` is awaited in a `finally`
+    block so no pooled connection outlives this invocation's
+    `asyncio.run()` event loop — see `docs/conventions.md` (Cross-loop
+    pooled connection lifecycle).
     """
-    now = datetime.now(UTC)
-    logger.info("session_cleanup_started")
-    async with async_session_factory() as session:
-        try:
-            deleted_count = await cleanup_sessions(session, now)
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
-    logger.info("session_cleanup_completed", deleted_count=deleted_count)
-    return deleted_count
+    try:
+        now = datetime.now(UTC)
+        logger.info("session_cleanup_started")
+        async with async_session_factory() as session:
+            try:
+                deleted_count = await cleanup_sessions(session, now)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+        logger.info("session_cleanup_completed", deleted_count=deleted_count)
+        return deleted_count
+    finally:
+        await engine.dispose()
 
 
 def _cleanup_sessions_sync() -> int:

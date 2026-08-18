@@ -16,7 +16,7 @@ import structlog
 
 from app.celery_app import celery_app
 from app.core.enums import FetcherRunTriggeredBy
-from app.database import async_session_factory
+from app.database import async_session_factory, engine
 from app.services.base_fetcher import FETCHER_REGISTRY
 from app.services.fetcher_execution import (
     acquire_fetcher_run,
@@ -124,35 +124,48 @@ async def run_fetcher_async(
     returns `None`; exceptions from argument validation, acquisition,
     or `BaseFetcher.run()` propagate uncaught (no retry — Celery
     result backend is disabled).
+
+    This function is repeatedly invoked within the same long-lived
+    Celery worker child. `engine.dispose()` is awaited in a `finally`
+    block so no pooled connection outlives this invocation's
+    `asyncio.run()` event loop — see `docs/conventions.md` (Cross-loop
+    pooled connection lifecycle). This is the single choke point
+    through which every fetcher's `execute()` (and any `fetch_single()`
+    call made from within it) runs, so disposal here automatically
+    protects all of them; individual fetchers do not dispose the engine
+    themselves.
     """
-    trigger = _validate_arguments(fetcher_name, triggered_by, user_id, run_id)
-    parsed_run_id = UUID(run_id) if run_id is not None else None
+    try:
+        trigger = _validate_arguments(fetcher_name, triggered_by, user_id, run_id)
+        parsed_run_id = UUID(run_id) if run_id is not None else None
 
-    if fetcher_name not in FETCHER_REGISTRY:
-        await _handle_unknown_fetcher(fetcher_name, parsed_run_id)
-        return
+        if fetcher_name not in FETCHER_REGISTRY:
+            await _handle_unknown_fetcher(fetcher_name, parsed_run_id)
+            return
 
-    now = datetime.now(UTC)
-    async with async_session_factory() as session:
-        try:
-            acquisition = await acquire_fetcher_run(
-                session,
-                fetcher_name=fetcher_name,
-                triggered_by=trigger,
-                run_id=parsed_run_id,
-                now=now,
-            )
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+        now = datetime.now(UTC)
+        async with async_session_factory() as session:
+            try:
+                acquisition = await acquire_fetcher_run(
+                    session,
+                    fetcher_name=fetcher_name,
+                    triggered_by=trigger,
+                    run_id=parsed_run_id,
+                    now=now,
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
-    if acquisition is None:
-        return
+        if acquisition is None:
+            return
 
-    fetcher_cls = FETCHER_REGISTRY[fetcher_name]
-    fetcher = fetcher_cls()
-    await fetcher.run(run_id=acquisition.run_id, config=acquisition.config)
+        fetcher_cls = FETCHER_REGISTRY[fetcher_name]
+        fetcher = fetcher_cls()
+        await fetcher.run(run_id=acquisition.run_id, config=acquisition.config)
+    finally:
+        await engine.dispose()
 
 
 def _run_fetcher_sync(

@@ -45,6 +45,19 @@ class _SessionContext:
         return False
 
 
+class _FakeEngine:
+    """Substitute for the module-level `engine` singleton.
+
+    `AsyncEngine.dispose` is a read-only attribute on the real engine
+    (cannot be monkeypatched directly on the instance), so tests rebind
+    `fetchers.engine` itself to this fake object instead — mirrors
+    `tests/test_tasks/test_worker_startup.py`.
+    """
+
+    def __init__(self, dispose: AsyncMock | None = None) -> None:
+        self.dispose = dispose or AsyncMock()
+
+
 class _StubFetcher:
     """Minimal `FETCHER_REGISTRY` entry stub.
 
@@ -359,6 +372,113 @@ class TestRunFetcherAsync:
 
         with pytest.raises(RuntimeError, match="execution failed"):
             await fetchers.run_fetcher_async("test_fetcher", "schedule")
+
+
+# ---------------------------------------------------------------------------
+# Engine disposal (cross-loop pooled connection lifecycle)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRunFetcherAsyncEngineDisposal:
+    """`run_fetcher_async` is repeatedly invoked within the same
+    long-lived Celery worker child — see `docs/conventions.md`
+    (Cross-loop pooled connection lifecycle). It MUST await
+    `engine.dispose()` exactly once per invocation, regardless of
+    outcome, so no pooled connection outlives this invocation's
+    `asyncio.run()` event loop."""
+
+    async def test_success_disposes_engine_after_fetcher_execution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        FETCHER_REGISTRY["test_fetcher"] = _StubFetcher  # type: ignore[assignment]
+        session = AsyncMock()
+        call_order: list[str] = []
+        session.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+        monkeypatch.setattr(
+            fetchers, "async_session_factory", lambda: _SessionContext(session)
+        )
+        acquire = AsyncMock(
+            return_value=FetcherAcquisition(run_id=uuid4(), config=_make_config())
+        )
+        monkeypatch.setattr(fetchers, "acquire_fetcher_run", acquire)
+        fake_engine = _FakeEngine(
+            dispose=AsyncMock(side_effect=lambda: call_order.append("dispose"))
+        )
+        monkeypatch.setattr(fetchers, "engine", fake_engine)
+
+        await fetchers.run_fetcher_async("test_fetcher", "schedule")
+
+        _StubFetcher.created[0].run.assert_awaited_once()
+        assert call_order == ["commit", "dispose"]
+        fake_engine.dispose.assert_awaited_once_with()
+
+    async def test_invalid_arguments_still_dispose_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(fetchers, "engine", fake_engine)
+
+        with pytest.raises(ValueError, match="Invalid triggered_by"):
+            await fetchers.run_fetcher_async("test_fetcher", "bogus")
+
+        fake_engine.dispose.assert_awaited_once_with()
+
+    async def test_unknown_fetcher_still_disposes_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(fetchers, "_handle_unknown_fetcher", AsyncMock())
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(fetchers, "engine", fake_engine)
+
+        await fetchers.run_fetcher_async("ghost_fetcher", "schedule")
+
+        fake_engine.dispose.assert_awaited_once_with()
+
+    async def test_acquisition_failure_still_disposes_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        FETCHER_REGISTRY["test_fetcher"] = _StubFetcher  # type: ignore[assignment]
+        session = AsyncMock()
+        monkeypatch.setattr(
+            fetchers, "async_session_factory", lambda: _SessionContext(session)
+        )
+        acquire = AsyncMock(side_effect=RuntimeError("db unreachable"))
+        monkeypatch.setattr(fetchers, "acquire_fetcher_run", acquire)
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(fetchers, "engine", fake_engine)
+
+        with pytest.raises(RuntimeError, match="db unreachable"):
+            await fetchers.run_fetcher_async("test_fetcher", "schedule")
+
+        fake_engine.dispose.assert_awaited_once_with()
+
+    async def test_fetcher_run_exception_still_disposes_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        FETCHER_REGISTRY["test_fetcher"] = _StubFetcher  # type: ignore[assignment]
+        session = AsyncMock()
+        monkeypatch.setattr(
+            fetchers, "async_session_factory", lambda: _SessionContext(session)
+        )
+        acquire = AsyncMock(
+            return_value=FetcherAcquisition(run_id=uuid4(), config=_make_config())
+        )
+        monkeypatch.setattr(fetchers, "acquire_fetcher_run", acquire)
+        original_init = _StubFetcher.__init__
+
+        def _failing_init(self: _StubFetcher) -> None:
+            original_init(self)
+            self.run = AsyncMock(side_effect=RuntimeError("execution failed"))
+
+        monkeypatch.setattr(_StubFetcher, "__init__", _failing_init)
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(fetchers, "engine", fake_engine)
+
+        with pytest.raises(RuntimeError, match="execution failed"):
+            await fetchers.run_fetcher_async("test_fetcher", "schedule")
+
+        fake_engine.dispose.assert_awaited_once_with()
 
 
 # ---------------------------------------------------------------------------

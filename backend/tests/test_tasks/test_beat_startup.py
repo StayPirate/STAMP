@@ -43,6 +43,19 @@ class _SessionContext:
         return False
 
 
+class _FakeEngine:
+    """Substitute for the module-level `engine` singleton.
+
+    `AsyncEngine.dispose` is a read-only attribute on the real engine
+    (cannot be monkeypatched directly on the instance), so tests rebind
+    `beat_startup.engine` itself to this fake object instead — mirrors
+    `tests/test_tasks/test_worker_startup.py`.
+    """
+
+    def __init__(self, dispose: AsyncMock | None = None) -> None:
+        self.dispose = dispose or AsyncMock()
+
+
 def _log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         record.getMessage()
@@ -91,7 +104,7 @@ class TestBeatStartupSignalRegistration:
 
 @pytest.mark.unit
 class TestBeatAsyncBootstrap:
-    async def test_success_bootstraps_then_commits(
+    async def test_success_bootstraps_commits_then_disposes_in_order(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
@@ -102,20 +115,29 @@ class TestBeatAsyncBootstrap:
             assert db is session
             call_order.append("bootstrap")
 
+        async def _dispose_spy() -> None:
+            call_order.append("dispose")
+
         monkeypatch.setattr(
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
         monkeypatch.setattr(beat_startup, "bootstrap_fetcher_configs", _bootstrap_spy)
+        monkeypatch.setattr(
+            beat_startup,
+            "engine",
+            _FakeEngine(dispose=AsyncMock(side_effect=_dispose_spy)),
+        )
 
         await beat_startup.beat_async_bootstrap()
 
-        assert call_order == ["bootstrap", "commit"]
+        assert call_order == ["bootstrap", "commit", "dispose"]
         session.rollback.assert_not_awaited()
 
-    async def test_bootstrap_failure_rolls_back_and_propagates(
+    async def test_bootstrap_failure_rolls_back_and_skips_disposal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
+        fake_engine = _FakeEngine()
         monkeypatch.setattr(
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
@@ -124,27 +146,32 @@ class TestBeatAsyncBootstrap:
             "bootstrap_fetcher_configs",
             AsyncMock(side_effect=RuntimeError("db down")),
         )
+        monkeypatch.setattr(beat_startup, "engine", fake_engine)
 
         with pytest.raises(RuntimeError, match="db down"):
             await beat_startup.beat_async_bootstrap()
 
         session.commit.assert_not_awaited()
         session.rollback.assert_awaited_once_with()
+        fake_engine.dispose.assert_not_awaited()
 
-    async def test_commit_failure_rolls_back_and_propagates(
+    async def test_commit_failure_rolls_back_and_skips_disposal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
         session.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
+        fake_engine = _FakeEngine()
         monkeypatch.setattr(
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
         monkeypatch.setattr(beat_startup, "bootstrap_fetcher_configs", AsyncMock())
+        monkeypatch.setattr(beat_startup, "engine", fake_engine)
 
         with pytest.raises(RuntimeError, match="commit failed"):
             await beat_startup.beat_async_bootstrap()
 
         session.rollback.assert_awaited_once_with()
+        fake_engine.dispose.assert_not_awaited()
 
 
 @pytest.mark.unit

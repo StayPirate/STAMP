@@ -480,7 +480,12 @@ synchronous wrapper calls `asyncio.run()` exactly once to execute one named
 async workflow. That workflow opens one async session, calls
 `cleanup_sessions(db, now)` with one UTC snapshot, commits once on success,
 and rolls back once when an exception escapes; failures propagate to Celery.
-The independently testable database operation never calls `asyncio.run()`.
+Because this task is repeatedly invoked within the same long-lived Celery
+worker child, the workflow awaits `engine.dispose()` after the session-scoped
+work completes — on both success and failure — before returning control to
+`asyncio.run()`, per `docs/conventions.md` (Cross-loop pooled connection
+lifecycle). The independently testable database operation never calls
+`asyncio.run()`.
 
 This is a maintenance task, not a `BaseFetcher` subclass (it does not
 fetch data from external sources). It is registered as a static
