@@ -93,6 +93,7 @@ def _database_url() -> str:
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.postgres import PostgresContainer
 
+    # renovate: depName=postgres
     container = PostgresContainer("postgres:18")
     container.start()
     atexit.register(container.stop)
@@ -136,6 +137,7 @@ def _redis_base_url() -> str:
     # Lazy import — testcontainers is only needed when no URL is provided
     from testcontainers.community.redis import RedisContainer
 
+    # renovate: depName=redis
     container = RedisContainer("redis:7")
     container.start()
     atexit.register(container.stop)

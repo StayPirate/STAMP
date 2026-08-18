@@ -7,6 +7,17 @@
   ],
   "labels": ["dependencies"],
   "prConcurrentLimit": 0,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Docker images referenced by testcontainers fixtures in backend/tests/conftest.py — not detected by any built-in manager since they are plain string arguments in Python code, not a Dockerfile/compose/workflow declaration",
+      "managerFilePatterns": ["backend/tests/conftest.py"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*depName=(?<depName>[a-z0-9._-]+)\\s+\\w+\\s*=\\s*\\w+Container\\(\"[a-z0-9._/-]+:(?<currentValue>[^\"]+)\"\\)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
       "description": "Group Python (backend) minor and patch updates into a single PR",
@@ -36,6 +47,12 @@
       "matchPackageNames": ["python"],
       "matchUpdateTypes": ["major", "minor"],
       "enabled": false
+    },
+    {
+      "description": "Docker image updates for testcontainers fixtures (backend/tests/conftest.py)",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["backend/tests/conftest.py"],
+      "commitMessagePrefix": "chore(deps):"
     },
     {
       "description": "Keep the uv version used by astral-sh/setup-uv (CI) and the uv binary copied into the Docker image (COPY --from) in sync — see backend/Dockerfile comment",
