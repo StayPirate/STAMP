@@ -349,14 +349,14 @@ client targets the same designated worker database.
 
 ### Provisioning
 
-Redis 7 is provisioned at session scope beneath the function-scoped
+Redis 8 is provisioned at session scope beneath the function-scoped
 fixture. The test harness selects one of two modes:
 
 1. **Configured test server**: when `TEST_REDIS_URL` is set (notably in
-   CI), the harness connects to that designated Redis 7 test server and
+   CI), the harness connects to that designated Redis 8 test server and
    database range.
 2. **Local development**: when `TEST_REDIS_URL` is absent, the harness
-   starts an ephemeral Redis 7 container with `testcontainers`. The
+   starts an ephemeral Redis 8 container with `testcontainers`. The
    container is shared for the test session and destroyed afterward.
 
 `TEST_REDIS_URL` is test-harness-only configuration, not Sentinel
@@ -392,7 +392,7 @@ unreachable server, an unsafe database allocation, or failed cleanup is
 a test failure rather than a skip.
 
 Scenarios whose behavior is server-global and cannot safely share a
-server use a Redis 7 container dedicated to that test. This includes
+server use a Redis 8 container dedicated to that test. This includes
 memory exhaustion or eviction, server restart or unavailability, and
 Pub/Sub scenarios where server lifecycle affects the result. Tests of a
 feature's `RedisError` handling do not stop a shared Redis service; they
@@ -857,7 +857,7 @@ cd backend && pytest -k "test_set_track_status"
 ```
 
 When `TEST_DATABASE_URL` or `TEST_REDIS_URL` is not set, the corresponding
-shared fixture automatically starts a PostgreSQL 18 or Redis 7 container
+shared fixture automatically starts a PostgreSQL 18 or Redis 8 container
 via testcontainers. Containers are reused for the test session. Redis
 tests require no application `REDIS_URL` or `CELERY_BROKER_URL`; leaving
 `TEST_REDIS_URL` unset is the normal local setup.
@@ -964,7 +964,7 @@ through the following required gates:
    real worker and Beat processes against the test infrastructure. It
    is a separate invocation from the coverage-measured suite.
 
-The test execution environment MUST provide PostgreSQL 18 and Redis 7
+The test execution environment MUST provide PostgreSQL 18 and Redis 8
 instances, exposed to the test harness via `TEST_DATABASE_URL` and
 `TEST_REDIS_URL` respectively. When the suite runs with parallel
 workers, the Redis instance MUST offer enough logical databases for one
