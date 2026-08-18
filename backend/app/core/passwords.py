@@ -133,7 +133,7 @@ def verify_password(password: str, password_hash: str) -> bool:
     """
     try:
         return bcrypt.checkpw(_prehash(password), password_hash.encode("ascii"))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         # Covers non-ASCII `password_hash` values too: `str.encode("ascii")`
         # raises `UnicodeEncodeError`, a `ValueError` subclass, for any
         # character outside the ASCII range.

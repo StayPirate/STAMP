@@ -63,7 +63,7 @@ For architectural decisions and design constraints, see
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
-| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.11+ | Manages the Python 3.13 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) | 0.11+ | Manages the Python 3.14 interpreter and all backend dependencies for local development (see "Quick Start" below). Development only |
 | [shellcheck](https://www.shellcheck.net/) | match `ci.yml` (shell-lint) | Optional, development only — lints shell scripts via the pre-commit hook; CI enforces regardless. See `docs/conventions.md` (Shell Scripting) |
 | [shfmt](https://github.com/mvdan/sh) | match `ci.yml` (shell-lint) | Optional, development only — formats shell scripts via the pre-commit hook. Match the CI version to avoid formatting drift. See `docs/conventions.md` (Shell Scripting) |
 | [actionlint](https://github.com/rhysd/actionlint) | match `ci.yml` (shell-lint) | Optional, development only — validates GitHub Actions workflows locally before pushing. See `docs/conventions.md` (Shell Scripting) |
@@ -137,7 +137,7 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 #### Quick Start
 
 ```bash
-# Install dependencies (downloads Python 3.13 and creates
+# Install dependencies (downloads Python 3.14 and creates
 # backend/.venv automatically if not already present)
 cd backend && uv sync
 
@@ -467,9 +467,9 @@ for the source-of-truth rules, the build-argument pass-through, and the
 CI drift check.
 
 **Base image pinning.** The `python:${PYTHON_VERSION}-slim` base image
-is pinned by digest (`python:3.13-slim@sha256:...`) in both Dockerfile
+is pinned by digest (`python:3.14-slim@sha256:...`) in both Dockerfile
 stages, in addition to the tag — the tag documents the intent (Python
-3.13, slim variant) while the digest guarantees immutability. Both
+3.14, slim variant) while the digest guarantees immutability. Both
 values are supplied through Dockerfile `ARG` values (`PYTHON_VERSION`,
 `PYTHON_BASE_DIGEST`); Renovate's `dockerfile` manager expands `ARG`
 references natively and proposes a PR refreshing `PYTHON_BASE_DIGEST`
@@ -1220,7 +1220,7 @@ on-demand checks between scheduled runs.
 
 **Why the OS layer needs its own visibility.** `pip-audit` (see
 Pipeline Chain above) gates Python dependencies on every merge, but the
-image is Debian-based (`python:3.13-slim`) and the OS package layer is
+image is Debian-based (`python:3.14-slim`) and the OS package layer is
 not covered by any dependency scanner. Renovate proposes PRs refreshing
 the `PYTHON_BASE_DIGEST` `ARG` (see Container Build Conventions, Base
 image pinning) when a new base image digest is published, but that is
@@ -1254,12 +1254,12 @@ never creates a duplicate issue for the same ongoing condition.
 the latest open Renovate PR that refreshes `PYTHON_BASE_DIGEST` in
 `backend/Dockerfile` (see Container Build Conventions, Base image
 pinning) — Renovate proposes this PR automatically whenever the
-upstream digest for the current `python:3.13-slim` tag changes, which
+upstream digest for the current `python:3.14-slim` tag changes, which
 in practice is often the same digest that resolves the finding. If no
 pending Renovate PR resolves the specific finding (e.g. the upstream
 fix has not yet propagated to a new digest), a maintainer resolves the
 current digest manually (e.g. `docker buildx imagetools inspect
-python:3.13-slim` or an equivalent registry query) and opens a PR
+python:3.14-slim` or an equivalent registry query) and opens a PR
 directly.
 
 ### Python Forward-Compatibility Check

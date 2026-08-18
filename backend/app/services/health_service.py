@@ -129,7 +129,7 @@ async def _check_postgresql(
         return HealthCheckStatus.OK
     except TimeoutError:
         return HealthCheckStatus.TIMEOUT
-    except (SQLAlchemyError, OSError):
+    except SQLAlchemyError, OSError:
         return HealthCheckStatus.UNREACHABLE
     except Exception:
         logger.error(

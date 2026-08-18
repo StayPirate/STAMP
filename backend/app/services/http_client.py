@@ -159,7 +159,7 @@ def _parse_retry_after(value: str) -> float | None:
 
     try:
         parsed = email.utils.parsedate_to_datetime(stripped)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
