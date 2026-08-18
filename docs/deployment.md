@@ -363,13 +363,13 @@ downloaded directly or requested through an action's `version:` input.
 Their versions MUST be pinned explicitly and MUST NOT be left to resolve
 to the latest available release.
 
-Renovate (`renovate.json`, `github-actions` manager) tracks the
+Renovate (`renovate.jsonc`, `github-actions` manager) tracks the
 SHA-pinned actions and opens a PR bumping both the SHA and the
 trailing version comment when a new release is published. It also
 tracks `with:` version inputs of commonly used community-maintained
 actions (e.g. `astral-sh/setup-uv`'s `version:` input) — no additional
 configuration is required for either pinning style. Renovate runs as
-the hosted Mend Renovate GitHub App reading `renovate.json` from the
+the hosted Mend Renovate GitHub App reading `renovate.jsonc` from the
 repository root — there is no corresponding `.github/workflows/*.yml`
 file, since the app itself (not a workflow trigger) schedules and
 executes the scan.
@@ -379,12 +379,27 @@ PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
 `docs/features/platform/testing-strategy.md`, Database Provisioning)
 are plain string arguments in Python code, not a
 Dockerfile/compose/workflow declaration — none of Renovate's built-in
-managers detect them. A `customManagers` regex entry in `renovate.json`
+managers detect them. A `customManagers` regex entry in `renovate.jsonc`
 tracks these references instead, matching a
 `# renovate: depName=<name>` hint comment placed directly above each
 `*Container(...)` call. Adding a new testcontainers-provisioned service
 follows the same pattern: add the hint comment immediately above the
 container instantiation.
+
+This repository extends the `config:recommended` preset, which adds
+`**/vendor/**`, `**/examples/**`, `**/__tests__/**`, `**/test/**`,
+`**/tests/**`, and `**/__fixtures__/**` to Renovate's default
+`ignorePaths` (`**/node_modules/**`, `**/bower_components/**`). The
+inherited `**/tests/**` pattern silently excludes
+`backend/tests/conftest.py` from every manager — including the custom
+one above — before `managerFilePatterns` is ever evaluated:
+`ignorePaths` is a root-level-only setting in Renovate and cannot be
+scoped per manager or per `packageRules` entry. `renovate.jsonc`
+therefore redefines `ignorePaths` explicitly, keeping every default
+pattern except `**/tests/**`. Do not reintroduce that pattern — doing
+so breaks testcontainers image tracking again with no error or warning
+from Renovate, since an ignored file is silently absent from dependency
+extraction rather than rejected.
 
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
@@ -459,7 +474,7 @@ values are supplied through Dockerfile `ARG` values (`PYTHON_VERSION`,
 `PYTHON_BASE_DIGEST`); Renovate's `dockerfile` manager expands `ARG`
 references natively and proposes a PR refreshing `PYTHON_BASE_DIGEST`
 whenever the upstream digest for the current tag changes. A dedicated
-`packageRule` in `renovate.json` matches the `python` package name
+`packageRule` in `renovate.jsonc` matches the `python` package name
 across every manager that tracks the interpreter version (`dockerfile`
 for this base image, `pyenv` for `backend/.python-version`, `pep621`
 for `backend/pyproject.toml` `requires-python`) and disables major/minor
