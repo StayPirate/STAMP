@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Python version — must match backend/.python-version (CI drift-check enforces this)
-ARG PYTHON_VERSION=3.13
+ARG PYTHON_VERSION=3.14
 
 # Digest pin for python:${PYTHON_VERSION}-slim (see docs/deployment.md,
 # Container Build Conventions → Base image pinning). Renovate's
@@ -11,7 +11,7 @@ ARG PYTHON_VERSION=3.13
 # only — see docs/conventions.md, Runtime Version (Version Bump
 # Checklist) — and is excluded from Renovate's automated updates by a
 # packageRule in renovate.jsonc.
-ARG PYTHON_BASE_DIGEST=sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+ARG PYTHON_BASE_DIGEST=sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4
 
 # Stage 1: Install dependencies and build the project (non-editable)
 FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder

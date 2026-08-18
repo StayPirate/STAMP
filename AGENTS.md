@@ -78,7 +78,7 @@ sentinel/
 
 ## Commands
 
-- **Install/sync dependencies**: `cd backend && uv sync` (installs Python 3.13 and creates `.venv` automatically if needed)
+- **Install/sync dependencies**: `cd backend && uv sync` (installs Python 3.14 and creates `.venv` automatically if needed)
 - **Backend tests**: `cd backend && uv run pytest`
 - **Backend lint**: `cd backend && uv run ruff check . && uv run ruff format --check .`
 - **DB migrations**: `cd backend && uv run alembic upgrade head`

@@ -878,7 +878,7 @@ maintenance status from python.org, and (2) declared support from all
 critical dependencies (Celery in particular historically lags new
 Python releases by 6-12 months).
 
-**Current target**: Python **3.13** (bugfix maintenance, EOL 2029-10).
+**Current target**: Python **3.14** (bugfix maintenance, EOL 2030-10).
 
 #### Source of Truth
 
@@ -909,7 +909,7 @@ All Dockerfiles in the repository MUST use a global `ARG` for the
 Python version:
 
 ```dockerfile
-ARG PYTHON_VERSION=3.13
+ARG PYTHON_VERSION=3.14
 FROM python:${PYTHON_VERSION}-slim AS builder
 ...
 FROM python:${PYTHON_VERSION}-slim AS runtime

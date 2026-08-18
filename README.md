@@ -9,7 +9,7 @@
 
 <p align="center">
 <a href="https://github.com/StayPirate/sentinel/releases"><img src="https://img.shields.io/github/v/release/StayPirate/sentinel" alt="Release"></a>
-<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python"></a>
+<a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.14-blue?logo=python&logoColor=white" alt="Python"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
 </p>
 
@@ -116,7 +116,7 @@ for detailed progress tracking.
 
 | Component | Technology |
 |-----------|------------|
-| Language | Python 3.13 |
+| Language | Python 3.14 |
 | API Framework | FastAPI |
 | ORM | SQLAlchemy 2.0 (async, asyncpg) |
 | Database | PostgreSQL 18 |

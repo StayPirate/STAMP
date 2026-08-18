@@ -83,7 +83,7 @@ def _session_service_event_fields(
             continue
         try:
             parsed = ast.literal_eval(record.getMessage())
-        except (ValueError, SyntaxError):
+        except ValueError, SyntaxError:
             continue
         if isinstance(parsed, dict) and parsed.get("event") == event:
             matches.append(parsed)

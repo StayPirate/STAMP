@@ -37,7 +37,7 @@ Please report unacceptable behavior to security@suse.com.
 
 ### Prerequisites
 
-- **Python 3.13** (managed via [uv](https://docs.astral.sh/uv/))
+- **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
 - **Podman** or **Docker** (for local PostgreSQL and Redis)
 
 ### Quick Start

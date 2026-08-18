@@ -4,7 +4,7 @@ name: Image Vulnerability Scan
 # vulnerabilities. See docs/deployment.md (Image Vulnerability
 # Monitoring) for the full rationale: pip-audit already gates Python
 # dependencies on every merge, but the Debian base layer
-# (python:3.13-slim) is otherwise unmonitored for known vulnerabilities.
+# (python:3.14-slim) is otherwise unmonitored for known vulnerabilities.
 # Renovate proposes PRs bumping the ARG-templated base image digest in
 # backend/Dockerfile (its dockerfile manager resolves ARG values
 # natively), but that only refreshes the pinned layer going forward —
@@ -123,7 +123,7 @@ jobs:
           {
             echo "Automated weekly scan of \`${{ steps.image.outputs.ref }}\` found fixable HIGH/CRITICAL OS-level vulnerabilities."
             echo ""
-            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Renovate periodically proposes a PR bumping \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current \`python:3.13-slim\` digest (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning); merging the latest such PR is the expected remediation. If no pending Renovate PR resolves this finding, a maintainer can resolve the current digest manually and open one directly."
+            echo "This scan is non-blocking by design (see \`docs/deployment.md\`, Image Vulnerability Monitoring). Renovate periodically proposes a PR bumping \`PYTHON_BASE_DIGEST\` in \`backend/Dockerfile\` to the current \`python:3.14-slim\` digest (see \`docs/deployment.md\`, Container Build Conventions → Base image pinning); merging the latest such PR is the expected remediation. If no pending Renovate PR resolves this finding, a maintainer can resolve the current digest manually and open one directly."
             echo ""
             echo "<details><summary>Fixable HIGH/CRITICAL findings</summary>"
             echo ""
