@@ -138,7 +138,7 @@ def _redis_base_url() -> str:
     from testcontainers.community.redis import RedisContainer
 
     # renovate: depName=redis
-    container = RedisContainer("redis:7")
+    container = RedisContainer("redis:8")
     container.start()
     atexit.register(container.stop)
     host = container.get_container_host_ip()
