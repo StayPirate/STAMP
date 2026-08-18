@@ -374,6 +374,18 @@ repository root — there is no corresponding `.github/workflows/*.yml`
 file, since the app itself (not a workflow trigger) schedules and
 executes the scan.
 
+**Testcontainers image references.** The `testcontainers`-provisioned
+PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
+`docs/features/platform/testing-strategy.md`, Database Provisioning)
+are plain string arguments in Python code, not a
+Dockerfile/compose/workflow declaration — none of Renovate's built-in
+managers detect them. A `customManagers` regex entry in `renovate.json`
+tracks these references instead, matching a
+`# renovate: depName=<name>` hint comment placed directly above each
+`*Container(...)` call. Adding a new testcontainers-provisioned service
+follows the same pattern: add the hint comment immediately above the
+container instantiation.
+
 **No secrets in workflow files.** Credentials MUST be supplied through
 GitHub Secrets and referenced via `${{ secrets.* }}` — never written as
 literals. Literal values are permitted only for obviously non-production
