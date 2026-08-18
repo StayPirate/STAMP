@@ -27,7 +27,7 @@ import redbeat  # noqa: F401
 import structlog
 from celery.signals import beat_init
 
-from app.database import async_session_factory
+from app.database import async_session_factory, engine
 from app.services.fetcher_bootstrap import bootstrap_fetcher_configs
 
 logger = structlog.get_logger(__name__)
@@ -41,6 +41,15 @@ async def beat_async_bootstrap() -> None:
     either step propagate to the caller uncaught. This is the first
     operation in Beat's fetcher startup sequence; RedBeat schedule
     reconciliation is added after this step by a later work item.
+
+    Disposes the bootstrap connections (`await engine.dispose()`) after
+    a successful commit, before returning control to `asyncio.run()` —
+    see `docs/conventions.md` (Cross-loop pooled connection lifecycle).
+    Beat's own tick loop is Celery's native synchronous scheduler and
+    does not itself open another event loop today, but the startup loop
+    must not leave a pooled connection bound to itself once it closes.
+    Disposal is skipped when bootstrap or commit fails, matching the
+    worker startup handler's ordering.
     """
     async with async_session_factory() as session:
         try:
@@ -49,6 +58,7 @@ async def beat_async_bootstrap() -> None:
         except Exception:
             await session.rollback()
             raise
+    await engine.dispose()
 
 
 def _beat_startup_handler(**_kwargs: Any) -> None:

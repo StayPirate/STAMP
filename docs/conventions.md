@@ -426,6 +426,55 @@ exemption removal there so it is not forgotten.
   Tests) for the corresponding test convention (why sync entry-point
   tests must be `def`, not `async def`).
 
+- **Cross-loop pooled connection lifecycle**: the production database
+  engine (`app/database.py`) is a process-lifetime singleton using
+  SQLAlchemy's default pooled connection implementation. A pooled
+  `asyncpg` connection is bound to the event loop that created it —
+  reusing it after that loop has closed raises `RuntimeError`
+  (`... attached to a different loop`) or `InterfaceError`. This is an
+  upstream SQLAlchemy constraint, not a Sentinel-specific one.
+
+  A single `asyncio.run()` call per invocation (per the bridging pattern
+  above) is safe on its own — the risk appears when the same **process**
+  repeats the bridging pattern across multiple invocations over its
+  lifetime (the defining trait of a Celery prefork worker child, which
+  executes an unbounded sequence of task invocations). Each invocation's
+  `asyncio.run()` creates and destroys its own event loop; a pooled
+  connection checked back in by one invocation remains bound to that
+  invocation's now-closed loop and can be handed to the next invocation's
+  new loop.
+
+  Every async workflow function that is repeatedly invoked this way MUST
+  `await engine.dispose()` once its own work is complete — success or
+  failure — before returning control to its `asyncio.run()` caller. This
+  drains the pool of connections tied to the closing loop so the next
+  invocation cannot check one out. The obligation belongs to the
+  outermost workflow function that owns the invocation's event loop —
+  generic Celery task wrappers are the canonical example. `run_fetcher`
+  is documented in `docs/features/platform/fetcher-infrastructure.md`
+  (Celery Integration); `cleanup_sessions` is documented in
+  `docs/features/identity/authentication.md` (Session cleanup) — never
+  to a nested service function, or a fetcher method (`execute()`,
+  `fetch_single()`, `catch_up()`) that may be invoked from more than one
+  such wrapper and does not itself own the loop.
+
+  A synchronous entry point is exempt from this obligation when its
+  process exits after one `asyncio.run()` call (CLI commands, Alembic
+  migrations) — the pool is discarded with the process — or when it
+  provably does not share the process-lifetime pooled engine (e.g., it
+  constructs and disposes its own `NullPool`-backed engine entirely
+  within one event loop, as the test harness does — see
+  `docs/features/platform/testing-strategy.md`, Sync Entry-Point Tests).
+  A worker or Beat startup handler that disposes the shared engine after
+  one-time bootstrap work (see Worker Startup Handler in
+  `fetcher-infrastructure.md`) satisfies this same invariant for a
+  different reason: forked prefork children must not inherit live parent
+  connections, and Beat's own tick loop must not reuse a connection left
+  over from its bootstrap loop.
+
+  See `docs/features/platform/testing-strategy.md` (Cross-Loop Engine
+  Lifecycle) for the required regression and structural test coverage.
+
 ### Enum Storage Strategy
 
 Sentinel does not use PostgreSQL ENUM types (`CREATE TYPE ... AS ENUM`).

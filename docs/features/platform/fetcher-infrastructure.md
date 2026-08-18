@@ -570,22 +570,29 @@ def run_catch_up(self, fetcher_name: str, ticket_id: str) -> None:
         return  # task completes successfully, no error, no retry
     fetcher = fetcher_cls()
     async def _run():
-        async with get_async_session() as session:
-            try:
-                await fetcher.catch_up(ticket_id, session)
-            except (NotImplementedError, CVENotInSource, ValueError):
-                return  # Contract violations and defensive catches — non-retryable, silent return
-            except Exception as e:
-                if is_retryable_condition(e):
-                    raise  # propagate to outer scope for self.retry()
-                raise  # non-retryable — task fails permanently
-            finally:
-                if fetcher._http_client is not None:
-                    try:
-                        await fetcher._http_client.aclose()
-                    except Exception:
-                        logger.warning("Failed to close HTTP client for %s", fetcher_name)
-                    fetcher._http_client = None
+        try:
+            async with get_async_session() as session:
+                try:
+                    await fetcher.catch_up(ticket_id, session)
+                except (NotImplementedError, CVENotInSource, ValueError):
+                    return  # Contract violations and defensive catches — non-retryable, silent return
+                except Exception as e:
+                    if is_retryable_condition(e):
+                        raise  # propagate to outer scope for self.retry()
+                    raise  # non-retryable — task fails permanently
+                finally:
+                    if fetcher._http_client is not None:
+                        try:
+                            await fetcher._http_client.aclose()
+                        except Exception:
+                            logger.warning("Failed to close HTTP client for %s", fetcher_name)
+                        fetcher._http_client = None
+        finally:
+            # Repeated invocations of this task share the same long-lived
+            # worker child (docs/conventions.md, Cross-loop pooled
+            # connection lifecycle) — dispose before this invocation's
+            # asyncio.run() closes its event loop.
+            await engine.dispose()
     try:
         asyncio.run(_run())
     except (NotImplementedError, CVENotInSource, ValueError):
@@ -607,6 +614,16 @@ wrapper that invokes a sub-operation owns the client lifecycle. If
 accessed `self.http_client` during execution, the client is closed here.
 If no HTTP request was made (`_http_client is None`), the teardown is a
 no-op.
+
+**Engine disposal**: `run_catch_up` is repeatedly invoked within the
+same long-lived Celery worker child. Its outer `finally` awaits
+`engine.dispose()` after the session-scoped work completes — on every
+outcome, including a non-retryable return — per `docs/conventions.md`
+(Cross-loop pooled connection lifecycle). This is the single choke
+point through which every participating fetcher's `catch_up()` (and
+any `fetch_single()` it delegates to) runs, so disposal here
+automatically protects all of them; individual fetchers MUST NOT
+dispose the engine themselves.
 
 If `fetcher_name` is not found in the registry (e.g., a deployment
 removed the fetcher between enqueue and execution), the task logs an
@@ -1764,6 +1781,15 @@ raise `ValueError`, no retry).
 `asyncio.run()` call wrapping the complete async acquisition-and-
 execution workflow (per `docs/conventions.md`, Sync-to-async
 bridging). The async function is the independently testable unit.
+Because `run_fetcher` is repeatedly invoked within the same long-lived
+Celery worker child, its async workflow function MUST `await
+engine.dispose()` after the acquisition-and-execution workflow
+completes — on both success and failure — per `docs/conventions.md`
+(Cross-loop pooled connection lifecycle). This is the single choke
+point through which every current and future fetcher's `execute()`
+(and any `fetch_single()` call made from within it) runs, so disposal
+here automatically protects all of them; individual fetchers MUST NOT
+dispose the engine themselves.
 
 **No top-level retry**: `run_fetcher` does not configure
 `max_retries` or call `self.retry()`. Failures result in a permanent
@@ -1961,7 +1987,14 @@ signal handler** registered in the Celery app module.
   an extracted `async def` function, per the sync-to-async bridging
   convention (`docs/conventions.md`, SQLAlchemy Conventions). The
   extracted async function is the independently testable unit — tests
-  `await` it directly without going through `asyncio.run()`.
+  `await` it directly without going through `asyncio.run()`. Following
+  the same pattern as the worker startup handler (see Worker Startup
+  Handler below), the function awaits `engine.dispose()` after a
+  successful bootstrap commit, before returning control to
+  `asyncio.run()` — per `docs/conventions.md` (Cross-loop pooled
+  connection lifecycle). Disposal is skipped when bootstrap or commit
+  fails, since the handler's `sys.exit(1)` (see Error handling below)
+  terminates the process regardless.
 - **Error handling**: the handler wraps the entire bootstrap +
   reconciliation sequence in a `try/except` with `sys.exit(1)` on
   failure (explicit fail-fast).
@@ -1998,6 +2031,14 @@ signal handler** registered in the Celery app module.
          - Idempotent, concurrency-safe
 
      4b. reconcile_beat_schedule() — Steps 1-5 below
+
+     4c. await engine.dispose() — releases the bootstrap connections
+         before Beat's own tick loop begins (docs/conventions.md,
+         Cross-loop pooled connection lifecycle). Beat's tick loop is
+         Celery's native synchronous scheduler and does not itself
+         open another asyncio event loop today, but the startup loop
+         must not leave a pooled connection bound to itself once it
+         closes.
 
 5. Beat tick loop begins
    → Normal operation: fires tasks per their schedules

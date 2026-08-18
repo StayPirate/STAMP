@@ -722,6 +722,7 @@ shape.
 | CPE canonical data | `backend/tests/test_services/test_cpe_mapping.py` | The committed `app/data/cpe-package-mapping.json` is valid UTF-8 JSON with no textual or semantic duplicate keys; every key round-trips through the canonical grammar and is sorted; every package list satisfies the mapping contract. The same focused module tests the parser, package-relative loader, cache, resolvers, and resource packaging defined in `docs/features/packages/cpe-package-mapping.md`. The normal blocking pytest suite is the CI owner; no CPE-specific workflow or generic worker-startup check is required |
 | API route conventions | `backend/tests/test_api_conventions.py` | Over every registered FastAPI route (excluding the documented `/health` and `/ready` exemption, `docs/features/platform/health-endpoints.md`): path starts with `/api/v1/` (`docs/api-spec.md`, Base URL); the HTTP method is one of `GET`/`POST`/`PATCH`/`DELETE` — the only methods the documented mutation patterns (`docs/api-spec.md`, Mutation Patterns) and the application's own CORS configuration allow; OpenAPI documentation (`summary` or `description`) is present (`docs/conventions.md`, FastAPI Conventions); a path referencing audit trails ends with the `/audit-log` suffix (`docs/api-spec.md`, Audit Trail Endpoint Naming); a `response_model` is declared, unless the route returns `204 No Content` (`docs/conventions.md`, FastAPI Conventions); the response schema has a top-level `data` property, i.e. the standard envelope, checked via the generated OpenAPI schema (`docs/api-spec.md`, Response Format) — the `/health`/`/ready` exemption also applies to this last check, since those endpoints are outside the envelope contract by design. Also walks every route's *effective* dependency graph (including dependencies nested at any depth, e.g. under authentication) and asserts every occurrence of the `get_db` dependency declares `scope="function"` with caching enabled (`docs/conventions.md`, API Transaction Dependency Scope) — this is the mechanism that guarantees a commit (or its failure) completes before the response is transmitted to the client. This test passes vacuously when no routes are registered yet — it starts enforcing automatically as soon as the first endpoint is added, with no further action required |
 | API session ownership | `backend/tests/test_architecture/test_api_session_ownership.py` | Over every module in `app/api/` (excluding `app/api/health.py`, whose readiness probe never uses the `get_db` yield-dependency at all — it opens its own read-only, no-commit session directly for its `SELECT 1` check, so the `scope="function"` rule does not apply to it): no direct reference to `async_session_factory` and no direct `.commit()`/`.rollback()` call — both would bypass the `DatabaseSession` dependency and its `scope="function"` ordering guarantee (`docs/conventions.md`, API Transaction Dependency Scope) invisibly to the route-dependency-graph check above |
+| `asyncio.run()` boundary inventory | `backend/tests/test_architecture/test_asyncio_run_inventory.py` | Every direct `asyncio.run(...)` call site in `backend/app/tasks/` (by module and enclosing function) is enumerated via AST and compared against a reviewed inventory maintained in the test module. A new, unclassified call site fails the test — not because direct `asyncio.run()` is forbidden, but because a long-lived Celery process repeating it needs an explicit lifecycle classification (disposes the shared pooled engine before returning; a documented one-shot or independently safe lifecycle) per `docs/conventions.md` (Cross-loop pooled connection lifecycle). Adding the new call site to the inventory with its classification is the required action, not a workaround |
 
 ### Excluded Invariant
 
@@ -832,6 +833,44 @@ invocation through the test harness; no client object is shared across event
 loops. Setup and cleanup clients are created, used, and closed on the loop that
 owns them. Cleanup uses `FLUSHDB` only on the designated worker database and
 never `FLUSHALL`.
+
+#### Cross-Loop Engine Lifecycle
+
+Every generic task wrapper that is *repeatedly invoked within the same
+long-lived process* and is therefore subject to the Cross-loop pooled
+connection lifecycle rule (`docs/conventions.md`) — currently
+`run_fetcher` and `cleanup_sessions` — MUST have a regression test that
+proves it does not leak a pooled connection across its own event-loop
+boundary. The test invokes the real synchronous wrapper (or its
+extracted async workflow via two separate `asyncio.run()` calls) twice
+in the same test process against the shared pooled production-style
+engine, with only the innermost domain operation replaced by a trivial
+query (e.g. `SELECT 1`) or a minimal no-op domain object (e.g. a
+test-only `BaseFetcher` subclass). Both invocations MUST succeed;
+before the fix, the second invocation reproduces the
+`RuntimeError`/`InterfaceError` cross-loop failure. Additional required
+cases per wrapper:
+
+- `engine.dispose()` is awaited exactly once per invocation, after the
+  wrapped work completes, on both the success and the exception path
+- the wrapper's return value (if any) and its propagated exception (if
+  any) are unchanged by the addition of disposal
+
+This is a Tier 2 (integration) test — it exercises a real pooled engine
+against the shared test PostgreSQL server. It does not require a Celery
+broker or worker process; the cross-loop failure is a SQLAlchemy/asyncio
+event-loop invariant, reproducible directly.
+
+**Beat's bootstrap handler is exempt from the two-invocation
+reproduction above.** It is a one-shot startup handler: it runs at most
+once per process (Beat startup), and any failure exits the process
+(`sys.exit(1)`) rather than allowing a second invocation to reuse the
+same engine — the "second invocation in the same process" scenario that
+reproduces the cross-loop bug for `run_fetcher`/`cleanup_sessions` never
+occurs for this handler in production. Its disposal-ordering contract
+(dispose only after a successful commit, never on failure) is instead
+verified with unit-level mock tests asserting call order — see
+`backend/tests/test_tasks/test_beat_startup.py`.
 
 ---
 

@@ -21,6 +21,19 @@ class _SessionContext:
         return False
 
 
+class _FakeEngine:
+    """Substitute for the module-level `engine` singleton.
+
+    `AsyncEngine.dispose` is a read-only attribute on the real engine
+    (cannot be monkeypatched directly on the instance), so tests rebind
+    `session_cleanup.engine` itself to this fake object instead —
+    mirrors `tests/test_tasks/test_worker_startup.py`.
+    """
+
+    def __init__(self, dispose: AsyncMock | None = None) -> None:
+        self.dispose = dispose or AsyncMock()
+
+
 def _task_log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     """Rendered messages of this module's own log records, in emission
     order. Scoped by logger name so an unrelated record sharing a
@@ -103,6 +116,55 @@ class TestRunCleanupSessions:
         assert not any("session_cleanup_completed" in m for m in messages), (
             "session_cleanup_completed must not be logged when the workflow fails"
         )
+
+
+@pytest.mark.unit
+class TestRunCleanupSessionsEngineDisposal:
+    """`run_cleanup_sessions` is repeatedly invoked within the same
+    long-lived Celery worker child — see `docs/conventions.md`
+    (Cross-loop pooled connection lifecycle). It MUST await
+    `engine.dispose()` exactly once per invocation, regardless of
+    outcome, so no pooled connection outlives this invocation's
+    `asyncio.run()` event loop."""
+
+    async def test_success_disposes_engine_after_commit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        call_order: list[str] = []
+        session.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+        cleanup = AsyncMock(return_value=3)
+        monkeypatch.setattr(
+            session_cleanup, "async_session_factory", lambda: _SessionContext(session)
+        )
+        monkeypatch.setattr(session_cleanup, "cleanup_sessions", cleanup)
+        fake_engine = _FakeEngine(
+            dispose=AsyncMock(side_effect=lambda: call_order.append("dispose"))
+        )
+        monkeypatch.setattr(session_cleanup, "engine", fake_engine)
+
+        result = await session_cleanup.run_cleanup_sessions()
+
+        assert result == 3
+        assert call_order == ["commit", "dispose"]
+        fake_engine.dispose.assert_awaited_once_with()
+
+    async def test_failure_still_disposes_engine(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        cleanup = AsyncMock(side_effect=RuntimeError("database failure"))
+        monkeypatch.setattr(
+            session_cleanup, "async_session_factory", lambda: _SessionContext(session)
+        )
+        monkeypatch.setattr(session_cleanup, "cleanup_sessions", cleanup)
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(session_cleanup, "engine", fake_engine)
+
+        with pytest.raises(RuntimeError, match="database failure"):
+            await session_cleanup.run_cleanup_sessions()
+
+        fake_engine.dispose.assert_awaited_once_with()
 
 
 @pytest.mark.unit
