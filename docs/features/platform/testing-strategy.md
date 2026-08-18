@@ -144,7 +144,7 @@ Two provisioning modes, selected automatically:
 
 2. **Local development**: when `TEST_DATABASE_URL` is not set, the
    `conftest.py` fixture uses `testcontainers` to start an ephemeral
-   PostgreSQL 16 container automatically. The container is created once
+   PostgreSQL 18 container automatically. The container is created once
    per test session and destroyed at the end. Zero manual setup required
    — the developer just runs `pytest`.
 
@@ -857,7 +857,7 @@ cd backend && pytest -k "test_set_track_status"
 ```
 
 When `TEST_DATABASE_URL` or `TEST_REDIS_URL` is not set, the corresponding
-shared fixture automatically starts a PostgreSQL 16 or Redis 7 container
+shared fixture automatically starts a PostgreSQL 18 or Redis 7 container
 via testcontainers. Containers are reused for the test session. Redis
 tests require no application `REDIS_URL` or `CELERY_BROKER_URL`; leaving
 `TEST_REDIS_URL` unset is the normal local setup.
@@ -964,7 +964,7 @@ through the following required gates:
    real worker and Beat processes against the test infrastructure. It
    is a separate invocation from the coverage-measured suite.
 
-The test execution environment MUST provide PostgreSQL 16 and Redis 7
+The test execution environment MUST provide PostgreSQL 18 and Redis 7
 instances, exposed to the test harness via `TEST_DATABASE_URL` and
 `TEST_REDIS_URL` respectively. When the suite runs with parallel
 workers, the Redis instance MUST offer enough logical databases for one
