@@ -185,10 +185,12 @@ async def list_setting_audit_events(
     AND.
 
     Q3: returns `SettingAuditEventPage(items, total, page, per_page)`
-    with `actor` eagerly loaded on every item, ordered `created_at DESC,
-    id DESC` (fixed — no client-controlled sort). An out-of-range page
-    returns an empty `items` list with the correct `total`. No row lock,
-    mutation, or audit event is created.
+    with `actor` eagerly loaded on every item, ordered `id DESC` (fixed
+    — no client-controlled sort). `id` is a UUIDv7 value, so this is
+    equivalent to `created_at DESC` with a deterministic tiebreak, in a
+    single column. An out-of-range page returns an empty `items` list
+    with the correct `total`. No row lock, mutation, or audit event is
+    created.
 
     Q6: propagates any underlying database exception. Infallible
     otherwise.
@@ -218,7 +220,7 @@ async def list_setting_audit_events(
 
     data_query = (
         query.options(selectinload(SettingAuditEvent.actor))
-        .order_by(SettingAuditEvent.created_at.desc(), SettingAuditEvent.id.desc())
+        .order_by(SettingAuditEvent.id.desc())
         .offset((page - 1) * per_page)
         .limit(per_page)
     )

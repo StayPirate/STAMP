@@ -353,8 +353,10 @@ sentinel api-key list --username <username>
 Lists all keys for the user, without pagination, using
 `api_key_service.list_user_keys_for_cli()`. This is an operator command over
 one user's expected-small key set, not an API list endpoint. Rows are ordered
-by `created_at` descending, then `id` descending. Inactive users are accepted;
-the command reports retained keys regardless of owner lifecycle state.
+by `id` descending — `id` is a UUIDv7 value, so this is equivalent to
+`created_at` descending with a deterministic tiebreak, in a single column.
+Inactive users are accepted; the command reports retained keys regardless of
+owner lifecycle state.
 
 **Output:** a fixed-width table on stdout with columns `ID`, `PREFIX`,
 `NAME`, `STATUS`, `CREATED AT`, `LAST USED AT`, and `EXPIRES AT`, in that

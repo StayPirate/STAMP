@@ -7,8 +7,14 @@ services:
       POSTGRES_DB: sentinel
     ports:
       - "5432:5432"
+    # Mounted at the /var/lib/postgresql parent, not .../data: the
+    # official postgres images changed PGDATA to
+    # /var/lib/postgresql/<major>/docker starting with the 18 release
+    # (https://github.com/docker-library/postgres/pull/1259). Mounting
+    # at .../data (the pre-18 convention) makes the entrypoint refuse
+    # to start, reporting unused/incompatible data in the old location.
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sentinel"]
       interval: 10s

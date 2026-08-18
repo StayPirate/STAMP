@@ -321,7 +321,7 @@ header, the server adopts it; otherwise the server generates one.
 is non-empty, at most 128 characters long, and composed exclusively of
 characters in `[A-Za-z0-9._-]`. If the value is absent, empty (or
 whitespace-only), exceeds 128 characters, or contains any character outside
-this set, the server discards it and generates a UUIDv4 instead — the
+this set, the server discards it and generates a UUIDv7 instead — the
 request is never rejected on account of an invalid `X-Request-ID` value. The
 server does not truncate or sanitize an out-of-bounds value; it is either
 adopted whole or discarded whole. If the client sends multiple

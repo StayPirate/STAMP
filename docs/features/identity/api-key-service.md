@@ -326,10 +326,12 @@ async def list_user_keys_for_cli(
 ```
 
 Trims and lowercases the username, resolves the user, and returns all their
-keys ordered by `created_at DESC, id DESC`. Unknown user raises
-`UserNotFoundError`. The result's `evaluated_at` is the function's shared
-status snapshot; the caller must not capture a different time per row. This
-operator-only query is intentionally unpaginated. It creates no audit event.
+keys ordered by `id DESC`. `id` is a UUIDv7 value, so this is equivalent to
+`created_at DESC` with a deterministic tiebreak, in a single column. Unknown
+user raises `UserNotFoundError`. The result's `evaluated_at` is the
+function's shared status snapshot; the caller must not capture a different
+time per row. This operator-only query is intentionally unpaginated. It
+creates no audit event.
 
 ### `update_last_used_at()`
 

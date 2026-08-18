@@ -67,7 +67,7 @@ class RequestIDMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request_id = _extract_client_request_id(scope) or str(uuid.uuid4())
+        request_id = _extract_client_request_id(scope) or str(uuid.uuid7())
 
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":

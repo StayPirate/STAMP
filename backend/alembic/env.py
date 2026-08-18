@@ -40,8 +40,22 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """Run migrations with a connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    """Run migrations with a connection.
+
+    `compare_server_default=True` lets autogenerate detect
+    `server_default` changes (e.g., adding `server_default=text(...)` to
+    an existing column) — the default `False` would silently produce an
+    empty migration for such changes, requiring the author to notice
+    and hand-write the operation instead. Verified against this
+    project's actual `server_default` patterns (`func.now()`,
+    `text("uuidv7()")`, and literal string/boolean defaults) to produce
+    no false-positive diffs.
+    """
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_server_default=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
