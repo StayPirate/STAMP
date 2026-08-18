@@ -7,6 +7,22 @@
   ],
   "labels": ["dependencies"],
   "prConcurrentLimit": 0,
+  // This repository overrides Renovate's default ignorePaths (inherited
+  // from the "config:recommended" preset) to drop "**/tests/**" ONLY —
+  // that pattern silently excluded backend/tests/conftest.py from every
+  // manager, including the custom.regex manager below. Do NOT re-add
+  // "**/tests/**" here — see docs/deployment.md (Testcontainers image
+  // references) for the full root-cause analysis and why this override
+  // is necessary.
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/__fixtures__/**"
+  ],
   "customManagers": [
     {
       "customType": "regex",

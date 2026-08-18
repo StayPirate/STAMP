@@ -10,7 +10,7 @@ ARG PYTHON_VERSION=3.13
 # current tag is published. PYTHON_VERSION itself is bumped manually
 # only — see docs/conventions.md, Runtime Version (Version Bump
 # Checklist) — and is excluded from Renovate's automated updates by a
-# packageRule in renovate.json.
+# packageRule in renovate.jsonc.
 ARG PYTHON_BASE_DIGEST=sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
 
 # Stage 1: Install dependencies and build the project (non-editable)
