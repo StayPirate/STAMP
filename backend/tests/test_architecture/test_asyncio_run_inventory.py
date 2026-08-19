@@ -58,11 +58,12 @@ REVIEWED_INVENTORY: dict[tuple[str, str], str] = {
     ),
     ("beat_startup.py", "_beat_startup_handler"): (
         "One-shot Celery Beat startup handler. Its async workflow "
-        "(beat_async_bootstrap) awaits engine.dispose() after a "
-        "successful bootstrap commit, before Beat's own synchronous "
-        "(non-asyncio) tick loop begins; on failure the process exits "
-        "via sys.exit(1) before ticking, so disposal is not required "
-        "on that path."
+        "(beat_async_bootstrap) bootstraps FetcherConfig, commits, "
+        "reconciles the redbeat schedule, then awaits engine.dispose() "
+        "before Beat's own synchronous (non-asyncio) tick loop begins; "
+        "on failure (lock verification, bootstrap, commit, or "
+        "reconciliation) the process exits via sys.exit(1) before "
+        "ticking, so disposal is not required on that path."
     ),
 }
 

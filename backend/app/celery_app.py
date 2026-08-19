@@ -23,10 +23,11 @@ Also wires:
 - Fetcher module discovery (`app.services.fetcher_discovery`) and the
   worker/Beat fetcher config bootstrap handlers
   (`app.tasks.worker_startup`, `app.tasks.beat_startup` — see
-  `docs/features/platform/fetcher-infrastructure.md`, FetcherConfig
-  and Worker Startup Handler). The dynamic, per-fetcher RedBeat
-  schedule reconciliation is wired by a later work item — see
-  `docs/drafts/implementation-plan.md` (P3-05).
+  `docs/features/platform/fetcher-infrastructure.md`, FetcherConfig,
+  Worker Startup Handler, and Startup Reconciliation). Beat's handler
+  additionally reconciles the dynamic, per-fetcher RedBeat schedule
+  against `FetcherConfig` and `FETCHER_REGISTRY`
+  (`app.services.fetcher_schedule.reconcile_beat_schedule`).
 
 Also registers the static, code-authoritative `beat_schedule` entry for
 the `cleanup_sessions` non-fetcher periodic task — see
@@ -119,10 +120,9 @@ def create_celery_app(app_settings: Settings) -> Celery:
     Registers the static `beat_schedule` entry for the non-fetcher
     `cleanup_sessions` periodic task (see `_BEAT_SCHEDULE` above). The
     dynamic, per-fetcher RedBeat schedule (built from `FETCHER_REGISTRY`
-    and `FetcherConfig`) is populated at Beat startup by a later work
-    item, not here — see
+    and `FetcherConfig`) is populated at Beat startup, not here — see
     `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
-    Schedule Synchronization).
+    Schedule Synchronization, Startup Reconciliation).
     """
     app = Celery("sentinel")
     app.conf.update(
