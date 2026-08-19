@@ -2,7 +2,7 @@
 
 See `docs/features/platform/fetcher-infrastructure.md` for the full
 specification this module implements: the `run()` lifecycle (logging
-context, metric reset, settings validation, cursor load, execution,
+context, per-run state reset, settings validation, cursor load, execution,
 finalization, HTTP teardown, exception propagation), import-time class
 validation (`__init_subclass__`), the custom Settings schema, error
 message sanitization, and the BaseFetcher HTTP client integration.
@@ -468,7 +468,7 @@ class BaseFetcher:
         """Manage a single fetcher execution end to end.
 
         See `docs/features/platform/fetcher-infrastructure.md` (`run()`
-        lifecycle) for the full 10-phase contract and the exception
+        lifecycle) for the full 9-phase contract and the exception
         propagation matrix.
         """
         self.config = config

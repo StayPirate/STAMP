@@ -3,7 +3,7 @@ client integration (backend/app/services/base_fetcher.py).
 
 See `docs/features/platform/fetcher-infrastructure.md` for the
 contract under test: import-time class validation
-(`__init_subclass__`), the `run()` lifecycle (10 phases), the
+(`__init_subclass__`), the `run()` lifecycle (9 phases), the
 finalization status precedence, error message sanitization, the
 custom Settings schema, and the BaseFetcher HTTP client integration.
 
