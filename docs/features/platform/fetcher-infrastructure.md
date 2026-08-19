@@ -100,10 +100,12 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       finalization also carry it — see
       `docs/features/platform/logging.md` (Correlation IDs).
 
-   2. **Metric reset**: reset all counters (`items_created`,
-      `items_updated`, `items_failed`) to zero. This ensures correct
-      behavior regardless of instance lifecycle (singleton vs. per-run
-      instantiation).
+   2. **Per-run state reset**: reset all per-run instance state to
+      initial values — metric counters (`items_created`,
+      `items_updated`, `items_failed`) to zero; `_cursor`,
+      `_previous_cursor`, and `_settings_instance` to `None`. This
+      ensures correct behavior regardless of instance lifecycle
+      (singleton vs. per-run instantiation).
 
    3. **Stored-settings validation**: instantiate the fetcher's
       `Settings` model with the `custom_settings` from the config
@@ -124,15 +126,7 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       If no prior successful run exists, `self.previous_cursor` is
       `None`. This is a separate short-lived session (read-only).
 
-   5. **Timestamp capture**: record execution start time in-memory.
-      This is the reference for `duration_seconds` calculation. It
-      does NOT overwrite `FetcherRun.started_at` (which was set
-      during acquisition and reflects when the run was created/adopted,
-      not when execution began). `duration_seconds` is computed as
-      `finished_at - FetcherRun.started_at` (the column value), so it
-      includes any queue wait time for manual triggers.
-
-   6. **Execution**: open an execution session, call
+   5. **Execution**: open an execution session, call
       `self.execute(session)`. If `execute()` raises, capture the
       exception for finalization. `SoftTimeLimitExceeded` propagates
       normally — it is not caught per-item (see
@@ -162,19 +156,19 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       `items_created = N` in the `FetcherRun` but persists nothing —
       this is a programming error, not a supported pattern.
 
-   7. **Finalization**: in a separate short-lived session, update the
+   6. **Finalization**: in a separate short-lived session, update the
       `FetcherRun` record with final status, metrics, timing, error
       fields, and cursor. See "Finalization" below for the complete
       contract.
 
-   8. **HTTP client teardown**: close `self._http_client` if it was
+   7. **HTTP client teardown**: close `self._http_client` if it was
       created during execution. Exceptions from `aclose()` are logged
       at WARNING level and suppressed — they MUST NOT mask the original
       execution exception. See "BaseFetcher HTTP Client Integration".
 
-   9. **Exception propagation**: see "Exception Propagation" below.
+   8. **Exception propagation**: see "Exception Propagation" below.
 
-   10. **Logging context reset**: unbind `fetcher_run_id`.
+   9. **Logging context reset**: unbind `fetcher_run_id`.
 
    ### Finalization
 
@@ -221,7 +215,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    Persistence) for the git-specific usage pattern and query.
 
    **Finalization fields**: `finished_at = now()`,
-   `duration_seconds = finished_at - started_at`, `status` (per
+   `duration_seconds = finished_at - started_at` (includes queue wait
+   time for manual triggers — `started_at` reflects when the run was
+   created/adopted, not when execution began), `status` (per
    precedence above), `items_created`, `items_updated`,
    `items_failed`, `error_message`, `error_detail`,
    `error_traceback` (per "Error Message Sanitization"), and `cursor`
@@ -232,14 +228,12 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
 
    - Log CRITICAL:
      `"Fetcher '%s' run '%s' finalization failed — FetcherRun record may remain in 'running' status: %s"`.
-   - The original execution outcome (success or exception) is
-     preserved as the primary error. The finalization failure is
-     chained as `__cause__` when re-raising.
+   - The exception propagated to the Celery task is the finalization
+     failure. If `execute()` also raised, the original execution
+     exception is chained as `__cause__` (i.e.,
+     `raise finalize_exc from execution_exc`).
    - No retry — the stale run detection mechanism recovers the
      orphaned record at the next trigger attempt.
-   - The exception propagated to the Celery task is the finalization
-     failure (with the original execution exception as `__cause__`
-     if both failed).
 
    ### Exception Propagation
 
