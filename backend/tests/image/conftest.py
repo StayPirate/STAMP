@@ -79,10 +79,10 @@ def _run_compose_bounded(
         )
 
 
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+@pytest.hookimpl(tryfirst=True, wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
-) -> Generator[None, pytest.TestReport]:
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     """Attach primary-stack container logs to the report of any failed
     ``image``-marked test.
 
@@ -96,25 +96,34 @@ def pytest_runtest_makereport(
     output without reproducing it or waiting for a container teardown
     that would otherwise discard the evidence.
 
-    Scoped to this suite only (`"image" in item.keywords`), even though
-    this hook is defined in a conftest already exclusive to
-    `tests/image/`, as a safety net against a future test-tree
-    reorganization. Does not affect `IsolatedComposeStack`-based
-    scenarios: those run under their own, differently-named compose
-    project, while this hook always targets the primary stack resolved
-    by `_resolve_compose_invocation()`.
+    Scoped to this suite only (`item.get_closest_marker("image") is not
+    None`). This is load-bearing today, not just a safety net for a
+    hypothetical future reorganization: `pytest_collection_modifyitems`
+    deselects `image` items *after* collection, so this conftest — and
+    this hookimpl — is registered session-globally even during a plain
+    `uv run pytest` run; the marker check is what keeps the hook inert
+    on every other suite. Uses `get_closest_marker()` rather than
+    `"image" in item.keywords`: `item.keywords` conflates real markers
+    with path-derived tokens (a test's `keywords` mapping includes
+    every ancestor node's name, e.g. the literal string `"image"` from
+    the `tests/image/` directory itself), so a keyword-based check
+    would accidentally match every test collected from this directory
+    regardless of whether it actually carries `@pytest.mark.image` —
+    `get_closest_marker()` checks only real marks. Does not affect
+    `IsolatedComposeStack`-based scenarios: those run under their own,
+    differently-named compose project, while this hook always targets
+    the primary stack resolved by `_resolve_compose_invocation()`.
 
     Best-effort: a timeout or missing compose binary yields a
     placeholder note instead of masking the original test failure with
     a second exception.
     """
-    outcome = yield
-    report = outcome.get_result()
+    report = yield
 
     if report.when != "call" or not report.failed:
-        return
-    if "image" not in item.keywords:
-        return
+        return report
+    if item.get_closest_marker("image") is None:
+        return report
 
     compose_cmd, file_args, project = _resolve_compose_invocation()
     try:
@@ -138,6 +147,7 @@ def pytest_runtest_makereport(
 
     if logs:
         report.sections.append(("docker compose logs (tail=100)", logs))
+    return report
 
 
 @pytest.fixture(scope="session")
