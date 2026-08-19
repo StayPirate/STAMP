@@ -175,15 +175,29 @@ def _iter_all_entries(celery_app: Celery) -> list[RedBeatSchedulerEntry]:
 
     Uses the supported enumeration shape — `ensure_conf()` +
     `get_redis()` + `zrange()` over `redbeat_conf.schedule_key`, then
-    `RedBeatSchedulerEntry.from_key()` per key — the same shape
-    `RedBeatScheduler.update_from_dict()` uses internally, and the one
-    redbeat's maintainer confirmed as the supported way to list the
-    whole schedule (`RedBeatScheduler.schedule` is a due-now query, not
-    an accessor for the full stored schedule — see upstream
+    `RedBeatSchedulerEntry.from_key()` per key — the one redbeat's
+    maintainer confirmed as the supported way to list the whole
+    schedule (`RedBeatScheduler.schedule` is a due-now query, not an
+    accessor for the full stored schedule — see upstream
     sibson/redbeat#155). No raw Redis key string is constructed:
     `schedule_key` and the per-entry keys stored in the sorted set are
     both read through redbeat's own config/`RedBeatSchedulerEntry`
     objects, never assembled from a hardcoded prefix.
+
+    A sorted-set member whose backing hash is missing by the time
+    `from_key()` reads it (the two are separate Redis reads, so a gap
+    between them is possible in principle) is treated as orphaned: it
+    is removed from the sorted set and skipped, mirroring the
+    self-healing behavior of redbeat's own due-task query
+    (`RedBeatScheduler.schedule`, which performs the same
+    zrange + from_key + zrem-on-KeyError sequence) — see
+    https://github.com/sibson/redbeat/blob/d55325e653c124c52778c78accc8279450e7cc8f/redbeat/schedulers.py#L564-L570.
+    None of Sentinel's own writes (`upsert_fetcher_entry`,
+    `delete_fetcher_entry`) can produce this state — both rely on a
+    single atomic `redis-py` pipeline (`transaction=True`, the
+    default) that updates the hash and the sorted-set member together
+    — so this path is only reachable through direct Redis
+    manipulation outside Sentinel's control.
     """
     conf = ensure_conf(celery_app)
     redis_client = get_redis(celery_app)
@@ -193,11 +207,8 @@ def _iter_all_entries(celery_app: Celery) -> list[RedBeatSchedulerEntry]:
         try:
             entries.append(RedBeatSchedulerEntry.from_key(key, app=celery_app))
         except KeyError:
-            # The hash backing this sorted-set member is already gone
-            # (expired/evicted between the zrange read and this load).
-            # Nothing to clean up: Sentinel's own writes are
-            # unconditional overwrites within the same reconciliation
-            # pass, so this is not a state this module produces.
+            logger.warning("redbeat_orphaned_schedule_member_removed", key=key)
+            redis_client.zrem(conf.schedule_key, key)
             continue
     return entries
 

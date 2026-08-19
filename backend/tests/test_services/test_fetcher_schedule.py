@@ -28,7 +28,7 @@ import redis.asyncio as redis_asyncio
 from celery import Celery
 from celery.schedules import crontab
 from redbeat import RedBeatSchedulerEntry
-from redbeat.schedulers import ensure_conf
+from redbeat.schedulers import ensure_conf, get_redis
 from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
@@ -637,6 +637,45 @@ class TestReconcileBeatScheduleDeregisteredAndMalformed:
             app=celery_test_app,
         )
         assert preserved.task == "cleanup_sessions"
+
+    async def test_removes_orphaned_sorted_set_member_evicted_before_read(
+        self, db_session: AsyncSession, celery_test_app: Celery
+    ) -> None:
+        """`_iter_all_entries` enumerates sorted-set members via
+        `zrange()` and then loads each one's hash via `from_key()` —
+        two separate Redis reads. If the hash is gone by the time it's
+        read (its sorted-set member briefly outliving its own backing
+        hash), `from_key()` raises `KeyError`. This is not a state
+        Sentinel's own writes ever produce (see the function's
+        docstring), but the module self-heals from it the same way
+        redbeat's own due-task query does: the orphaned sorted-set
+        member is removed (`zrem`) rather than left behind to be
+        silently re-encountered on every future reconciliation pass.
+        Simulated here by deleting only the entry's backing hash while
+        leaving its sorted-set membership intact — exactly what
+        `RedBeatSchedulerEntry.delete()` would never do on its own (it
+        removes both atomically)."""
+        FETCHER_REGISTRY.clear()
+        entry = RedBeatSchedulerEntry(
+            name="evicted_before_read",
+            task="run_fetcher",
+            schedule=crontab.from_string(_NoQueueFetcher.default_schedule),
+            args=[],
+            kwargs={"fetcher_name": "evicted_before_read"},
+            app=celery_test_app,
+        )
+        entry.save()
+        redis_client = get_redis(celery_test_app)
+        redis_client.delete(entry.key)
+
+        summary = await reconcile_beat_schedule(db_session, celery_test_app)
+
+        # Not counted in the reconciliation summary — orphan cleanup
+        # is a lower-level enumeration concern distinct from the three
+        # fetcher-outcome counters (write/disable/deregister).
+        assert summary.deregistered_removed == 0
+        schedule_key = ensure_conf(celery_test_app).schedule_key
+        assert redis_client.zscore(schedule_key, entry.key) is None
 
 
 @pytest.mark.integration
