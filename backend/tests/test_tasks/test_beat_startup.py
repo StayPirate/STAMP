@@ -3,16 +3,16 @@
 
 See `docs/features/platform/fetcher-infrastructure.md` (Startup
 Reconciliation, Wiring Mechanism) for the contract under test:
-`beat_init` signal wiring, bootstrap-then-commit-or-rollback ordering,
-and fail-fast `SystemExit(1)` on any failure. RedBeat schedule
-reconciliation is out of scope — see `docs/drafts/implementation-plan.md`
-(P3-05).
+`beat_init` signal wiring, lock-acquisition verification,
+bootstrap-then-commit-then-reconcile-then-dispose ordering, and
+fail-fast `SystemExit(1)` on any failure.
 
 `beat_async_bootstrap()` is exercised directly with a mocked session
-(mirrors `tests/test_tasks/test_session_cleanup.py`) — the real
-behavior of `bootstrap_fetcher_configs()` itself is already covered by
-`tests/test_services/test_fetcher_bootstrap.py`; this module verifies
-orchestration only. `_beat_startup_handler()` is a synchronous entry
+and a mocked `reconcile_beat_schedule` (the real reconciliation
+behavior — effective schedule/options, entry shape, deregistered/
+malformed cleanup, idempotency, PostgreSQL authority — is covered by
+`tests/test_services/test_fetcher_schedule.py`; this module verifies
+orchestration only). `_beat_startup_handler()` is a synchronous entry
 point (calls `asyncio.run()`) — its tests are plain `def`, not
 `async def` (see `docs/features/platform/testing-strategy.md`, Sync
 Entry-Point Tests), and mock the entire async workflow, mirroring
@@ -56,6 +56,26 @@ class _FakeEngine:
         self.dispose = dispose or AsyncMock()
 
 
+class _FakeScheduler:
+    """Substitute for `beat.Service.scheduler` — exposes only `.lock`,
+    the single attribute `_beat_startup_handler` reads to verify the
+    redbeat distributed lock was actually acquired."""
+
+    def __init__(self, lock: object | None) -> None:
+        self.lock = lock
+
+
+class _FakeSender:
+    """Substitute for the `beat_init` signal's `sender` (a real
+    `celery.beat.Service` instance in production) — exposes only
+    `.scheduler.lock` and `.app`, the two attributes
+    `_beat_startup_handler` reads."""
+
+    def __init__(self, *, lock: object | None, app: object) -> None:
+        self.scheduler = _FakeScheduler(lock)
+        self.app = app
+
+
 def _log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         record.getMessage()
@@ -85,9 +105,9 @@ class TestBeatStartupSignalRegistration:
         imports `redbeat` before connecting its own handler, the
         RedBeat lock-acquire receiver MUST be registered (and thus run)
         before Sentinel's handler when `beat_init` actually fires. This
-        proves the distributed lock is acquired before Sentinel's
-        bootstrap runs — a precondition the future RedBeat
-        reconciliation step relies on."""
+        proves the distributed lock is acquired (or its failure
+        recorded as `scheduler.lock is None`) before Sentinel's lock
+        verification and bootstrap run."""
         names_in_order = []
         for _, receiver in beat_init.receivers:
             # Receivers are stored as weakrefs (default `weak=True`) —
@@ -104,16 +124,22 @@ class TestBeatStartupSignalRegistration:
 
 @pytest.mark.unit
 class TestBeatAsyncBootstrap:
-    async def test_success_bootstraps_commits_then_disposes_in_order(
+    async def test_success_bootstraps_commits_reconciles_then_disposes_in_order(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
+        celery_app = object()
         call_order: list[str] = []
         session.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
 
         async def _bootstrap_spy(db: object) -> None:
             assert db is session
             call_order.append("bootstrap")
+
+        async def _reconcile_spy(db: object, app: object) -> None:
+            assert db is session
+            assert app is celery_app
+            call_order.append("reconcile")
 
         async def _dispose_spy() -> None:
             call_order.append("dispose")
@@ -122,22 +148,24 @@ class TestBeatAsyncBootstrap:
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
         monkeypatch.setattr(beat_startup, "bootstrap_fetcher_configs", _bootstrap_spy)
+        monkeypatch.setattr(beat_startup, "reconcile_beat_schedule", _reconcile_spy)
         monkeypatch.setattr(
             beat_startup,
             "engine",
             _FakeEngine(dispose=AsyncMock(side_effect=_dispose_spy)),
         )
 
-        await beat_startup.beat_async_bootstrap()
+        await beat_startup.beat_async_bootstrap(celery_app)
 
-        assert call_order == ["bootstrap", "commit", "dispose"]
+        assert call_order == ["bootstrap", "commit", "reconcile", "dispose"]
         session.rollback.assert_not_awaited()
 
-    async def test_bootstrap_failure_rolls_back_and_skips_disposal(
+    async def test_bootstrap_failure_rolls_back_skips_reconcile_and_disposal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
         fake_engine = _FakeEngine()
+        reconcile_spy = AsyncMock()
         monkeypatch.setattr(
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
@@ -146,31 +174,59 @@ class TestBeatAsyncBootstrap:
             "bootstrap_fetcher_configs",
             AsyncMock(side_effect=RuntimeError("db down")),
         )
+        monkeypatch.setattr(beat_startup, "reconcile_beat_schedule", reconcile_spy)
         monkeypatch.setattr(beat_startup, "engine", fake_engine)
 
         with pytest.raises(RuntimeError, match="db down"):
-            await beat_startup.beat_async_bootstrap()
+            await beat_startup.beat_async_bootstrap(object())
 
         session.commit.assert_not_awaited()
         session.rollback.assert_awaited_once_with()
+        reconcile_spy.assert_not_awaited()
         fake_engine.dispose.assert_not_awaited()
 
-    async def test_commit_failure_rolls_back_and_skips_disposal(
+    async def test_commit_failure_rolls_back_skips_reconcile_and_disposal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         session = AsyncMock()
         session.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
         fake_engine = _FakeEngine()
+        reconcile_spy = AsyncMock()
         monkeypatch.setattr(
             beat_startup, "async_session_factory", lambda: _SessionContext(session)
         )
         monkeypatch.setattr(beat_startup, "bootstrap_fetcher_configs", AsyncMock())
+        monkeypatch.setattr(beat_startup, "reconcile_beat_schedule", reconcile_spy)
         monkeypatch.setattr(beat_startup, "engine", fake_engine)
 
         with pytest.raises(RuntimeError, match="commit failed"):
-            await beat_startup.beat_async_bootstrap()
+            await beat_startup.beat_async_bootstrap(object())
 
         session.rollback.assert_awaited_once_with()
+        reconcile_spy.assert_not_awaited()
+        fake_engine.dispose.assert_not_awaited()
+
+    async def test_reconciliation_failure_skips_disposal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = AsyncMock()
+        fake_engine = _FakeEngine()
+        monkeypatch.setattr(
+            beat_startup, "async_session_factory", lambda: _SessionContext(session)
+        )
+        monkeypatch.setattr(beat_startup, "bootstrap_fetcher_configs", AsyncMock())
+        monkeypatch.setattr(
+            beat_startup,
+            "reconcile_beat_schedule",
+            AsyncMock(side_effect=RuntimeError("redis down")),
+        )
+        monkeypatch.setattr(beat_startup, "engine", fake_engine)
+
+        with pytest.raises(RuntimeError, match="redis down"):
+            await beat_startup.beat_async_bootstrap(object())
+
+        session.commit.assert_awaited_once_with()
+        session.rollback.assert_not_awaited()
         fake_engine.dispose.assert_not_awaited()
 
 
@@ -181,32 +237,57 @@ class TestBeatStartupHandler:
     ) -> None:
         run_spy = AsyncMock()
         monkeypatch.setattr(beat_startup, "beat_async_bootstrap", run_spy)
+        sender = _FakeSender(lock=object(), app=object())
 
         with caplog.at_level("INFO"):
-            beat_startup._beat_startup_handler()
+            beat_startup._beat_startup_handler(sender=sender)
 
-        run_spy.assert_awaited_once()
+        run_spy.assert_awaited_once_with(sender.app)
         assert any("beat_startup_completed" in m for m in _log_messages(caplog))
 
-    def test_failure_logs_critical_and_exits_with_1(
+    def test_lock_not_acquired_exits_without_running_bootstrap(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        async def _boom() -> None:
-            raise RuntimeError("bootstrap exploded")
-
-        monkeypatch.setattr(beat_startup, "beat_async_bootstrap", _boom)
+        run_spy = AsyncMock()
+        monkeypatch.setattr(beat_startup, "beat_async_bootstrap", run_spy)
+        sender = _FakeSender(lock=None, app=object())
 
         with (
             caplog.at_level("CRITICAL"),
             pytest.raises(SystemExit) as exc_info,
         ):
-            beat_startup._beat_startup_handler()
+            beat_startup._beat_startup_handler(sender=sender)
+
+        assert exc_info.value.code == 1
+        run_spy.assert_not_awaited()
+        messages = _log_messages(caplog)
+        assert any(
+            "beat_startup_failed" in m
+            and "'stage': 'lock_verification'" in m
+            and "RedbeatLockNotAcquiredError" in m
+            for m in messages
+        )
+
+    def test_failure_logs_critical_and_exits_with_1(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        async def _boom(celery_app: object) -> None:
+            raise RuntimeError("bootstrap exploded")
+
+        monkeypatch.setattr(beat_startup, "beat_async_bootstrap", _boom)
+        sender = _FakeSender(lock=object(), app=object())
+
+        with (
+            caplog.at_level("CRITICAL"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            beat_startup._beat_startup_handler(sender=sender)
 
         assert exc_info.value.code == 1
         messages = _log_messages(caplog)
         assert any(
             "beat_startup_failed" in m
-            and "'stage': 'fetcher_config_bootstrap'" in m
+            and "'stage': 'bootstrap_and_reconciliation'" in m
             and "'error_type': 'RuntimeError'" in m
             and "bootstrap exploded" in m
             for m in messages
@@ -215,12 +296,13 @@ class TestBeatStartupHandler:
     def test_failure_does_not_log_completed(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        async def _boom() -> None:
+        async def _boom(celery_app: object) -> None:
             raise RuntimeError("bootstrap exploded")
 
         monkeypatch.setattr(beat_startup, "beat_async_bootstrap", _boom)
+        sender = _FakeSender(lock=object(), app=object())
 
         with caplog.at_level("INFO"), pytest.raises(SystemExit):
-            beat_startup._beat_startup_handler()
+            beat_startup._beat_startup_handler(sender=sender)
 
         assert not any("beat_startup_completed" in m for m in _log_messages(caplog))

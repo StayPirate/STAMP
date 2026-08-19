@@ -1989,9 +1989,11 @@ signal handler** registered in the Celery app module.
   connection lifecycle). Disposal is skipped when bootstrap or commit
   fails, since the handler's `sys.exit(1)` (see Error handling below)
   terminates the process regardless.
-- **Error handling**: the handler wraps the entire bootstrap +
-  reconciliation sequence in a `try/except` with `sys.exit(1)` on
-  failure (explicit fail-fast).
+- **Error handling**: the handler first verifies the redbeat
+  distributed lock was actually acquired (see Lock Acquisition
+  Verification below), then wraps the bootstrap + reconciliation
+  sequence in a `try/except` with `sys.exit(1)` on any failure — lock
+  verification, bootstrap, or reconciliation (explicit fail-fast).
 - **Scheduler unchanged**: the `beat_scheduler` Celery setting remains
   `'redbeat.RedBeatScheduler'` (stock, unmodified). No custom scheduler
   subclass is introduced.
@@ -2020,13 +2022,18 @@ signal handler** registered in the Celery app module.
    → Sentinel's handler executes the entire startup sequence within a
      single asyncio.run() call on an extracted async def function:
 
-     4a. bootstrap_fetcher_configs()
+     4a. Verify the redbeat distributed lock was acquired
+         (sender.scheduler.lock is not None) — see Lock Acquisition
+         Verification below. Aborts before touching PostgreSQL or
+         Redis if verification fails.
+
+     4b. bootstrap_fetcher_configs()
          - INSERT ON CONFLICT DO NOTHING for every fetcher in FETCHER_REGISTRY
          - Idempotent, concurrency-safe
 
-     4b. reconcile_beat_schedule() — Steps 1-5 below
+     4c. reconcile_beat_schedule() — Steps 1-5 below
 
-     4c. await engine.dispose() — releases the bootstrap connections
+     4d. await engine.dispose() — releases the bootstrap connections
          before Beat's own tick loop begins (docs/conventions.md,
          Cross-loop pooled connection lifecycle). Beat's tick loop is
          Celery's native synchronous scheduler and does not itself
@@ -2065,15 +2072,47 @@ is immediate. In a non-data-loss crash (Beat OOM-killed, Redis intact),
 the worst-case wait before the new Beat starts scheduling is
 `lock_timeout` = 300s (≤5 minutes).
 
+#### Lock Acquisition Verification
+
+Celery's signal dispatcher swallows exceptions raised by `beat_init`
+receivers (redbeat's own lock-acquisition receiver is itself a
+`beat_init` receiver, registered before Sentinel's — see Wiring
+Mechanism above). A failed `lock.acquire()` call therefore does not
+propagate as an exception to Celery's Beat service; instead,
+`scheduler.lock` is left `None` while `scheduler.lock_key` remains
+set, and Beat would otherwise proceed as if reconciliation were safe
+to run.
+
+To close this gap, Sentinel's `beat_init` handler checks
+`sender.scheduler.lock is not None` as the first action within the
+receiver (step 4a above), before calling `bootstrap_fetcher_configs()`
+or `reconcile_beat_schedule()`. If the lock was not acquired:
+
+- Beat logs a CRITICAL error:
+  `"CRITICAL: Celery Beat startup failed — redbeat distributed lock
+  was not acquired. Beat will not start."`
+- Beat exits with a non-zero exit code
+- The orchestrator restarts Beat according to its restart policy; the
+  retry re-attempts lock acquisition from scratch
+
+**Rationale**: without this check, two Beat instances could both
+believe reconciliation is safe to run concurrently — the same failure
+mode the distributed lock exists to prevent in the first place. This
+verification is a Sentinel-specific safeguard layered on top of
+redbeat's own lock-acquisition retry logic (Lock Acquisition above);
+it does not replace or alter that native retry behavior.
+
 #### Reconciliation Steps
 
-**Preconditions** (satisfied by the time step 4b begins):
+**Preconditions** (satisfied by the time step 4c begins):
 - `FETCHER_REGISTRY` is populated (step 1)
-- `FetcherConfig` records exist for all registered fetchers (step 4a)
+- `FetcherConfig` records exist for all registered fetchers (step 4b)
 - Every fetcher in `FETCHER_REGISTRY` has a valid, non-None
   `default_schedule` (5-field cron expression) — guaranteed by the
   `BaseFetcher` abstract interface contract (Abstract Interface above)
-- The redbeat distributed lock has been acquired (step 2)
+- The redbeat distributed lock has been acquired (step 2) and its
+  acquisition verified (step 4a, see Lock Acquisition Verification
+  above)
 
 Steps:
 
@@ -2116,14 +2155,22 @@ Steps:
      by Celery framework internals, and are outside the scope of fetcher
      reconciliation.
    - **For entries where `task == "run_fetcher"`**: extract
-     `fetcher_name` from the entry's kwargs. If `fetcher_name` is NOT
-     present in `FETCHER_REGISTRY`, delete the entry and log at INFO
-     level: `"Removed redbeat entry for deregistered fetcher '%s'",
-     fetcher_name`. If the entry's kwargs lack a valid `fetcher_name`
-     (missing key, `None`, or empty string), the entry is treated as
-     corrupted and deleted. Log at WARNING level: `"Deleted corrupted
-     redbeat entry '%s': missing or empty fetcher_name in kwargs",
-     entry.name`.
+     `fetcher_name` from the entry's kwargs and classify the entry, in
+     this order:
+     1. **Corrupted**: `fetcher_name` is missing, `None`, empty, or
+        does not match the entry's own `name` (an alias — the entry's
+        Redis key disagrees with the `fetcher_name` it carries, which
+        can only arise from direct Redis manipulation, since
+        Sentinel's own writes always keep the two in sync). Delete
+        the entry and log at WARNING level: `"Deleted corrupted
+        redbeat entry '%s': missing or empty fetcher_name in kwargs",
+        entry.name`.
+     2. **Deregistered**: `fetcher_name` is valid and matches the
+        entry's own `name`, but is NOT present in `FETCHER_REGISTRY`.
+        Delete the entry and log at INFO level: `"Removed redbeat
+        entry for deregistered fetcher '%s'", fetcher_name`.
+     3. Otherwise (valid, matching, registered `fetcher_name`): leave
+        the entry untouched.
 
    The `task` pre-filter MUST be applied strictly before any kwargs
    inspection. A non-fetcher static entry has no `fetcher_name` kwarg;

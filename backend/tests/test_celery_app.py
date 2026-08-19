@@ -11,9 +11,10 @@ Scope note: this module registers the static non-fetcher
 `tests/test_tasks/test_fetchers.py`). Fetcher discovery wiring and the
 worker/Beat startup handlers are tested separately in
 `tests/test_tasks/test_worker_startup.py` and
-`tests/test_tasks/test_beat_startup.py`. The dynamic per-fetcher Beat
-schedule (RedBeat reconciliation) remains deferred to a later work
-item.
+`tests/test_tasks/test_beat_startup.py`. The dynamic per-fetcher
+RedBeat schedule reconciliation itself
+(`app/services/fetcher_schedule.py`) is tested in
+`tests/test_services/test_fetcher_schedule.py`.
 """
 
 from __future__ import annotations
