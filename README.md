@@ -65,7 +65,7 @@ graph TB
 
     subgraph Infrastructure
         PG[(PostgreSQL 18)]
-        Redis[(Redis 7)]
+        Redis[(Redis 8)]
     end
 
     NVD & MITRE & RHSA & GHSA --> Worker
@@ -97,10 +97,10 @@ version bumps.
 
 - [x] **Identity & Access Management** — authentication, RBAC, user
   management, API keys, identity audit trail
-- [x] **Platform Infrastructure** *(partial)* — health endpoints, logging,
-  HTTP client, system settings, CLI framework, audit trail base
-- [ ] **Fetcher Infrastructure** — BaseFetcher, BaseCVEFetcher, BaseGitFetcher,
-  scheduling, monitoring
+- [x] **Platform Infrastructure** — health endpoints, logging, HTTP client,
+  system settings, CLI framework, audit trail base
+- [x] **Fetcher Infrastructure** *(partial)* — BaseFetcher lifecycle, registry,
+  bootstrap, generic run_fetcher task; BaseCVEFetcher and BaseGitFetcher pending
 - [ ] **Tickets & CVE Tracking** — ticket lifecycle, CVE ingestion from 8
   sources, CVSS scoring, severity resolution
 - [ ] **Package Tracking** — product catalog, package model, three orthogonal
@@ -121,7 +121,7 @@ for detailed progress tracking.
 | ORM | SQLAlchemy 2.0 (async, asyncpg) |
 | Database | PostgreSQL 18 |
 | Task Queue | Celery with Redis broker |
-| Cache / Coordination | Redis 7 |
+| Cache / Coordination | Redis 8 |
 | Migrations | Alembic |
 | Validation | Pydantic v2 |
 | CLI | Click |

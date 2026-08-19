@@ -54,7 +54,7 @@
          x="459.61914"
          y="204.23596"
          id="tspan2"><tspan
-           style="font-weight:bold;font-family:'Liberation Sans';-inkscape-font-specification:'Liberation Sans Bold';fill-opacity:1"
+            style="font-weight:bold;font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif;-inkscape-font-specification:'Liberation Sans Bold';fill-opacity:1"
            id="tspan1">SENTINEL</tspan></tspan></text>
     <text
        xml:space="preserve"
@@ -65,6 +65,6 @@
          id="tspan14"
          x="955"
          y="284"
-         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:38.6667px;font-family:'Liberation Sans';-inkscape-font-specification:'Liberation Sans';fill:#393939;fill-opacity:1">LINUX VULNERABILITY MANAGEMENT</tspan></text>
+         style="font-style:normal;font-variant:normal;font-weight:normal;font-stretch:normal;font-size:38.6667px;font-family:'Liberation Sans','Helvetica Neue',Helvetica,Arial,sans-serif;-inkscape-font-specification:'Liberation Sans';fill:#393939;fill-opacity:1">LINUX VULNERABILITY MANAGEMENT</tspan></text>
   </g>
 </svg>
