@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
 import httpx
@@ -77,6 +77,67 @@ def _run_compose_bounded(
             f"compose command timed out after {timeout}s: cmd={cmd!r} "
             f"stdout={exc.stdout!r} stderr={exc.stderr!r}"
         )
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport]:
+    """Attach primary-stack container logs to the report of any failed
+    ``image``-marked test.
+
+    Fires on every test in this suite, but only acts when the ``call``
+    phase (the test body itself, as opposed to fixture setup/teardown)
+    fails. Captures ``docker compose logs --tail=100`` with no service
+    filter — every service in the primary smoke stack, chronologically
+    interleaved, including a container that has already exited (e.g. a
+    crashed `beat` after a restart) — and attaches it as a report
+    section, so the failure is diagnosable directly from the pytest/CI
+    output without reproducing it or waiting for a container teardown
+    that would otherwise discard the evidence.
+
+    Scoped to this suite only (`"image" in item.keywords`), even though
+    this hook is defined in a conftest already exclusive to
+    `tests/image/`, as a safety net against a future test-tree
+    reorganization. Does not affect `IsolatedComposeStack`-based
+    scenarios: those run under their own, differently-named compose
+    project, while this hook always targets the primary stack resolved
+    by `_resolve_compose_invocation()`.
+
+    Best-effort: a timeout or missing compose binary yields a
+    placeholder note instead of masking the original test failure with
+    a second exception.
+    """
+    outcome = yield
+    report = outcome.get_result()
+
+    if report.when != "call" or not report.failed:
+        return
+    if "image" not in item.keywords:
+        return
+
+    compose_cmd, file_args, project = _resolve_compose_invocation()
+    try:
+        result = subprocess.run(
+            [
+                *compose_cmd,
+                "-p",
+                project,
+                *file_args,
+                "logs",
+                "--tail=100",
+                "--no-color",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        logs = (result.stdout + result.stderr).strip()
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logs = f"[container log capture failed: {exc!r}]"
+
+    if logs:
+        report.sections.append(("docker compose logs (tail=100)", logs))
 
 
 @pytest.fixture(scope="session")
