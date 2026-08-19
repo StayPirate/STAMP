@@ -468,7 +468,7 @@ class BaseFetcher:
         """Manage a single fetcher execution end to end.
 
         See `docs/features/platform/fetcher-infrastructure.md` (`run()`
-        lifecycle) for the full 10-phase contract and the exception
+        lifecycle) for the full 9-phase contract and the exception
         propagation matrix.
         """
         self.config = config
