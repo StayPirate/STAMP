@@ -18,7 +18,7 @@ import shlex
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 
 import httpx
@@ -77,6 +77,77 @@ def _run_compose_bounded(
             f"compose command timed out after {timeout}s: cmd={cmd!r} "
             f"stdout={exc.stdout!r} stderr={exc.stderr!r}"
         )
+
+
+@pytest.hookimpl(tryfirst=True, wrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo[None]
+) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    """Attach primary-stack container logs to the report of any failed
+    ``image``-marked test.
+
+    Fires on every test in this suite, but only acts when the ``call``
+    phase (the test body itself, as opposed to fixture setup/teardown)
+    fails. Captures ``docker compose logs --tail=100`` with no service
+    filter — every service in the primary smoke stack, chronologically
+    interleaved, including a container that has already exited (e.g. a
+    crashed `beat` after a restart) — and attaches it as a report
+    section, so the failure is diagnosable directly from the pytest/CI
+    output without reproducing it or waiting for a container teardown
+    that would otherwise discard the evidence.
+
+    Scoped to this suite only (`item.get_closest_marker("image") is not
+    None`). This is load-bearing today, not just a safety net for a
+    hypothetical future reorganization: `pytest_collection_modifyitems`
+    deselects `image` items *after* collection, so this conftest — and
+    this hookimpl — is registered session-globally even during a plain
+    `uv run pytest` run; the marker check is what keeps the hook inert
+    on every other suite. Uses `get_closest_marker()` rather than
+    `"image" in item.keywords`: `item.keywords` conflates real markers
+    with path-derived tokens (a test's `keywords` mapping includes
+    every ancestor node's name, e.g. the literal string `"image"` from
+    the `tests/image/` directory itself), so a keyword-based check
+    would accidentally match every test collected from this directory
+    regardless of whether it actually carries `@pytest.mark.image` —
+    `get_closest_marker()` checks only real marks. Does not affect
+    `IsolatedComposeStack`-based scenarios: those run under their own,
+    differently-named compose project, while this hook always targets
+    the primary stack resolved by `_resolve_compose_invocation()`.
+
+    Best-effort: a timeout or missing compose binary yields a
+    placeholder note instead of masking the original test failure with
+    a second exception.
+    """
+    report = yield
+
+    if report.when != "call" or not report.failed:
+        return report
+    if item.get_closest_marker("image") is None:
+        return report
+
+    compose_cmd, file_args, project = _resolve_compose_invocation()
+    try:
+        result = subprocess.run(
+            [
+                *compose_cmd,
+                "-p",
+                project,
+                *file_args,
+                "logs",
+                "--tail=100",
+                "--no-color",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        logs = (result.stdout + result.stderr).strip()
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logs = f"[container log capture failed: {exc!r}]"
+
+    if logs:
+        report.sections.append(("docker compose logs (tail=100)", logs))
+    return report
 
 
 @pytest.fixture(scope="session")
