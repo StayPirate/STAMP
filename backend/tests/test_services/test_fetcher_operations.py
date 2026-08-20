@@ -849,6 +849,9 @@ class TestGetFetcherRun:
         run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
             status="failure",
+            items_created=3,
+            items_updated=5,
+            items_failed=2,
             error_message="sanitized message",
             error_detail="raw TimeoutError detail",
             error_traceback="Traceback...",
@@ -862,7 +865,16 @@ class TestGetFetcherRun:
         )
 
         assert result.id == run.id
+        assert result.fetcher_name == config.fetcher_name
+        assert result.started_at == run.started_at
+        assert result.finished_at == run.finished_at
+        assert result.duration_seconds == run.duration_seconds
+        assert result.status == "failure"
+        assert result.items_created == 3
+        assert result.items_updated == 5
+        assert result.items_failed == 2
         assert result.error_message == "sanitized message"
+        assert result.triggered_by == run.triggered_by
 
     async def test_raw_diagnostics_always_populated_on_the_dataclass(
         self,

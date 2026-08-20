@@ -1241,7 +1241,7 @@ endpoints in the system (`identity-audit-log.md`,
 
 **`has_manage_fetchers` derivation**: the four Public endpoints accept an
 optional principal (via the optional authentication mechanism defined in
-`docs/features/identity/rbac.md`, Optional Authentication). The
+`docs/api-spec.md`, Optional Authentication on Public Endpoints). The
 `has_manage_fetchers` boolean passed to the service is derived as follows:
 - If no authenticated principal is present (anonymous request):
   `has_manage_fetchers = false`.

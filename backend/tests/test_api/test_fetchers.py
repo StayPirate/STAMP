@@ -255,6 +255,35 @@ class TestListFetchersEndpoint:
         )
         assert item["last_run"]["triggered_by_user"]["id"] == str(actor.id)
 
+    async def test_authenticated_without_manage_fetchers_does_not_see_triggered_by_user(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """An authenticated caller with no roles (and therefore no
+        `manage_fetchers` capability) is treated identically to
+        anonymous — capability, not mere authentication, gates
+        visibility. See `_resolve_has_manage_fetchers`
+        (`app/api/v1/fetchers.py`)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        actor = await user_factory()
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            triggered_by="manual",
+            triggered_by_user_id=actor.id,
+        )
+
+        response = await authenticated_client.get("/api/v1/fetchers")
+
+        assert response.status_code == 200
+        item = next(
+            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
+        )
+        assert item["last_run"]["triggered_by_user"] is None
+
     async def test_invalid_selected_credential_returns_401(
         self, client: AsyncClient
     ) -> None:
@@ -416,6 +445,7 @@ class TestGetFetcherRunEndpoint:
         )
 
         assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
 
     async def test_anonymous_does_not_see_raw_diagnostics(
         self,
@@ -487,6 +517,36 @@ class TestGetFetcherRunEndpoint:
         data = response.json()["data"]
         assert data["error_detail"] == "raw detail"
         assert data["error_traceback"] == "raw traceback"
+
+    async def test_authenticated_without_manage_fetchers_does_not_see_raw_diagnostics(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """An authenticated caller with no roles (and therefore no
+        `manage_fetchers` capability) is treated identically to
+        anonymous — capability, not mere authentication, gates
+        visibility. See `_resolve_has_manage_fetchers`
+        (`app/api/v1/fetchers.py`)."""
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="failure",
+            error_message="sanitized",
+            error_detail="raw detail",
+            error_traceback="raw traceback",
+        )
+
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["error_message"] == "sanitized"
+        assert "error_detail" not in data
+        assert "error_traceback" not in data
 
     async def test_running_run_has_null_finished_at_and_duration(
         self,
