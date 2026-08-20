@@ -955,6 +955,35 @@ class TestListFetcherAuditEventsEndpoint:
         assert item["fetcher_name"] == config.fetcher_name
         assert set(item["actor"].keys()) == {"id", "username", "full_name", "active"}
 
+    async def test_populated_old_new_value_and_detail_round_trip(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        """Regression: `old_value`/`new_value`/`detail` must survive the
+        ORM -> service -> schema -> JSON round trip unchanged. All prior
+        fixtures relied on factory defaults (all `None`), which would
+        not catch a field-swap or serialization bug."""
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="config_changed",
+            old_value="0 */6 * * *",
+            new_value="0 */4 * * *",
+            detail={"field": "schedule_override"},
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+
+        item = response.json()["data"][0]
+        assert item["event_type"] == "config_changed"
+        assert item["old_value"] == "0 */6 * * *"
+        assert item["new_value"] == "0 */4 * * *"
+        assert item["detail"] == {"field": "schedule_override"}
+
     async def test_unknown_fetcher_returns_404(self, admin_client: AsyncClient) -> None:
         FETCHER_REGISTRY.clear()
         response = await admin_client.get("/api/v1/fetchers/no-such-fetcher/audit-log")
