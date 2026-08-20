@@ -70,6 +70,18 @@ class TestErrorCode:
         range validation)."""
         assert ErrorCode.DATE_RANGE_INVERTED == "DATE_RANGE_INVERTED"
 
+    def test_date_range_too_wide_is_registered(self) -> None:
+        """See docs/api-spec.md (Date Range Interpretation, Maximum
+        range constraint) and
+        docs/features/platform/fetcher-operations.md (Get Fetcher Run
+        Timeline Data, Date range constraint)."""
+        assert ErrorCode.DATE_RANGE_TOO_WIDE == "DATE_RANGE_TOO_WIDE"
+
+    def test_fetcher_not_found_is_registered(self) -> None:
+        """See docs/features/platform/fetcher-operations.md (Fetcher
+        Operations Service, Service Exceptions)."""
+        assert ErrorCode.FETCHER_NOT_FOUND == "FETCHER_NOT_FOUND"
+
     def test_admin_user_mutation_error_codes_are_registered(self) -> None:
         """See docs/features/identity/user-service.md (Service
         Exceptions) and docs/features/identity/user-management.md

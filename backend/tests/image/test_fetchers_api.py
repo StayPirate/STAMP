@@ -1,0 +1,218 @@
+"""Black-box image smoke assertions for the Public fetcher observation
+API (`backend/app/api/v1/fetchers.py`).
+
+Verifies — over a real ASGI server (uvicorn) and a real HTTP client
+(`urllib`), the only combination that can observe this — representative
+authorized and anonymous responses from all four
+`GET /api/v1/fetchers*` endpoints against the built image. The shipped
+image's `FETCHER_REGISTRY` has no production fetcher yet (see
+`docs/features/platform/fetcher-infrastructure.md`, Fetcher Registry),
+so this scenario arranges a deregistered `FetcherConfig` row directly —
+the same "historical data only" shape the endpoints document for a
+fetcher whose code has been removed. The exhaustive contract (merge
+logic, filters, pagination, disabled-period derivation) is already
+covered by the in-process e2e suite (`tests/test_api/test_fetchers.py`)
+and the service suite
+(`tests/test_services/test_fetcher_operations.py`), which run far
+faster and do not need a running container.
+
+See docs/features/platform/testing-strategy.md (Image / Container
+Smoke Testing, Growth Rule).
+"""
+
+from __future__ import annotations
+
+import subprocess
+from collections.abc import Callable
+
+import pytest
+
+_FETCHERS_API_CHECK_SCRIPT = r"""
+import asyncio
+import json
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import delete
+
+from app.core.enums import Role, SessionCreationReason
+from app.database import async_session_factory
+from app.models.fetcher_config import FetcherConfig
+from app.models.fetcher_run import FetcherRun
+from app.models.session import Session
+from app.models.user import User
+from app.models.user_role import UserRole
+from app.services.session_service import create_session
+
+_ADMIN_USERNAME = "imagefetchersapiadmin"
+_FETCHER_NAME = "imagesmoketestfetcher"
+
+
+async def arrange():
+    async with async_session_factory() as db:
+        admin = User(
+            username=_ADMIN_USERNAME,
+            email="imagefetchersapiadmin@example.com",
+            password_hash="$2b$12$" + "a" * 53,
+        )
+        db.add(admin)
+        await db.flush()
+        db.add(UserRole(user_id=admin.id, role=Role.ADMIN.value))
+        config = FetcherConfig(fetcher_name=_FETCHER_NAME)
+        db.add(config)
+        await db.flush()
+        run = FetcherRun(
+            fetcher_name=_FETCHER_NAME,
+            started_at=datetime.now(UTC) - timedelta(minutes=5),
+            finished_at=datetime.now(UTC),
+            duration_seconds=12.5,
+            status="failure",
+            items_created=1,
+            items_updated=2,
+            items_failed=1,
+            error_message="sanitized failure",
+            error_detail="raw TimeoutError detail",
+            error_traceback="Traceback (most recent call last): ...",
+            triggered_by="schedule",
+        )
+        db.add(run)
+        await db.flush()
+        admin_session = await create_session(
+            db, admin, SessionCreationReason.LOCAL_LOGIN
+        )
+        await db.commit()
+        return admin.id, admin_session.token, run.id
+
+
+async def cleanup(admin_id):
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name == _FETCHER_NAME)
+        )
+        await db.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == _FETCHER_NAME)
+        )
+        await db.execute(delete(UserRole).where(UserRole.user_id == admin_id))
+        await db.execute(delete(Session).where(Session.user_id == admin_id))
+        admin = await db.get(User, admin_id)
+        if admin is not None:
+            await db.delete(admin)
+        await db.commit()
+
+
+def _request(method, path, token=None):
+    headers = {}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        f"http://localhost:8000{path}", method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def list_fetchers_anonymous_shows_deregistered_fetcher():
+    status, body = _request("GET", "/api/v1/fetchers")
+    assert status == 200, (status, body)
+    item = next(i for i in body["data"] if i["fetcher_name"] == _FETCHER_NAME)
+    assert item["registered"] is False
+    assert item["description"] is None
+    assert item["last_run"]["status"] == "failure"
+    print("fetchers-list-anonymous-ok")
+
+
+def list_fetcher_runs_returns_paginated_envelope():
+    status, body = _request("GET", f"/api/v1/fetchers/{_FETCHER_NAME}/runs")
+    assert status == 200, (status, body)
+    assert body["meta"]["total"] == 1
+    assert "error_detail" not in body["data"][0]
+    print("fetchers-runs-list-ok")
+
+
+def list_fetcher_runs_unknown_fetcher_returns_404():
+    status, body = _request("GET", "/api/v1/fetchers/no-such-fetcher/runs")
+    assert status == 404, (status, body)
+    assert body["code"] == "FETCHER_NOT_FOUND"
+    print("fetchers-runs-not-found-ok")
+
+
+def get_fetcher_run_anonymous_hides_raw_diagnostics(run_id):
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_FETCHER_NAME}/runs/{run_id}"
+    )
+    assert status == 200, (status, body)
+    assert "error_detail" not in body["data"]
+    assert "error_traceback" not in body["data"]
+    print("fetchers-run-detail-anonymous-ok")
+
+
+def get_fetcher_run_admin_shows_raw_diagnostics(run_id, admin_token):
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_FETCHER_NAME}/runs/{run_id}", token=admin_token
+    )
+    assert status == 200, (status, body)
+    assert body["data"]["error_detail"] == "raw TimeoutError detail"
+    assert body["data"]["error_traceback"] is not None
+    print("fetchers-run-detail-admin-ok")
+
+
+def get_fetcher_timeline_returns_envelope():
+    status, body = _request("GET", f"/api/v1/fetchers/{_FETCHER_NAME}/timeline")
+    assert status == 200, (status, body)
+    assert len(body["data"]["points"]) == 1
+    assert body["data"]["disabled_periods"] == []
+    print("fetchers-timeline-ok")
+
+
+def unauthenticated_invalid_credential_returns_401():
+    status, body = _request(
+        "GET", "/api/v1/fetchers", token="not-a-real-token"
+    )
+    assert status == 401, (status, body)
+    assert body["code"] == "AUTH_NOT_AUTHENTICATED"
+    print("fetchers-invalid-credential-401-ok")
+
+
+async def main():
+    admin_id, admin_token, run_id = await arrange()
+    try:
+        await asyncio.to_thread(list_fetchers_anonymous_shows_deregistered_fetcher)
+        await asyncio.to_thread(list_fetcher_runs_returns_paginated_envelope)
+        await asyncio.to_thread(list_fetcher_runs_unknown_fetcher_returns_404)
+        await asyncio.to_thread(
+            get_fetcher_run_anonymous_hides_raw_diagnostics, run_id
+        )
+        await asyncio.to_thread(
+            get_fetcher_run_admin_shows_raw_diagnostics, run_id, admin_token
+        )
+        await asyncio.to_thread(get_fetcher_timeline_returns_envelope)
+        await asyncio.to_thread(unauthenticated_invalid_credential_returns_401)
+    finally:
+        await cleanup(admin_id)
+
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.image
+def test_fetchers_api_read_paths_are_observable_in_built_image(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "python", "-c", _FETCHERS_API_CHECK_SCRIPT)
+
+    assert result.returncode == 0, (
+        f"fetchers API smoke check failed "
+        f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
+    )
+    assert "fetchers-list-anonymous-ok" in result.stdout
+    assert "fetchers-runs-list-ok" in result.stdout
+    assert "fetchers-runs-not-found-ok" in result.stdout
+    assert "fetchers-run-detail-anonymous-ok" in result.stdout
+    assert "fetchers-run-detail-admin-ok" in result.stdout
+    assert "fetchers-timeline-ok" in result.stdout
+    assert "fetchers-invalid-credential-401-ok" in result.stdout
