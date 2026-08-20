@@ -29,6 +29,7 @@ from celery import Celery
 from celery.schedules import crontab
 from pydantic import BaseModel, Field
 from redbeat import RedBeatSchedulerEntry
+from redbeat.schedulers import get_redis
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -611,6 +612,20 @@ class TestListFetchersNextRunAt:
         heartbeat_ticks = await heartbeat_task
 
         assert heartbeat_ticks == 5
+
+    def test_redbeat_client_has_bounded_socket_timeouts(
+        self, celery_test_app: Celery
+    ) -> None:
+        """The RedBeat Redis client (the same singleton `_read_due_times`
+        reads through) carries explicit socket timeouts, so a hung
+        (blackholed/firewalled) connection raises `RedisError` within a
+        bounded time instead of blocking the worker thread indefinitely
+        — see docs/features/platform/fetcher-infrastructure.md (Redbeat
+        Configuration, API endpoint failure handling)."""
+        client = get_redis(celery_test_app)
+        pool_kwargs = client.connection_pool.connection_kwargs
+        assert pool_kwargs["socket_connect_timeout"] == 2
+        assert pool_kwargs["socket_timeout"] == 2
 
 
 # ---------------------------------------------------------------------------

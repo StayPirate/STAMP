@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -222,6 +223,26 @@ class TestGuardAndIncrement:
             decision = await guard_and_increment("someone")
         assert isinstance(decision, LockoutUnavailable)
         assert "login_lockout_redis_unavailable" in _service_log_text(caplog)
+
+    async def test_client_uses_bounded_connect_and_operation_timeouts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The lockout Redis client carries explicit socket timeouts,
+        so a hung (blackholed/firewalled) connection fails fast instead
+        of blocking indefinitely — mirrors
+        test_session_service.py::TestIsSessionActive::test_client_uses_bounded_connect_and_operation_timeouts."""
+        captured: dict[str, Any] = {}
+
+        def _from_url(url: str, **kwargs: Any) -> _FailingRedisClient:
+            captured.update(kwargs)
+            return _FailingRedisClient()
+
+        monkeypatch.setattr(redis_asyncio.Redis, "from_url", _from_url)
+        client = local_auth_service._new_redis_client()
+        await client.aclose()
+
+        assert captured["socket_connect_timeout"] == 2
+        assert captured["socket_timeout"] == 2
 
 
 # ---------------------------------------------------------------------------

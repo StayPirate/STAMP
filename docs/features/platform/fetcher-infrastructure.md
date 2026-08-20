@@ -1859,6 +1859,7 @@ Redbeat uses the following configuration:
 |---------|-------|--------|
 | `redbeat_redis_url` | Not configured explicitly | Defaults to `CELERY_BROKER_URL` (redbeat's standard behavior). A separate variable is unnecessary because Sentinel already configures the Celery broker as Redis. |
 | `redbeat_key_prefix` | `redbeat:` | Default. All redbeat entries are stored under this prefix. |
+| `redbeat_redis_options` | `{socket_connect_timeout: 2, socket_timeout: 2}` | Explicit connect and read timeouts (seconds), passed through by redbeat to the underlying Redis client it constructs internally. Prevents a hung (blackholed/firewalled) connection from blocking a caller indefinitely — see "API endpoint failure handling" below. Mirrors the 2-second timeout used by the application's own Redis clients (`local_auth_service`, `session_service`). |
 | Scheduler class | `redbeat.RedBeatScheduler` | Configured in the Celery app settings (`beat_scheduler`), not via CLI flag. |
 
 No separate environment variable for `redbeat_redis_url` is required or
@@ -2382,15 +2383,23 @@ on a schedule." The API consumer does not need to distinguish these cases:
 a disabled fetcher's `enabled` field is `false`, which provides the
 distinction for UI display purposes.
 
-**API endpoint failure handling**: if Redis is unreachable when calculating
-`next_run_at` for the fetcher list:
+**API endpoint failure handling**: if Redis is unreachable, or a
+connection hangs (blackholed/firewalled, no response within the
+configured `redbeat_redis_options` socket timeouts — see "Redbeat
+Configuration"), when calculating `next_run_at` for the fetcher list:
 
 - Individual fetcher `next_run_at` values are set to `null`
 - The endpoint does NOT return an error — the rest of the response
   (fetcher metadata, last_run, etc.) is still valid from PostgreSQL
-- A WARNING-level log is emitted:
-  `"WARNING: Cannot read redbeat schedule state from Redis: %s.
-  next_run_at will be null for all fetchers.", error`
+- A WARNING-level log is emitted: `fetcher_redbeat_next_run_unavailable`
+  with `error_type` (the exception class name only — never the
+  exception message or connection details, since this data would
+  otherwise reach logs from an anonymously-reachable endpoint)
+
+A hung connection is not distinguishable from an unreachable one at this
+layer: both surface as a `RedisError` (a socket timeout raises
+`redis.exceptions.TimeoutError`, a subclass of `RedisError`) and are
+handled by the same degradation path, without any additional code path.
 
 ### Reconciliation and Divergence Recovery
 

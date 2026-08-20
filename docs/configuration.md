@@ -167,6 +167,19 @@ sentinel detection. See
 `docs/features/platform/fetcher-infrastructure.md` (Runtime: Redis Data
 Loss).
 
+### Redbeat Socket Timeouts
+
+`redbeat_redis_options` is a fixed application-level setting (not an
+environment variable) configuring `socket_connect_timeout` and
+`socket_timeout` at 2 seconds each on Redbeat's internal Redis client.
+This bounds how long any Redbeat read or write can block on a hung
+(blackholed/firewalled) connection, converting it into a `RedisError`
+within a predictable time instead of blocking indefinitely. The value
+mirrors the 2-second timeout already used by the application's own
+Redis clients (`local_auth_service`, `session_service`). See
+`docs/features/platform/fetcher-infrastructure.md` (Redbeat
+Configuration).
+
 ## IBS (Internal Build Service)
 
 | Env Var | Type | Default | Description | Defined in |

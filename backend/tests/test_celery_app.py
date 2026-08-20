@@ -176,12 +176,29 @@ class TestCreateCeleryAppDefaults:
 
 
 @pytest.mark.unit
-class TestNoExplicitRedbeatOverrides:
-    """No separate redbeat Redis URL or retry_period is configured."""
+class TestNoExplicitRedbeatUrlOverride:
+    """No separate redbeat Redis URL is configured — redbeat follows
+    the broker instance (see docs/features/platform/
+    fetcher-infrastructure.md, Redbeat Configuration)."""
 
     def test_no_redbeat_redis_url_override(self) -> None:
         app = create_celery_app(_settings())
         assert app.conf.get("redbeat_redis_url") is None
+
+
+@pytest.mark.unit
+class TestRedbeatRedisOptions:
+    """`redbeat_redis_options` configures bounded socket timeouts on
+    RedBeat's internal Redis client and never a `retry_period` (see
+    docs/features/platform/fetcher-infrastructure.md, Redbeat
+    Configuration and Runtime: Redis Data Loss)."""
+
+    def test_socket_timeouts_configured(self) -> None:
+        app = create_celery_app(_settings())
+        redis_options = app.conf.get("redbeat_redis_options")
+        assert redis_options is not None
+        assert redis_options["socket_connect_timeout"] == 2
+        assert redis_options["socket_timeout"] == 2
 
     def test_no_redbeat_retry_period_override(self) -> None:
         app = create_celery_app(_settings())
