@@ -1,13 +1,16 @@
-"""Request/response/query schemas for the Public fetcher observation API.
+"""Request/response/query schemas for the fetcher observation and
+admin config/audit-log endpoints.
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
-Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data) for
-the authoritative request/response contract these schemas implement.
+Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
+Fetcher Config, Get Fetcher Audit Log) for the authoritative
+request/response contract these schemas implement.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -197,3 +200,94 @@ class FetcherTimelineResponse(BaseModel):
     """Response body for `GET /api/v1/fetchers/{fetcher_name}/timeline`."""
 
     data: FetcherTimelineData
+
+
+# ---------------------------------------------------------------------------
+# Get Fetcher Config
+# ---------------------------------------------------------------------------
+
+
+class FetcherConfigData(BaseModel):
+    """The `data` object for `GET /api/v1/fetchers/{fetcher_name}/config`.
+
+    `default_schedule` and `settings_schema` are `null` for a
+    deregistered fetcher — see `docs/features/platform/fetcher-operations.md`
+    (Get Fetcher Config, Deregistered fetcher behavior)."""
+
+    fetcher_name: str
+    enabled: bool
+    schedule_override: str | None
+    default_schedule: str | None
+    effective_schedule: str | None
+    run_timeout: int
+    request_delay: float
+    custom_settings: dict[str, Any]
+    settings_schema: dict[str, Any] | None
+    updated_at: datetime
+
+
+class FetcherConfigResponse(BaseModel):
+    """Response body for `GET /api/v1/fetchers/{fetcher_name}/config`."""
+
+    data: FetcherConfigData
+
+
+# ---------------------------------------------------------------------------
+# Get Fetcher Audit Log
+# ---------------------------------------------------------------------------
+
+
+class FetcherAuditQuery(BaseModel):
+    """Query parameters for
+    `GET /api/v1/fetchers/{fetcher_name}/audit-log`.
+
+    `event_type` is intentionally `list[str]`, not
+    `list[FetcherAuditEventType]`: an invalid value must be silently
+    ignored and produce an empty result (`docs/api-spec.md`, Enum
+    Filter Validation) rather than the schema-validation `422` a typed
+    enum field would raise. Unlike the sibling settings/identity audit
+    endpoints, this parsing happens inside
+    `fetcher_operations.list_fetcher_audit_events()` itself — after the
+    fetcher-existence check — not in the route handler, so that an
+    entirely-invalid `event_type` set never masks a nonexistent fetcher
+    behind an empty `200` response (see that function's docstring).
+
+    `from_date`/`to_date` are already-parsed `date`/`datetime` values by
+    the time this model is constructed — the API layer's
+    `app.core.dates.parse_date_range_bound()` performs the strict ISO
+    8601 parsing (and its `422` rejection) before this model sees them.
+    An inverted normalized range is validated separately by
+    `app.core.dates.validate_date_range_order()` (`400
+    DATE_RANGE_INVERTED`).
+    """
+
+    event_type: list[str] = Field(default_factory=list)
+    actor: str | None = None
+    from_date: date | datetime | None = None
+    to_date: date | datetime | None = None
+    page: int = Field(default=1, ge=1, le=2_147_483_647)
+    per_page: int = Field(default=20, ge=1, le=100)
+
+
+class FetcherAuditEventData(BaseModel):
+    """One event in the fetcher audit log response
+    (`fetcher-operations.md`, Get Fetcher Audit Log). `actor` is always
+    the complete current user reference — every fetcher audit event
+    requires a human actor and user rows cannot be hard-deleted, so it
+    is never `null`."""
+
+    id: UUID
+    fetcher_name: str
+    event_type: str
+    actor: UserReference
+    old_value: str | None
+    new_value: str | None
+    detail: dict[str, Any] | None
+    created_at: datetime
+
+
+class FetcherAuditListResponse(BaseModel):
+    """Response body for `GET /api/v1/fetchers/{fetcher_name}/audit-log`."""
+
+    data: list[FetcherAuditEventData]
+    meta: PaginationMeta

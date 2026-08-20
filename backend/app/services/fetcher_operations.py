@@ -1,19 +1,21 @@
-"""Fetcher Operations Service — Public read functions.
+"""Fetcher Operations Service — read functions.
 
 See `docs/features/platform/fetcher-operations.md` (Fetcher Operations
 Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
-`get_fetcher_timeline`, Disabled Period Derivation) for the full
+`get_fetcher_timeline`, `get_fetcher_config`,
+`list_fetcher_audit_events`, Disabled Period Derivation) for the full
 specification this module implements.
 
-Only the four Public read functions are implemented here. The
-capability-protected config/audit-log reads (`get_fetcher_config`,
-`list_fetcher_audit_events`) and the mutation functions
-(`update_fetcher_config`, `trigger_fetcher`) are owned by later work
-items (P3-07, P3-08, P3-09) and are out of scope for this module as it
-stands.
+The four Public read functions (`list_fetchers`, `list_fetcher_runs`,
+`get_fetcher_run`, `get_fetcher_timeline`) and the two
+capability-protected reads (`get_fetcher_config`,
+`list_fetcher_audit_events`) are implemented here. The mutation
+functions (`update_fetcher_config`, `trigger_fetcher`) are owned by
+later work items (P3-08, P3-09) and are out of scope for this module as
+it stands.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
-Completeness): all four functions below accept a caller-supplied
+Completeness): all functions below accept a caller-supplied
 `AsyncSession`, perform reads only, never flush or commit, and create
 no audit events. Every function propagates only the exceptions listed
 in the Service Exceptions table below, plus standard database
@@ -44,6 +46,7 @@ from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
+from app.services.fetcher_audit_log import FetcherAuditLog
 
 logger = structlog.get_logger(__name__)
 
@@ -185,6 +188,37 @@ class FetcherTimeline:
     disabled_periods: list[DisabledPeriod]
 
 
+@dataclass(frozen=True)
+class FetcherConfigResult:
+    """The merged configuration for one fetcher — persisted
+    `FetcherConfig` values merged with code-defined registry metadata
+    when the fetcher is registered. `default_schedule` and
+    `settings_schema` are `None` for a deregistered fetcher (no code
+    class to read them from)."""
+
+    fetcher_name: str
+    enabled: bool
+    schedule_override: str | None
+    default_schedule: str | None
+    effective_schedule: str | None
+    run_timeout: int
+    request_delay: float
+    custom_settings: dict[str, Any]
+    settings_schema: dict[str, Any] | None
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class FetcherAuditEventPage:
+    """One page of `FetcherAuditEvent` rows, with `actor` eagerly
+    loaded on every item (see `list_fetcher_audit_events()`)."""
+
+    items: list[FetcherAuditEvent]
+    total: int
+    page: int
+    per_page: int
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -315,7 +349,12 @@ async def _resolve_disabled_periods(
     `disabled` event with the next `enabled` event, keeps an unpaired
     trailing `disabled` open-ended, ignores a leading orphaned
     `enabled`, and keeps only intervals intersecting
-    `[from_date, to_date]` without clipping their timestamps."""
+    `[from_date, to_date]` without clipping their timestamps.
+
+    Ordered `id ASC` (fixed — no client-controlled sort). `id` is a
+    UUIDv7 value, so this is equivalent to `created_at ASC` with a
+    deterministic tiebreak, in a single column.
+    """
     result = await db.execute(
         select(FetcherAuditEvent)
         .where(
@@ -328,7 +367,7 @@ async def _resolve_disabled_periods(
             ),
         )
         .options(selectinload(FetcherAuditEvent.actor))
-        .order_by(FetcherAuditEvent.created_at.asc(), FetcherAuditEvent.id.asc())
+        .order_by(FetcherAuditEvent.id.asc())
     )
     events = list(result.scalars().all())
 
@@ -657,3 +696,134 @@ async def get_fetcher_timeline(
         db, fetcher_name, from_date, to_date, has_manage_fetchers
     )
     return FetcherTimeline(points=points, disabled_periods=disabled_periods)
+
+
+async def get_fetcher_config(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+) -> FetcherConfigResult:
+    """Return the merged configuration for `fetcher_name`.
+
+    See `docs/features/platform/fetcher-operations.md`
+    (`get_fetcher_config`) for the full contract. Unlike the Public read
+    functions above, a `FetcherConfig` row is a hard prerequisite here —
+    a registered fetcher with no row yet (bootstrap not run) raises
+    `FetcherNotFoundError`, consistent with `trigger_fetcher` and
+    `update_fetcher_config`.
+
+    Raises:
+        FetcherNotFoundError: no `FetcherConfig` row exists for
+            `fetcher_name`.
+    """
+    result = await db.execute(
+        select(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+    )
+    config = result.scalar_one_or_none()
+    if config is None:
+        raise FetcherNotFoundError()
+
+    fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
+    default_schedule: str | None
+    effective_schedule: str | None
+    settings_schema: dict[str, Any] | None
+
+    if fetcher_cls is not None:
+        default_schedule = fetcher_cls.default_schedule
+        effective_schedule = config.schedule_override or default_schedule
+        settings_schema = (
+            fetcher_cls.Settings.model_json_schema()
+            if fetcher_cls.Settings is not None
+            else None
+        )
+    else:
+        default_schedule = None
+        effective_schedule = config.schedule_override
+        settings_schema = None
+
+    return FetcherConfigResult(
+        fetcher_name=config.fetcher_name,
+        enabled=config.enabled,
+        schedule_override=config.schedule_override,
+        default_schedule=default_schedule,
+        effective_schedule=effective_schedule,
+        run_timeout=config.run_timeout,
+        request_delay=config.request_delay,
+        custom_settings=config.custom_settings,
+        settings_schema=settings_schema,
+        updated_at=config.updated_at,
+    )
+
+
+async def list_fetcher_audit_events(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+    page: int,
+    per_page: int,
+    event_type: list[str] | None = None,
+    actor: str | None = None,
+    from_date: date | datetime | None = None,
+    to_date: date | datetime | None = None,
+) -> FetcherAuditEventPage:
+    """Return one page of `FetcherAuditEvent` rows for `fetcher_name`.
+
+    See `docs/features/platform/fetcher-operations.md`
+    (`list_fetcher_audit_events`) for the full contract. `event_type`,
+    when provided, is validated against `FetcherAuditEventType` here —
+    after the fetcher-existence check — per `docs/api-spec.md` (Enum
+    Filter Validation): an invalid value is dropped from the filter
+    set, and an entirely invalid set yields an empty page rather than a
+    database query. This mirrors `list_fetcher_runs`'s `status`
+    handling: the fetcher-existence check always precedes it, so a
+    nonexistent fetcher still raises `FetcherNotFoundError` regardless
+    of the `event_type` values supplied.
+
+    `actor` and the date bounds are applied via the shared
+    `FetcherAuditLog.filter_by_actor()` / `.apply_date_filters()`
+    helpers (`docs/features/platform/audit-trail-infrastructure.md`):
+    an unmatched UUID/username or the literal `"system"` yields an
+    empty page, never an error — every fetcher audit event has a human
+    actor, so `"system"` never matches.
+
+    Raises:
+        FetcherNotFoundError: `fetcher_name` is neither in the registry
+            nor has a `FetcherConfig` row.
+    """
+    await _ensure_fetcher_exists(db, fetcher_name)
+
+    valid_event_types: list[str] = []
+    if event_type:
+        for value in event_type:
+            try:
+                valid_event_types.append(FetcherAuditEventType(value).value)
+            except ValueError:
+                continue
+        if not valid_event_types:
+            return FetcherAuditEventPage(
+                items=[], total=0, page=page, per_page=per_page
+            )
+
+    filters = [FetcherAuditEvent.fetcher_name == fetcher_name]
+    if valid_event_types:
+        filters.append(FetcherAuditEvent.event_type.in_(valid_event_types))
+
+    base_query = select(FetcherAuditEvent).where(*filters)
+    count_query = select(func.count()).select_from(FetcherAuditEvent).where(*filters)
+
+    base_query = FetcherAuditLog.filter_by_actor(base_query, actor)
+    count_query = FetcherAuditLog.filter_by_actor(count_query, actor)
+
+    base_query = FetcherAuditLog.apply_date_filters(base_query, from_date, to_date)
+    count_query = FetcherAuditLog.apply_date_filters(count_query, from_date, to_date)
+
+    total = (await db.execute(count_query)).scalar_one()
+
+    data_query = (
+        base_query.options(selectinload(FetcherAuditEvent.actor))
+        .order_by(FetcherAuditEvent.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    items = list((await db.execute(data_query)).scalars().all())
+    return FetcherAuditEventPage(items=items, total=total, page=page, per_page=per_page)

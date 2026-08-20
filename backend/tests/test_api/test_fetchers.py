@@ -26,7 +26,7 @@ from celery import Celery
 from fastapi import routing as fastapi_routing
 from fastapi.routing import APIRoute
 from httpx import AsyncClient
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import app.api.v1.fetchers as fetchers_module
 from app.api import dependencies
@@ -104,7 +104,24 @@ class _StubFetcherStub:
     Settings: type[BaseModel] | None = None
 
 
+class _StubSettingsModel(BaseModel):
+    results_per_page: int = Field(default=100, ge=10, le=1000)
+
+
+class _StubFetcherWithSettingsStub:
+    """Same rationale as `_StubFetcherStub`, with a `Settings` model —
+    used to exercise the generated `settings_schema` in `GET .../config`
+    responses."""
+
+    name = "test_api_fetcher_with_settings"
+    description = "Stub fetcher with custom settings for API tests"
+    default_schedule = "0 4 * * *"
+    queue: str | None = None
+    Settings = _StubSettingsModel
+
+
 _StubFetcher = cast("type[BaseFetcher]", _StubFetcherStub)
+_StubFetcherWithSettings = cast("type[BaseFetcher]", _StubFetcherWithSettingsStub)
 
 
 def _register(*stubs: type[Any]) -> None:
@@ -133,8 +150,8 @@ async def _patch_celery_app(
 
 @pytest.mark.e2e
 class TestRouteInventory:
-    def test_only_the_four_public_read_endpoints_are_registered(self) -> None:
-        """No trigger, config, audit-log, or IBS consumer endpoint is
+    def test_only_the_six_read_endpoints_are_registered(self) -> None:
+        """No trigger, PATCH config, or IBS consumer endpoint is
         introduced by this work item — see fetcher-operations.md
         (Scope). Route discovery uses `iter_route_contexts()` — see
         `tests/test_api_conventions.py` for why `app.routes` alone does
@@ -153,6 +170,8 @@ class TestRouteInventory:
             ("/api/v1/fetchers/{fetcher_name}/runs", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/runs/{run_id}", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/timeline", "GET"),
+            ("/api/v1/fetchers/{fetcher_name}/config", "GET"),
+            ("/api/v1/fetchers/{fetcher_name}/audit-log", "GET"),
         }
 
 
@@ -707,22 +726,536 @@ class TestOutOfScopeEndpoints:
         response = await client.post(f"/api/v1/fetchers/{config.fetcher_name}/trigger")
         assert response.status_code == 404
 
-    async def test_config_endpoint_not_found(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    async def test_patch_config_method_not_allowed(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
     ) -> None:
+        """The `config` path now exists (`GET`), but no mutation method
+        is registered on it — a `PATCH` yields `405`, not `404`."""
         config = await fetcher_config_factory()
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/config")
-        assert response.status_code == 404
-
-    async def test_audit_log_endpoint_not_found(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
-    ) -> None:
-        config = await fetcher_config_factory()
-        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/audit-log")
-        assert response.status_code == 404
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert response.status_code == 405
 
     async def test_ibs_consumer_status_endpoint_not_found(
         self, client: AsyncClient
     ) -> None:
         response = await client.get("/api/v1/ibs-consumer/status")
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/fetchers/{fetcher_name}/config
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestGetFetcherConfigEndpoint:
+    async def test_unauthenticated_returns_401(
+        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/config")
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+
+    async def test_ordinary_user_returns_403(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_admin_jwt_returns_the_config(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert response.status_code == 200
+
+    async def test_admin_api_key_returns_the_config(
+        self,
+        admin_api_key_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_api_key_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert response.status_code == 200
+
+    async def test_registered_fetcher_exact_item_shape_with_schema(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name,
+            custom_settings={"results_per_page": 250},
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert set(data.keys()) == {
+            "fetcher_name",
+            "enabled",
+            "schedule_override",
+            "default_schedule",
+            "effective_schedule",
+            "run_timeout",
+            "request_delay",
+            "custom_settings",
+            "settings_schema",
+            "updated_at",
+        }
+        assert data["fetcher_name"] == config.fetcher_name
+        assert data["default_schedule"] == _StubFetcherWithSettings.default_schedule
+        assert data["custom_settings"] == {"results_per_page": 250}
+        assert data["settings_schema"] == _StubSettingsModel.model_json_schema()
+
+    async def test_registered_fetcher_without_settings_model_schema_is_null(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+
+        assert response.json()["data"]["settings_schema"] is None
+
+    async def test_deregistered_fetcher_returns_raw_snapshot(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        config = await fetcher_config_factory(
+            schedule_override="0 5 * * *",
+            custom_settings={"orphaned_key": "raw_value"},
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["default_schedule"] is None
+        assert data["settings_schema"] is None
+        assert data["effective_schedule"] == "0 5 * * *"
+        assert data["custom_settings"] == {"orphaned_key": "raw_value"}
+
+    async def test_unknown_fetcher_returns_404(self, admin_client: AsyncClient) -> None:
+        FETCHER_REGISTRY.clear()
+        response = await admin_client.get("/api/v1/fetchers/no-such-fetcher/config")
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/fetchers/{fetcher_name}/audit-log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestListFetcherAuditEventsEndpoint:
+    async def test_unauthenticated_returns_401(
+        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/audit-log")
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+
+    async def test_ordinary_user_returns_403(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await authenticated_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_admin_jwt_can_list(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+        assert response.status_code == 200
+
+    async def test_admin_api_key_can_list(
+        self,
+        admin_api_key_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_api_key_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+        assert response.status_code == 200
+
+    async def test_empty_result_has_correct_envelope(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+
+        assert response.json() == {
+            "data": [],
+            "meta": {"total": 0, "page": 1, "per_page": 20},
+        }
+
+    async def test_exact_item_shape(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+
+        item = response.json()["data"][0]
+        assert set(item.keys()) == {
+            "id",
+            "fetcher_name",
+            "event_type",
+            "actor",
+            "old_value",
+            "new_value",
+            "detail",
+            "created_at",
+        }
+        assert item["fetcher_name"] == config.fetcher_name
+        assert set(item["actor"].keys()) == {"id", "username", "full_name", "active"}
+
+    async def test_populated_old_new_value_and_detail_round_trip(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        """Regression: `old_value`/`new_value`/`detail` must survive the
+        ORM -> service -> schema -> JSON round trip unchanged. All prior
+        fixtures relied on factory defaults (all `None`), which would
+        not catch a field-swap or serialization bug."""
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="config_changed",
+            old_value="0 */6 * * *",
+            new_value="0 */4 * * *",
+            detail={"field": "schedule_override"},
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+
+        item = response.json()["data"][0]
+        assert item["event_type"] == "config_changed"
+        assert item["old_value"] == "0 */6 * * *"
+        assert item["new_value"] == "0 */4 * * *"
+        assert item["detail"] == {"field": "schedule_override"}
+
+    async def test_unknown_fetcher_returns_404(self, admin_client: AsyncClient) -> None:
+        FETCHER_REGISTRY.clear()
+        response = await admin_client.get("/api/v1/fetchers/no-such-fetcher/audit-log")
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_all_invalid_event_types_still_checks_fetcher_existence(
+        self, admin_client: AsyncClient
+    ) -> None:
+        """Regression for the fix in this work item: an entirely
+        invalid `event_type` filter must not mask a nonexistent
+        fetcher behind an empty `200` — the existence check always
+        runs first."""
+        FETCHER_REGISTRY.clear()
+        response = await admin_client.get(
+            "/api/v1/fetchers/no-such-fetcher/audit-log",
+            params=[("event_type", "not-a-real-type")],
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_event_type_filter(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="disabled"
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params=[("event_type", "disabled")],
+        )
+
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_all_invalid_event_types_return_empty_result(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params=[("event_type", "not-a-real-type")],
+        )
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 0
+
+    async def test_actor_filter_by_uuid(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        actor = await user_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=actor.id
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"actor": str(actor.id)},
+        )
+
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_unknown_actor_returns_empty_result_not_404(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"actor": "no-such-actor"},
+        )
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 0
+
+    async def test_system_actor_returns_empty_result(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        """Every fetcher audit event has a human actor — `system` never
+        matches (`fetcher-operations.md`, Get Fetcher Audit Log)."""
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"actor": "system"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 0
+
+    async def test_inclusive_date_range(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"from_date": "2026-05-01", "to_date": "2026-05-31"},
+        )
+
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_malformed_date_returns_422(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"from_date": "not-a-date"},
+        )
+        assert response.status_code == 422
+
+    async def test_inverted_date_range_returns_400(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"from_date": "2026-05-16", "to_date": "2026-05-15"},
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "DATE_RANGE_INVERTED"
+
+    async def test_page_below_one_returns_422(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log", params={"page": 0}
+        )
+        assert response.status_code == 422
+
+    async def test_per_page_out_of_range_returns_422(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"per_page": 101},
+        )
+        assert response.status_code == 422
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log", params={"page": 2}
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"] == []
+        assert response.json()["meta"]["total"] == 1
+
+    async def test_fixed_newest_first_ordering(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        older = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        newer = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+
+        ids = [item["id"] for item in response.json()["data"]]
+        assert ids == [str(newer.id), str(older.id)]
+
+    async def test_sort_by_and_sort_order_are_ignored(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        older = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        newer = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        )
+
+        response = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log",
+            params={"sort_by": "created_at", "sort_order": "asc"},
+        )
+
+        ids = [item["id"] for item in response.json()["data"]]
+        assert ids == [str(newer.id), str(older.id)]
+
+    async def test_no_mutation_methods_are_exposed(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await admin_client.post(
+            f"/api/v1/fetchers/{config.fetcher_name}/audit-log"
+        )
+        assert response.status_code == 405
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestFetchersConfigAndAuditLogOpenAPISurface:
+    def test_both_endpoints_have_summary_and_description(self) -> None:
+        openapi_paths = app.openapi()["paths"]
+
+        config_get = openapi_paths["/api/v1/fetchers/{fetcher_name}/config"]["get"]
+        assert config_get["summary"]
+        assert config_get["description"]
+
+        audit_get = openapi_paths["/api/v1/fetchers/{fetcher_name}/audit-log"]["get"]
+        assert audit_get["summary"]
+        assert audit_get["description"]
+
+    def test_audit_log_query_parameters_are_declared(self) -> None:
+        openapi_paths = app.openapi()["paths"]
+        audit_get = openapi_paths["/api/v1/fetchers/{fetcher_name}/audit-log"]["get"]
+        param_names = {p["name"] for p in audit_get.get("parameters", [])}
+
+        assert {"event_type", "actor", "from_date", "to_date", "page", "per_page"} <= (
+            param_names
+        )
+        assert "sort_by" not in param_names
+        assert "sort_order" not in param_names
+
+    def test_event_type_parameter_is_repeatable(self) -> None:
+        openapi_paths = app.openapi()["paths"]
+        audit_get = openapi_paths["/api/v1/fetchers/{fetcher_name}/audit-log"]["get"]
+        event_type_param = next(
+            p for p in audit_get["parameters"] if p["name"] == "event_type"
+        )
+        assert event_type_param["schema"]["type"] == "array"
