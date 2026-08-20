@@ -88,6 +88,10 @@ assert conf.beat_scheduler == "redbeat.RedBeatScheduler", conf.beat_scheduler
 assert conf.timezone == "UTC", conf.timezone
 assert conf.enable_utc is True, conf.enable_utc
 assert conf.result_backend is None, conf.result_backend
+redis_opts = conf.get("redbeat_redis_options") or {}
+assert redis_opts.get("socket_connect_timeout") == 2, redis_opts
+assert redis_opts.get("socket_timeout") == 2, redis_opts
+assert "retry_period" not in redis_opts, redis_opts
 entry = conf.beat_schedule["cleanup_sessions"]
 assert entry["task"] == "cleanup_sessions", entry
 assert entry["schedule"].minute == {0}, entry["schedule"]

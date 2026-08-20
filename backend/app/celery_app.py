@@ -59,6 +59,13 @@ _REDBEAT_LOCK_KEY = "redbeat::lock"
 # derivation — see docs/features/platform/fetcher-infrastructure.md
 # (Redbeat Configuration, Derived values).
 _REDBEAT_LOCK_TIMEOUT = _BEAT_MAX_LOOP_INTERVAL * 5
+# Bounds how long a RedBeat Redis operation can block on a hung
+# (blackholed/firewalled) connection before raising `RedisError`.
+# Mirrors the 2-second timeout used by the application's own Redis
+# clients (`local_auth_service`, `session_service`) — see
+# docs/features/platform/fetcher-infrastructure.md (Redbeat
+# Configuration).
+_REDBEAT_SOCKET_TIMEOUT = 2
 
 # Static Beat schedule for non-fetcher periodic tasks (see
 # docs/features/platform/fetcher-infrastructure.md, Non-Fetcher
@@ -143,6 +150,10 @@ def create_celery_app(app_settings: Settings) -> Celery:
         beat_max_loop_interval=_BEAT_MAX_LOOP_INTERVAL,
         redbeat_lock_key=_REDBEAT_LOCK_KEY,
         redbeat_lock_timeout=_REDBEAT_LOCK_TIMEOUT,
+        redbeat_redis_options={
+            "socket_connect_timeout": _REDBEAT_SOCKET_TIMEOUT,
+            "socket_timeout": _REDBEAT_SOCKET_TIMEOUT,
+        },
         beat_schedule=_BEAT_SCHEDULE,
     )
     validate_celery_config(app)
