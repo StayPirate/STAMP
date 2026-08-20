@@ -9,6 +9,7 @@ import asyncio
 import atexit
 import itertools
 import os
+import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -17,7 +18,9 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 import pytest_asyncio
 import redis.asyncio as redis_asyncio
+from celery import Celery
 from httpx import ASGITransport, AsyncClient
+from redbeat.schedulers import ensure_conf
 from redis.exceptions import RedisError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
@@ -39,6 +42,8 @@ os.environ.setdefault(
 
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.api.health import get_readiness_redis_urls
+from app.celery_app import create_celery_app
+from app.config import Settings
 from app.core.enums import Role, SessionCreationReason
 from app.core.passwords import hash_password
 from app.database import Base, get_db
@@ -198,6 +203,62 @@ async def _redis_test_url() -> str:
         await client.aclose()
 
     return url
+
+
+@pytest.fixture
+def celery_test_app(
+    redis_client: redis_asyncio.Redis,
+    _redis_test_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Celery:
+    """A fresh Celery app configured with RedBeat pointed at this
+    test's isolated Redis logical database.
+
+    Shared by every test module that needs real redbeat/Redis I/O
+    (`tests/test_services/test_fetcher_schedule.py`,
+    `tests/test_services/test_fetcher_operations.py`) — see
+    `docs/features/platform/testing-strategy.md` (Redis Strategy) for
+    the isolation contract this fixture composes.
+
+    `redis_client` is requested for its FLUSHDB-before/after isolation
+    guarantee even though this fixture's own redbeat calls use
+    RedBeat's own synchronous client, not the fixture's async client
+    directly — FLUSHDB operates at the database level regardless of
+    which client performs it. `CELERY_BROKER_URL` is cleared from the
+    environment so this app's broker/redbeat resolution is driven
+    exclusively by the explicit `Settings` constructed below (mirrors
+    `test_celery_app.py`, `test_broker_url_propagated_from_settings`).
+
+    Pre-warms `app.redbeat_conf` (via `ensure_conf`) under a local
+    warning suppression: redbeat's `RedBeatConfig.__init__` emits a
+    one-time `DeprecationWarning` when `redbeat_redis_url` is not
+    explicitly set — Sentinel's deliberate, tested configuration (see
+    `docs/features/platform/fetcher-infrastructure.md`, Redbeat
+    Configuration, and `test_celery_app.py`,
+    `test_no_redbeat_redis_url_override`). Every project pytest run
+    turns warnings into errors (`filterwarnings = ["error"]` in
+    `pyproject.toml`), so this expected, benign, already-accepted
+    library warning would otherwise fail the first redbeat operation
+    in every test. `ensure_conf` caches the config on the app instance,
+    so pre-warming it here means the warning never resurfaces for the
+    rest of the test.
+    """
+    monkeypatch.delenv("CELERY_BROKER_URL", raising=False)
+    settings = Settings(
+        _env_file=None,
+        jwt_secret_key="a" * 32,
+        app_name="sentinel-test",
+        log_level="INFO",
+        log_format="json",
+        celery_broker_url=_redis_test_url,
+        celery_timezone="UTC",
+        celery_enable_utc=True,
+    )
+    celery_test_app = create_celery_app(settings)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        ensure_conf(celery_test_app)
+    return celery_test_app
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")

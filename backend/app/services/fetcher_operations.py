@@ -1,0 +1,659 @@
+"""Fetcher Operations Service — Public read functions.
+
+See `docs/features/platform/fetcher-operations.md` (Fetcher Operations
+Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
+`get_fetcher_timeline`, Disabled Period Derivation) for the full
+specification this module implements.
+
+Only the four Public read functions are implemented here. The
+capability-protected config/audit-log reads (`get_fetcher_config`,
+`list_fetcher_audit_events`) and the mutation functions
+(`update_fetcher_config`, `trigger_fetcher`) are owned by later work
+items (P3-07, P3-08, P3-09) and are out of scope for this module as it
+stands.
+
+Module-level defaults (`docs/conventions.md`, Function Specification
+Completeness): all four functions below accept a caller-supplied
+`AsyncSession`, perform reads only, never flush or commit, and create
+no audit events. Every function propagates only the exceptions listed
+in the Service Exceptions table below, plus standard database
+exceptions that surface as the global `500 INTERNAL_ERROR` response.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from typing import Any
+from uuid import UUID
+
+import structlog
+from celery import Celery
+from redbeat import RedBeatSchedulerEntry
+from redis.exceptions import RedisError
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.dates import normalize_date_bound
+from app.core.enums import FetcherAuditEventType, FetcherRunStatus
+from app.core.exceptions import ServiceError
+from app.models.fetcher_audit_event import FetcherAuditEvent
+from app.models.fetcher_config import FetcherConfig
+from app.models.fetcher_run import FetcherRun
+from app.models.user import User
+from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
+
+logger = structlog.get_logger(__name__)
+
+# Hardcoded stale-detection margin (seconds), mirrors the private
+# `_STALE_MARGIN_SECONDS` constant in `app/services/fetcher_execution.py`
+# (see `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+# Detection). Duplicated rather than imported: that module's constant is
+# a private implementation detail of the run acquisition protocol, not a
+# shared public contract, and the two modules must not couple through a
+# private symbol. Both values are defined by the same specification and
+# are expected to change together if that specification's margin ever
+# changes.
+_STALE_MARGIN_SECONDS = 60
+
+# Default `run_timeout` for a registered fetcher with no `FetcherConfig`
+# row yet (bootstrap not run) — mirrors `FetcherConfig.run_timeout`'s
+# column default (`docs/data-model.md`, FetcherConfig).
+_DEFAULT_RUN_TIMEOUT = 3600
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class FetcherOperationsServiceError(ServiceError):
+    """Base exception for the fetcher operations service module."""
+
+
+class FetcherNotFoundError(FetcherOperationsServiceError):
+    """No fetcher with this name exists (not in the registry and no
+    `FetcherConfig` record in the database)."""
+
+    def __init__(self) -> None:
+        super().__init__("Fetcher not found.")
+
+
+class FetcherRunNotFoundError(FetcherOperationsServiceError):
+    """The specified run does not exist or does not belong to the named
+    fetcher."""
+
+    def __init__(self) -> None:
+        super().__init__("Fetcher run not found.")
+
+
+# ---------------------------------------------------------------------------
+# Result types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FetcherRunSummary:
+    """One run, shaped for the `List Fetchers`/`List Fetcher Runs`
+    responses. `triggered_by_user` is already visibility-filtered by
+    the producing function (`None` unless the caller holds
+    `manage_fetchers`)."""
+
+    id: UUID
+    fetcher_name: str
+    started_at: datetime
+    finished_at: datetime | None
+    duration_seconds: float | None
+    status: str
+    items_created: int
+    items_updated: int
+    items_failed: int
+    error_message: str | None
+    triggered_by: str
+    triggered_by_user: User | None
+    stale: bool
+
+
+@dataclass(frozen=True)
+class FetcherRunDetail(FetcherRunSummary):
+    """Full run detail. `error_detail`/`error_traceback` are always the
+    raw stored values here — the caller (API router) decides whether to
+    surface them, based on the same `has_manage_fetchers` value it
+    passed into `get_fetcher_run()`."""
+
+    error_detail: str | None
+    error_traceback: str | None
+
+
+@dataclass(frozen=True)
+class FetcherListItem:
+    """One entry in the `List Fetchers` response."""
+
+    fetcher_name: str
+    registered: bool
+    description: str | None
+    enabled: bool
+    effective_schedule: str | None
+    schedule_is_override: bool | None
+    default_schedule: str | None
+    cve_source_type: str | None
+    next_run_at: datetime | None
+    custom_settings_count: int
+    last_run: FetcherRunSummary | None
+
+
+@dataclass(frozen=True)
+class FetcherRunPage:
+    """One page of `FetcherRunSummary` rows."""
+
+    items: list[FetcherRunSummary]
+    total: int
+    page: int
+    per_page: int
+
+
+@dataclass(frozen=True)
+class DisabledPeriod:
+    """One derived disabled period. `disabled_by`/`enabled_by` are
+    already visibility-filtered (`None` unless the caller holds
+    `manage_fetchers`)."""
+
+    disabled_at: datetime
+    disabled_by: User | None
+    enabled_at: datetime | None
+    enabled_by: User | None
+
+
+@dataclass(frozen=True)
+class TimelinePoint:
+    """One chart data point — a single `FetcherRun` record."""
+
+    run_id: UUID
+    timestamp: datetime
+    duration_seconds: float | None
+    items_created: int
+    items_updated: int
+    items_failed: int
+    status: str
+
+
+@dataclass(frozen=True)
+class FetcherTimeline:
+    points: list[TimelinePoint]
+    disabled_periods: list[DisabledPeriod]
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_stale(
+    status: str, started_at: datetime, run_timeout: int, now: datetime
+) -> bool:
+    """`True` when `status` is `running` and elapsed time exceeds
+    `run_timeout + _STALE_MARGIN_SECONDS`."""
+    if status != FetcherRunStatus.RUNNING.value:
+        return False
+    elapsed = (now - started_at).total_seconds()
+    return elapsed > run_timeout + _STALE_MARGIN_SECONDS
+
+
+def _count_recognized_settings(
+    fetcher_cls: type[BaseFetcher], custom_settings: dict[str, Any]
+) -> int:
+    """Number of `custom_settings` keys recognized by `fetcher_cls`'s
+    current `Settings` schema. Orphaned keys (no longer declared) are
+    excluded. `0` if the fetcher declares no `Settings` model."""
+    settings_cls = fetcher_cls.Settings
+    if settings_cls is None:
+        return 0
+    return sum(1 for key in custom_settings if key in settings_cls.model_fields)
+
+
+def _build_run_summary(
+    run: FetcherRun, run_timeout: int, now: datetime, has_manage_fetchers: bool
+) -> FetcherRunSummary:
+    return FetcherRunSummary(
+        id=run.id,
+        fetcher_name=run.fetcher_name,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        duration_seconds=run.duration_seconds,
+        status=run.status,
+        items_created=run.items_created,
+        items_updated=run.items_updated,
+        items_failed=run.items_failed,
+        error_message=run.error_message,
+        triggered_by=run.triggered_by,
+        triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
+        stale=_is_stale(run.status, run.started_at, run_timeout, now),
+    )
+
+
+async def _ensure_fetcher_exists(db: AsyncSession, fetcher_name: str) -> int:
+    """Validate that `fetcher_name` exists (registered or deregistered)
+    and return the `run_timeout` to use for stale-run calculations.
+
+    A registered fetcher with no `FetcherConfig` row yet (bootstrap not
+    run) is a valid, existing fetcher — returns the code-level default
+    (`_DEFAULT_RUN_TIMEOUT`). A name absent from both the registry and
+    `FetcherConfig` raises `FetcherNotFoundError`.
+    """
+    result = await db.execute(
+        select(FetcherConfig.run_timeout).where(
+            FetcherConfig.fetcher_name == fetcher_name
+        )
+    )
+    run_timeout = result.scalar_one_or_none()
+    if run_timeout is not None:
+        return run_timeout
+    if fetcher_name in FETCHER_REGISTRY:
+        return _DEFAULT_RUN_TIMEOUT
+    raise FetcherNotFoundError()
+
+
+def _read_due_times(celery_app: Celery, names: list[str]) -> dict[str, datetime | None]:
+    """Synchronous batch read of each `name`'s RedBeat `due_at`.
+
+    Uses `RedBeatSchedulerEntry.generate_key()` + `.from_key()`
+    exclusively — no raw Redis key is ever constructed (see
+    `docs/conventions.md`, Redis Key Conventions). A missing entry
+    (`KeyError`) yields `None` for that name only. Any `RedisError`
+    propagates uncaught — the caller (`_resolve_next_run_times`)
+    discards the entire partial batch and treats every requested name
+    as `None` on that failure, per
+    `docs/features/platform/fetcher-infrastructure.md` ("`next_run_at`
+    Calculation", API endpoint failure handling).
+    """
+    result: dict[str, datetime | None] = {}
+    for name in names:
+        key = RedBeatSchedulerEntry.generate_key(celery_app, name)
+        try:
+            entry = RedBeatSchedulerEntry.from_key(key, app=celery_app)
+        except KeyError:
+            result[name] = None
+            continue
+        result[name] = entry.due_at
+    return result
+
+
+async def _resolve_next_run_times(
+    celery_app: Celery, names: list[str]
+) -> dict[str, datetime | None]:
+    """Resolve `next_run_at` for every enabled, registered fetcher in
+    `names`, offloading the synchronous RedBeat/Redis client to a
+    worker thread so it never blocks the event loop.
+
+    On any `RedisError`, logs one WARNING (no exception string, no
+    Redis URL/credentials — only the exception type name) and returns
+    `None` for every requested name, discarding any partial results
+    already read within the same batch.
+    """
+    if not names:
+        return {}
+    try:
+        return await asyncio.to_thread(_read_due_times, celery_app, names)
+    except RedisError as exc:
+        logger.warning(
+            "fetcher_redbeat_next_run_unavailable", error_type=type(exc).__name__
+        )
+        return dict.fromkeys(names, None)
+
+
+async def _resolve_disabled_periods(
+    db: AsyncSession,
+    fetcher_name: str,
+    from_date: datetime,
+    to_date: datetime,
+    has_manage_fetchers: bool,
+) -> list[DisabledPeriod]:
+    """Implements Disabled Period Derivation
+    (`docs/features/platform/fetcher-operations.md`): pairs each
+    `disabled` event with the next `enabled` event, keeps an unpaired
+    trailing `disabled` open-ended, ignores a leading orphaned
+    `enabled`, and keeps only intervals intersecting
+    `[from_date, to_date]` without clipping their timestamps."""
+    result = await db.execute(
+        select(FetcherAuditEvent)
+        .where(
+            FetcherAuditEvent.fetcher_name == fetcher_name,
+            FetcherAuditEvent.event_type.in_(
+                [
+                    FetcherAuditEventType.DISABLED.value,
+                    FetcherAuditEventType.ENABLED.value,
+                ]
+            ),
+        )
+        .options(selectinload(FetcherAuditEvent.actor))
+        .order_by(FetcherAuditEvent.created_at.asc(), FetcherAuditEvent.id.asc())
+    )
+    events = list(result.scalars().all())
+
+    intervals: list[tuple[FetcherAuditEvent, FetcherAuditEvent | None]] = []
+    pending_disabled: FetcherAuditEvent | None = None
+    for event in events:
+        if event.event_type == FetcherAuditEventType.DISABLED.value:
+            if pending_disabled is None:
+                pending_disabled = event
+            # else: consecutive `disabled` events — the earliest opens
+            # the interval, later ones are ignored.
+        elif pending_disabled is not None:
+            intervals.append((pending_disabled, event))
+            pending_disabled = None
+        # else: orphaned `enabled` (no preceding `disabled`) — ignored.
+    if pending_disabled is not None:
+        intervals.append((pending_disabled, None))
+
+    periods: list[DisabledPeriod] = []
+    for disabled_event, enabled_event in intervals:
+        disabled_at = disabled_event.created_at
+        enabled_at = enabled_event.created_at if enabled_event is not None else None
+        intersects = disabled_at <= to_date and (
+            enabled_at is None or enabled_at >= from_date
+        )
+        if not intersects:
+            continue
+        periods.append(
+            DisabledPeriod(
+                disabled_at=disabled_at,
+                disabled_by=disabled_event.actor if has_manage_fetchers else None,
+                enabled_at=enabled_at,
+                enabled_by=(
+                    enabled_event.actor
+                    if enabled_event is not None and has_manage_fetchers
+                    else None
+                ),
+            )
+        )
+    return periods
+
+
+# ---------------------------------------------------------------------------
+# Public functions
+# ---------------------------------------------------------------------------
+
+
+async def list_fetchers(
+    db: AsyncSession,
+    *,
+    has_manage_fetchers: bool,
+    celery_app: Celery,
+) -> list[FetcherListItem]:
+    """List every fetcher — registered and deregistered — merged with
+    its latest run and, for enabled registered fetchers, its next
+    scheduled run time.
+
+    See `docs/features/platform/fetcher-operations.md` (`list_fetchers`)
+    for the full algorithm. Always succeeds — Redis unavailability
+    degrades `next_run_at` to `null` for all fetchers rather than
+    raising.
+    """
+    now = datetime.now(UTC)
+
+    configs_result = await db.execute(select(FetcherConfig))
+    configs_by_name = {c.fetcher_name: c for c in configs_result.scalars().all()}
+
+    all_names = sorted(set(FETCHER_REGISTRY) | set(configs_by_name))
+
+    last_run_result = await db.execute(
+        select(FetcherRun)
+        .distinct(FetcherRun.fetcher_name)
+        .order_by(
+            FetcherRun.fetcher_name,
+            FetcherRun.started_at.desc(),
+            FetcherRun.id.desc(),
+        )
+        .options(selectinload(FetcherRun.triggered_by_user))
+    )
+    last_run_by_name = {
+        run.fetcher_name: run for run in last_run_result.scalars().all()
+    }
+
+    enabled_registered_names = [
+        name
+        for name in all_names
+        if name in FETCHER_REGISTRY
+        and (configs_by_name.get(name) is None or configs_by_name[name].enabled)
+    ]
+    next_run_by_name = await _resolve_next_run_times(
+        celery_app, enabled_registered_names
+    )
+
+    items: list[FetcherListItem] = []
+    for name in all_names:
+        fetcher_cls = FETCHER_REGISTRY.get(name)
+        config = configs_by_name.get(name)
+
+        description: str | None
+        default_schedule: str | None
+        cve_source_type: str | None
+        effective_schedule: str | None
+        schedule_is_override: bool | None
+        next_run_at: datetime | None
+
+        if fetcher_cls is not None:
+            description = fetcher_cls.description
+            default_schedule = fetcher_cls.default_schedule
+            cve_source_type = getattr(fetcher_cls, "cve_source_type", None)
+            if config is not None:
+                enabled = config.enabled
+                effective_schedule = config.schedule_override or default_schedule
+                schedule_is_override = config.schedule_override is not None
+                custom_settings_count = _count_recognized_settings(
+                    fetcher_cls, config.custom_settings
+                )
+                run_timeout = config.run_timeout
+            else:
+                enabled = True
+                effective_schedule = default_schedule
+                schedule_is_override = False
+                custom_settings_count = 0
+                run_timeout = _DEFAULT_RUN_TIMEOUT
+            next_run_at = next_run_by_name.get(name) if enabled else None
+        else:
+            assert config is not None  # deregistered: a FetcherConfig row must exist
+            description = None
+            default_schedule = None
+            cve_source_type = None
+            enabled = config.enabled
+            effective_schedule = config.schedule_override
+            schedule_is_override = None
+            custom_settings_count = len(config.custom_settings)
+            run_timeout = config.run_timeout
+            next_run_at = None
+
+        run = last_run_by_name.get(name)
+        last_run_summary = (
+            _build_run_summary(run, run_timeout, now, has_manage_fetchers)
+            if run is not None
+            else None
+        )
+
+        items.append(
+            FetcherListItem(
+                fetcher_name=name,
+                registered=fetcher_cls is not None,
+                description=description,
+                enabled=enabled,
+                effective_schedule=effective_schedule,
+                schedule_is_override=schedule_is_override,
+                default_schedule=default_schedule,
+                cve_source_type=cve_source_type,
+                next_run_at=next_run_at,
+                custom_settings_count=custom_settings_count,
+                last_run=last_run_summary,
+            )
+        )
+    return items
+
+
+async def list_fetcher_runs(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+    has_manage_fetchers: bool,
+    page: int,
+    per_page: int,
+    status: str | None = None,
+    from_date: date | datetime | None = None,
+    to_date: date | datetime | None = None,
+) -> FetcherRunPage:
+    """Return one page of `FetcherRun` rows for `fetcher_name`.
+
+    See `docs/features/platform/fetcher-operations.md`
+    (`list_fetcher_runs`) for the full contract. `status`, when
+    provided, is validated against `FetcherRunStatus` here (after the
+    existence check) — an invalid value yields an empty page rather
+    than a database query, per `docs/api-spec.md` (Enum Filter
+    Validation). This mirrors the router-level `_parse_event_types`
+    pattern used by other list endpoints, but is performed inside this
+    function specifically so the fetcher-existence check always
+    precedes it (a nonexistent fetcher must still raise
+    `FetcherNotFoundError` regardless of the `status` value).
+
+    Raises:
+        FetcherNotFoundError: `fetcher_name` is neither in the registry
+            nor has a `FetcherConfig` row.
+    """
+    run_timeout = await _ensure_fetcher_exists(db, fetcher_name)
+
+    if status is not None:
+        try:
+            FetcherRunStatus(status)
+        except ValueError:
+            return FetcherRunPage(items=[], total=0, page=page, per_page=per_page)
+
+    filters = [FetcherRun.fetcher_name == fetcher_name]
+    if status is not None:
+        filters.append(FetcherRun.status == status)
+    if from_date is not None:
+        lower = normalize_date_bound(from_date, end_of_day=False)
+        filters.append(FetcherRun.started_at >= lower)
+    if to_date is not None:
+        upper = normalize_date_bound(to_date, end_of_day=True)
+        filters.append(FetcherRun.started_at <= upper)
+
+    count_query = select(func.count()).select_from(FetcherRun).where(*filters)
+    total = (await db.execute(count_query)).scalar_one()
+
+    data_query = (
+        select(FetcherRun)
+        .where(*filters)
+        .options(selectinload(FetcherRun.triggered_by_user))
+        .order_by(FetcherRun.started_at.desc(), FetcherRun.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+    )
+    runs = list((await db.execute(data_query)).scalars().all())
+    now = datetime.now(UTC)
+    items = [
+        _build_run_summary(run, run_timeout, now, has_manage_fetchers) for run in runs
+    ]
+    return FetcherRunPage(items=items, total=total, page=page, per_page=per_page)
+
+
+async def get_fetcher_run(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+    run_id: UUID,
+    has_manage_fetchers: bool,
+) -> FetcherRunDetail:
+    """Return full detail for one `FetcherRun`.
+
+    `error_detail`/`error_traceback` are always populated with the raw
+    stored values on the returned object — the caller (API router)
+    decides whether to surface them in the HTTP response using the same
+    `has_manage_fetchers` value passed in here, per
+    `docs/features/platform/fetcher-operations.md` (Get Fetcher Run
+    Detail, Fields: "absent from the response body", a presentation
+    concern resolved at the schema/serialization layer).
+
+    Raises:
+        FetcherNotFoundError: `fetcher_name` is unknown.
+        FetcherRunNotFoundError: `run_id` does not exist or belongs to
+            a different fetcher.
+    """
+    run_timeout = await _ensure_fetcher_exists(db, fetcher_name)
+
+    result = await db.execute(
+        select(FetcherRun)
+        .where(FetcherRun.id == run_id, FetcherRun.fetcher_name == fetcher_name)
+        .options(selectinload(FetcherRun.triggered_by_user))
+    )
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise FetcherRunNotFoundError()
+
+    now = datetime.now(UTC)
+    return FetcherRunDetail(
+        id=run.id,
+        fetcher_name=run.fetcher_name,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        duration_seconds=run.duration_seconds,
+        status=run.status,
+        items_created=run.items_created,
+        items_updated=run.items_updated,
+        items_failed=run.items_failed,
+        error_message=run.error_message,
+        triggered_by=run.triggered_by,
+        triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
+        stale=_is_stale(run.status, run.started_at, run_timeout, now),
+        error_detail=run.error_detail,
+        error_traceback=run.error_traceback,
+    )
+
+
+async def get_fetcher_timeline(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+    has_manage_fetchers: bool,
+    from_date: datetime,
+    to_date: datetime,
+) -> FetcherTimeline:
+    """Return time-series run data and disabled periods for chart
+    rendering.
+
+    See `docs/features/platform/fetcher-operations.md`
+    (`get_fetcher_timeline`, Disabled Period Derivation) for the full
+    contract. `from_date`/`to_date` are already resolved (defaults
+    applied, normalized to UTC) by the API layer — the
+    `DATE_RANGE_TOO_WIDE` (1825-day maximum) check is also performed
+    there, before this function is called.
+
+    Raises:
+        FetcherNotFoundError: `fetcher_name` is unknown.
+    """
+    await _ensure_fetcher_exists(db, fetcher_name)
+
+    runs_result = await db.execute(
+        select(FetcherRun)
+        .where(
+            FetcherRun.fetcher_name == fetcher_name,
+            FetcherRun.started_at >= from_date,
+            FetcherRun.started_at <= to_date,
+        )
+        .order_by(FetcherRun.started_at.asc(), FetcherRun.id.asc())
+    )
+    points = [
+        TimelinePoint(
+            run_id=run.id,
+            timestamp=run.started_at,
+            duration_seconds=run.duration_seconds,
+            items_created=run.items_created,
+            items_updated=run.items_updated,
+            items_failed=run.items_failed,
+            status=run.status,
+        )
+        for run in runs_result.scalars().all()
+    ]
+
+    disabled_periods = await _resolve_disabled_periods(
+        db, fetcher_name, from_date, to_date, has_manage_fetchers
+    )
+    return FetcherTimeline(points=points, disabled_periods=disabled_periods)
