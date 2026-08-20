@@ -1,11 +1,11 @@
-"""Black-box image smoke assertions for the Public fetcher observation
-API (`backend/app/api/v1/fetchers.py`).
+"""Black-box image smoke assertions for the fetcher observation and
+admin config/audit-log API (`backend/app/api/v1/fetchers.py`).
 
 Verifies — over a real ASGI server (uvicorn) and a real HTTP client
 (`urllib`), the only combination that can observe this — representative
-authorized and anonymous responses from all four
-`GET /api/v1/fetchers*` endpoints against the built image. The shipped
-image's `FETCHER_REGISTRY` has no production fetcher yet (see
+authorized and anonymous responses from all six `GET /api/v1/fetchers*`
+endpoints against the built image. The shipped image's
+`FETCHER_REGISTRY` has no production fetcher yet (see
 `docs/features/platform/fetcher-infrastructure.md`, Fetcher Registry),
 so this scenario arranges a deregistered `FetcherConfig` row directly —
 the same "historical data only" shape the endpoints document for a
@@ -38,6 +38,7 @@ from sqlalchemy import delete
 
 from app.core.enums import Role, SessionCreationReason
 from app.database import async_session_factory
+from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
 from app.models.session import Session
@@ -59,7 +60,11 @@ async def arrange():
         db.add(admin)
         await db.flush()
         db.add(UserRole(user_id=admin.id, role=Role.ADMIN.value))
-        config = FetcherConfig(fetcher_name=_FETCHER_NAME)
+        config = FetcherConfig(
+            fetcher_name=_FETCHER_NAME,
+            schedule_override="0 5 * * *",
+            custom_settings={"orphaned_key": "raw_value"},
+        )
         db.add(config)
         await db.flush()
         run = FetcherRun(
@@ -77,6 +82,16 @@ async def arrange():
             triggered_by="schedule",
         )
         db.add(run)
+        # Uses `triggered` (not `disabled`/`enabled`) so this event does
+        # not participate in Disabled Period Derivation and interfere
+        # with `get_fetcher_timeline_returns_envelope`'s empty-periods
+        # assertion below.
+        audit_event = FetcherAuditEvent(
+            fetcher_name=_FETCHER_NAME,
+            event_type="triggered",
+            user_id=admin.id,
+        )
+        db.add(audit_event)
         await db.flush()
         admin_session = await create_session(
             db, admin, SessionCreationReason.LOCAL_LOGIN
@@ -89,6 +104,11 @@ async def cleanup(admin_id):
     async with async_session_factory() as db:
         await db.execute(
             delete(FetcherRun).where(FetcherRun.fetcher_name == _FETCHER_NAME)
+        )
+        await db.execute(
+            delete(FetcherAuditEvent).where(
+                FetcherAuditEvent.fetcher_name == _FETCHER_NAME
+            )
         )
         await db.execute(
             delete(FetcherConfig).where(FetcherConfig.fetcher_name == _FETCHER_NAME)
@@ -168,6 +188,43 @@ def get_fetcher_timeline_returns_envelope():
     print("fetchers-timeline-ok")
 
 
+def get_fetcher_config_anonymous_returns_401():
+    status, body = _request("GET", f"/api/v1/fetchers/{_FETCHER_NAME}/config")
+    assert status == 401, (status, body)
+    assert body["code"] == "AUTH_NOT_AUTHENTICATED"
+    print("fetchers-config-anonymous-401-ok")
+
+
+def get_fetcher_config_admin_shows_deregistered_snapshot(admin_token):
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_FETCHER_NAME}/config", token=admin_token
+    )
+    assert status == 200, (status, body)
+    assert body["data"]["default_schedule"] is None
+    assert body["data"]["settings_schema"] is None
+    assert body["data"]["effective_schedule"] == "0 5 * * *"
+    assert body["data"]["custom_settings"] == {"orphaned_key": "raw_value"}
+    print("fetchers-config-admin-ok")
+
+
+def get_fetcher_audit_log_anonymous_returns_401():
+    status, body = _request("GET", f"/api/v1/fetchers/{_FETCHER_NAME}/audit-log")
+    assert status == 401, (status, body)
+    assert body["code"] == "AUTH_NOT_AUTHENTICATED"
+    print("fetchers-audit-log-anonymous-401-ok")
+
+
+def get_fetcher_audit_log_admin_shows_event(admin_token, admin_id):
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_FETCHER_NAME}/audit-log", token=admin_token
+    )
+    assert status == 200, (status, body)
+    assert body["meta"]["total"] == 1
+    assert body["data"][0]["event_type"] == "triggered"
+    assert body["data"][0]["actor"]["id"] == str(admin_id)
+    print("fetchers-audit-log-admin-ok")
+
+
 def unauthenticated_invalid_credential_returns_401():
     status, body = _request(
         "GET", "/api/v1/fetchers", token="not-a-real-token"
@@ -190,6 +247,14 @@ async def main():
             get_fetcher_run_admin_shows_raw_diagnostics, run_id, admin_token
         )
         await asyncio.to_thread(get_fetcher_timeline_returns_envelope)
+        await asyncio.to_thread(get_fetcher_config_anonymous_returns_401)
+        await asyncio.to_thread(
+            get_fetcher_config_admin_shows_deregistered_snapshot, admin_token
+        )
+        await asyncio.to_thread(get_fetcher_audit_log_anonymous_returns_401)
+        await asyncio.to_thread(
+            get_fetcher_audit_log_admin_shows_event, admin_token, admin_id
+        )
         await asyncio.to_thread(unauthenticated_invalid_credential_returns_401)
     finally:
         await cleanup(admin_id)
@@ -215,4 +280,8 @@ def test_fetchers_api_read_paths_are_observable_in_built_image(
     assert "fetchers-run-detail-anonymous-ok" in result.stdout
     assert "fetchers-run-detail-admin-ok" in result.stdout
     assert "fetchers-timeline-ok" in result.stdout
+    assert "fetchers-config-anonymous-401-ok" in result.stdout
+    assert "fetchers-config-admin-ok" in result.stdout
+    assert "fetchers-audit-log-anonymous-401-ok" in result.stdout
+    assert "fetchers-audit-log-admin-ok" in result.stdout
     assert "fetchers-invalid-credential-401-ok" in result.stdout

@@ -220,8 +220,10 @@ disabled, derived from `FetcherAuditEvent` records with
 **Algorithm**:
 
 1. Query all `FetcherAuditEvent` records for the fetcher where
-   `event_type IN ('disabled', 'enabled')`, ordered by
-   `created_at ASC, id ASC`.
+   `event_type IN ('disabled', 'enabled')`, ordered by `id ASC` (fixed
+   — no client-controlled sort). `id` is a UUIDv7 value, so this is
+   equivalent to `created_at ASC` with a deterministic tiebreak, in a
+   single column.
 2. Walk the ordered events and pair each `disabled` event with the next
    `enabled` event to form an interval `[disabled_at, enabled_at]`.
    Consecutive `disabled` events without an intervening `enabled`: the
@@ -428,7 +430,9 @@ Validation").
      events by the specified user. Unknown actor returns empty results,
      not 404.
    - `from_date` / `to_date`: filter on `created_at` (inclusive).
-3. Order: `created_at DESC, id DESC` (fixed, not client-controlled).
+3. Order: `id DESC` (fixed, not client-controlled). `id` is a UUIDv7
+   value, so this is equivalent to `created_at DESC` with a
+   deterministic tiebreak, in a single column.
 4. Apply pagination.
 5. Actor field in response: always a User Reference Object (this
    endpoint requires `manage_fetchers`).
@@ -1165,9 +1169,11 @@ Returns the audit trail of admin actions for a fetcher.
 | `from_date` | datetime | — | ISO 8601 date/datetime. Include events from this date onwards (inclusive) |
 | `to_date` | datetime | — | ISO 8601 date/datetime. Include events up to this date (inclusive) |
 
-**Sorting**: fixed `created_at DESC, id DESC` (most recent first).
-Client-controlled sorting is not supported — audit trail has a single
-natural reverse-chronological ordering consistent with other audit log
+**Sorting**: fixed `id` descending (most recent first). `id` is a
+UUIDv7 value, so this is equivalent to `created_at` descending with a
+deterministic tiebreak, in a single column. Client-controlled sorting
+is not supported — audit trail has a single natural
+reverse-chronological ordering consistent with other audit log
 endpoints in the system (`identity-audit-log.md`,
 `system-settings.md`).
 

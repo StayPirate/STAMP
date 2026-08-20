@@ -1,12 +1,14 @@
-"""Public fetcher observation API endpoints.
+"""Fetcher observation and admin config/audit-log API endpoints.
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
-Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data) for
-the authoritative endpoint contracts this module implements. Handlers
-stay thin: they validate, derive `has_manage_fetchers` from the
-optional principal, delegate to `app.services.fetcher_operations`, and
-map the result to the documented response — no business logic or
-database query lives here.
+Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
+Fetcher Config, Get Fetcher Audit Log) for the authoritative endpoint
+contracts this module implements. Handlers stay thin: they validate,
+derive `has_manage_fetchers` from the optional principal (Public
+endpoints) or require the `manage_fetchers` capability outright (admin
+endpoints), delegate to `app.services.fetcher_operations`, and map the
+result to the documented response — no business logic or database
+query lives here.
 """
 
 from __future__ import annotations
@@ -17,7 +19,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.dependencies import OptionalCurrentUser
+from app.api.dependencies import (
+    AuthenticatedPrincipal,
+    OptionalCurrentUser,
+    require_capability,
+)
 from app.celery_app import celery_app
 from app.core.dates import (
     normalize_date_bound,
@@ -28,8 +34,14 @@ from app.core.enums import Capability
 from app.core.errors import AppError, ErrorCode
 from app.core.permissions import get_capabilities
 from app.database import DatabaseSession
+from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.fetcher import (
+    FetcherAuditEventData,
+    FetcherAuditListResponse,
+    FetcherAuditQuery,
+    FetcherConfigData,
+    FetcherConfigResponse,
     FetcherDisabledPeriodData,
     FetcherLastRunData,
     FetcherListItemData,
@@ -172,6 +184,19 @@ def _not_found(exc: Exception) -> AppError:
     )
 
 
+def _serialize_audit_event(event: FetcherAuditEvent) -> FetcherAuditEventData:
+    return FetcherAuditEventData(
+        id=event.id,
+        fetcher_name=event.fetcher_name,
+        event_type=event.event_type,
+        actor=UserReference.model_validate(event.actor),
+        old_value=event.old_value,
+        new_value=event.new_value,
+        detail=event.detail,
+        created_at=event.created_at,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Query parameter builders
 #
@@ -237,6 +262,45 @@ def _fetcher_timeline_query(
     parsed_to = parse_date_range_bound("to_date", to_date)
     validate_date_range_order(parsed_from, parsed_to)
     return FetcherTimelineQuery(from_date=parsed_from, to_date=parsed_to)
+
+
+def _fetcher_audit_query(
+    *,
+    event_type: Annotated[
+        list[str],
+        Query(
+            default_factory=list,
+            description="Filter by event type. Repeatable; OR semantics.",
+        ),
+    ],
+    actor: Annotated[
+        str | None,
+        Query(description="Actor UUID or exact username."),
+    ] = None,
+    from_date: Annotated[
+        str | None,
+        Query(description="ISO 8601 date/datetime; inclusive lower bound."),
+    ] = None,
+    to_date: Annotated[
+        str | None,
+        Query(description="ISO 8601 date/datetime; inclusive upper bound."),
+    ] = None,
+    page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,
+    per_page: Annotated[
+        int, Query(ge=1, le=100, description="Items per page; maximum 100.")
+    ] = 20,
+) -> FetcherAuditQuery:
+    parsed_from = parse_date_range_bound("from_date", from_date)
+    parsed_to = parse_date_range_bound("to_date", to_date)
+    validate_date_range_order(parsed_from, parsed_to)
+    return FetcherAuditQuery(
+        event_type=event_type,
+        actor=actor,
+        from_date=parsed_from,
+        to_date=parsed_to,
+        page=page,
+        per_page=per_page,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -396,3 +460,88 @@ async def get_fetcher_timeline(
     except FetcherNotFoundError as exc:
         raise _not_found(exc) from exc
     return FetcherTimelineResponse(data=_serialize_timeline(timeline))
+
+
+@router.get(
+    "/fetchers/{fetcher_name}/config",
+    response_model=FetcherConfigResponse,
+    summary="Get fetcher config",
+    description=(
+        "Returns the current configuration for a fetcher, including any "
+        "fetcher-specific custom settings and the generated settings "
+        "schema. Requires the manage_fetchers capability."
+    ),
+)
+async def get_fetcher_config(
+    fetcher_name: str,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_FETCHERS)),
+    ],
+    db: DatabaseSession,
+) -> FetcherConfigResponse:
+    """Get fetcher config — see
+    `docs/features/platform/fetcher-operations.md` (Get Fetcher
+    Config)."""
+    try:
+        config = await fetcher_operations.get_fetcher_config(
+            db, fetcher_name=fetcher_name
+        )
+    except FetcherNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return FetcherConfigResponse(
+        data=FetcherConfigData(
+            fetcher_name=config.fetcher_name,
+            enabled=config.enabled,
+            schedule_override=config.schedule_override,
+            default_schedule=config.default_schedule,
+            effective_schedule=config.effective_schedule,
+            run_timeout=config.run_timeout,
+            request_delay=config.request_delay,
+            custom_settings=config.custom_settings,
+            settings_schema=config.settings_schema,
+            updated_at=config.updated_at,
+        )
+    )
+
+
+@router.get(
+    "/fetchers/{fetcher_name}/audit-log",
+    response_model=FetcherAuditListResponse,
+    summary="Get fetcher audit log",
+    description=(
+        "Returns a paginated, fixed reverse-chronological list of "
+        "administrative actions on a fetcher. Supports filtering by "
+        "event type, actor, and date range. Requires the manage_fetchers "
+        "capability."
+    ),
+)
+async def list_fetcher_audit_events(
+    fetcher_name: str,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_FETCHERS)),
+    ],
+    db: DatabaseSession,
+    query: Annotated[FetcherAuditQuery, Depends(_fetcher_audit_query)],
+) -> FetcherAuditListResponse:
+    """Get fetcher audit log — see
+    `docs/features/platform/fetcher-operations.md` (Get Fetcher Audit
+    Log)."""
+    try:
+        page = await fetcher_operations.list_fetcher_audit_events(
+            db,
+            fetcher_name=fetcher_name,
+            page=query.page,
+            per_page=query.per_page,
+            event_type=query.event_type,
+            actor=query.actor,
+            from_date=query.from_date,
+            to_date=query.to_date,
+        )
+    except FetcherNotFoundError as exc:
+        raise _not_found(exc) from exc
+    return FetcherAuditListResponse(
+        data=[_serialize_audit_event(event) for event in page.items],
+        meta=PaginationMeta(total=page.total, page=page.page, per_page=page.per_page),
+    )

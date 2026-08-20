@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field
 from redbeat import RedBeatSchedulerEntry
 from redbeat.schedulers import get_redis
 from redis.exceptions import RedisError
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.fetcher_operations as fetcher_operations_module
@@ -44,8 +46,10 @@ from app.services.fetcher_operations import (
     FetcherRunNotFoundError,
     _count_recognized_settings,
     _is_stale,
+    get_fetcher_config,
     get_fetcher_run,
     get_fetcher_timeline,
+    list_fetcher_audit_events,
     list_fetcher_runs,
     list_fetchers,
 )
@@ -1308,3 +1312,648 @@ class TestDisabledPeriodDerivation:
         assert privileged_timeline.disabled_periods[0].disabled_by.id == actor.id
         assert privileged_timeline.disabled_periods[0].enabled_by is not None
         assert privileged_timeline.disabled_periods[0].enabled_by.id == actor.id
+
+    async def test_equal_created_at_pairs_correctly_via_id_ordering(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        """Ordering is `id ASC` (UUIDv7), not `created_at ASC` — proven
+        by giving both events the exact same `created_at` and relying
+        on `id` (generated in call order) to pair them correctly."""
+        config = await fetcher_config_factory()
+        now = datetime.now(UTC)
+        same_time = now - timedelta(days=5)
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="disabled",
+            created_at=same_time,
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="enabled",
+            created_at=same_time,
+        )
+
+        timeline = await get_fetcher_timeline(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            from_date=now - timedelta(days=10),
+            to_date=now,
+        )
+
+        assert len(timeline.disabled_periods) == 1
+        assert timeline.disabled_periods[0].disabled_at == same_time
+        assert timeline.disabled_periods[0].enabled_at == same_time
+
+
+@pytest.mark.integration
+class TestGetFetcherConfig:
+    async def test_registered_fetcher_with_override_returns_merged_config(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name,
+            schedule_override="0 */2 * * *",
+            custom_settings={"results_per_page": 250},
+        )
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.fetcher_name == config.fetcher_name
+        assert result.enabled is True
+        assert result.schedule_override == "0 */2 * * *"
+        assert result.default_schedule == _WithSettingsFetcher.default_schedule
+        assert result.effective_schedule == "0 */2 * * *"
+        assert result.run_timeout == config.run_timeout
+        assert result.request_delay == config.request_delay
+        assert result.custom_settings == {"results_per_page": 250}
+        assert result.updated_at == config.updated_at
+
+    async def test_registered_fetcher_without_override_uses_default_schedule(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.schedule_override is None
+        assert result.effective_schedule == _NoSettingsFetcher.default_schedule
+
+    async def test_registered_fetcher_settings_schema_matches_model(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.settings_schema == _SettingsModel.model_json_schema()
+
+    async def test_registered_fetcher_without_settings_model_schema_is_none(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.settings_schema is None
+
+    async def test_deregistered_fetcher_returns_raw_snapshot(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        config = await fetcher_config_factory(
+            schedule_override="0 5 * * *",
+            custom_settings={"orphaned_key": "raw_value"},
+        )
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.default_schedule is None
+        assert result.settings_schema is None
+        assert result.effective_schedule == "0 5 * * *"
+        assert result.custom_settings == {"orphaned_key": "raw_value"}
+
+    async def test_deregistered_fetcher_without_override_effective_schedule_is_none(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        config = await fetcher_config_factory()
+
+        result = await get_fetcher_config(db_session, fetcher_name=config.fetcher_name)
+
+        assert result.effective_schedule is None
+
+    async def test_unknown_fetcher_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        with pytest.raises(FetcherNotFoundError):
+            await get_fetcher_config(db_session, fetcher_name="no-such-fetcher")
+
+    async def test_registered_fetcher_without_config_row_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A `FetcherConfig` row is a hard prerequisite for this
+        function — unlike the Public read functions, a registered
+        fetcher with no row yet (bootstrap not run) still raises,
+        consistent with `trigger_fetcher`/`update_fetcher_config`."""
+        _register(_NoSettingsFetcher)
+
+        with pytest.raises(FetcherNotFoundError):
+            await get_fetcher_config(db_session, fetcher_name=_NoSettingsFetcher.name)
+
+    async def test_database_error_propagates_unchanged(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def _boom(*args: Any, **kwargs: Any) -> None:
+            raise OperationalError("simulated", {}, Exception("boom"))
+
+        monkeypatch.setattr(db_session, "execute", _boom)
+
+        with pytest.raises(OperationalError):
+            await get_fetcher_config(db_session, fetcher_name="irrelevant")
+
+
+@pytest.mark.integration
+class TestListFetcherAuditEvents:
+    async def test_unknown_fetcher_raises_not_found(
+        self, db_session: AsyncSession
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        with pytest.raises(FetcherNotFoundError):
+            await list_fetcher_audit_events(
+                db_session, fetcher_name="no-such-fetcher", page=1, per_page=20
+            )
+
+    async def test_all_invalid_event_types_still_validates_fetcher_existence(
+        self, db_session: AsyncSession
+    ) -> None:
+        """An entirely-invalid `event_type` filter set must not mask a
+        nonexistent fetcher behind an empty `200`-equivalent page — the
+        existence check always runs first."""
+        FETCHER_REGISTRY.clear()
+        with pytest.raises(FetcherNotFoundError):
+            await list_fetcher_audit_events(
+                db_session,
+                fetcher_name="no-such-fetcher",
+                page=1,
+                per_page=20,
+                event_type=["not_a_real_type"],
+            )
+
+    async def test_isolates_by_fetcher_name(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config_a = await fetcher_config_factory()
+        config_b = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config_a.fetcher_name)
+        await fetcher_audit_event_factory(fetcher_name=config_b.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session, fetcher_name=config_a.fetcher_name, page=1, per_page=20
+        )
+
+        assert page.total == 1
+        assert page.items[0].fetcher_name == config_a.fetcher_name
+
+    async def test_actor_is_eagerly_loaded(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        actor = await user_factory(username="eagerloadfetcheractor")
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=actor.id
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session, fetcher_name=config.fetcher_name, page=1, per_page=20
+        )
+
+        assert page.items[0].actor is not None
+        assert page.items[0].actor.username == "eagerloadfetcheractor"
+
+    async def test_filter_by_actor_uuid(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        actor = await user_factory()
+        other_actor = await user_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=actor.id
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=other_actor.id
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            actor=str(actor.id),
+        )
+
+        assert page.total == 1
+        assert page.items[0].user_id == actor.id
+
+    async def test_filter_by_actor_username(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        actor = await user_factory(username="filterbyusernamefetcher")
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=actor.id
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            actor="filterbyusernamefetcher",
+        )
+
+        assert page.total == 1
+
+    async def test_unknown_actor_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            actor="no-such-actor",
+        )
+
+        assert page.total == 0
+
+    async def test_system_literal_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        """Every fetcher audit event has a human actor — `"system"`
+        never matches any row (`FetcherAuditLog.log_event()` enforces a
+        non-null `user_id`)."""
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            actor="system",
+        )
+
+        assert page.total == 0
+
+    async def test_matching_event_type_is_included(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="disabled"
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=["disabled"],
+        )
+
+        assert page.total == 1
+
+    async def test_repeatable_event_types_combine_with_or(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="disabled"
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="enabled"
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="triggered"
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=["disabled", "enabled"],
+        )
+
+        assert page.total == 2
+
+    async def test_mixed_valid_and_invalid_event_types_keeps_valid(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="disabled"
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=["disabled", "not_a_real_type"],
+        )
+
+        assert page.total == 1
+
+    async def test_all_invalid_event_types_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=["not_a_real_type"],
+        )
+
+        assert page.total == 0
+        assert page.items == []
+
+    async def test_comma_separated_value_is_treated_as_single_invalid_value(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, event_type="disabled"
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=["disabled,enabled"],
+        )
+
+        assert page.total == 0
+
+    async def test_empty_event_type_list_applies_no_filter(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            event_type=[],
+        )
+
+        assert page.total == 2
+
+    async def test_inclusive_from_and_to_date(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        in_range = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 13, tzinfo=UTC),
+        )
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            from_date=datetime(2026, 5, 1, tzinfo=UTC),
+            to_date=datetime(2026, 5, 31, tzinfo=UTC),
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == in_range.id
+
+    async def test_date_only_bounds_cover_full_day(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        event = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 13, 23, 59, 0, tzinfo=UTC),
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            from_date=datetime(2026, 5, 13, tzinfo=UTC).date(),
+            to_date=None,
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == event.id
+
+    async def test_filters_combine_with_and(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        actor = await user_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, user_id=actor.id, event_type="disabled"
+        )
+        other_actor = await user_factory()
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            user_id=other_actor.id,
+            event_type="disabled",
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=20,
+            actor=str(actor.id),
+            event_type=["disabled"],
+        )
+
+        assert page.total == 1
+
+    async def test_reports_filtered_total(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        for _ in range(3):
+            await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=1,
+            per_page=2,
+        )
+
+        assert page.total == 3
+        assert len(page.items) == 2
+
+    async def test_page_beyond_last_page_returns_empty_with_correct_total(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        page = await list_fetcher_audit_events(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            page=2,
+            per_page=20,
+        )
+
+        assert page.items == []
+        assert page.total == 1
+
+    async def test_orders_newest_first_via_id_desc(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        older = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 1, tzinfo=UTC),
+        )
+        newer = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            created_at=datetime(2026, 5, 2, tzinfo=UTC),
+        )
+
+        page = await list_fetcher_audit_events(
+            db_session, fetcher_name=config.fetcher_name, page=1, per_page=20
+        )
+
+        assert [item.id for item in page.items] == [newer.id, older.id]
+
+    async def test_equal_created_at_breaks_tie_by_id_desc(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        same_time = datetime(2026, 5, 13, tzinfo=UTC)
+        first = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, created_at=same_time
+        )
+        second = await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name, created_at=same_time
+        )
+        expected_order = sorted([first.id, second.id], reverse=True)
+
+        page = await list_fetcher_audit_events(
+            db_session, fetcher_name=config.fetcher_name, page=1, per_page=20
+        )
+
+        assert [item.id for item in page.items] == expected_order
+
+    async def test_no_audit_event_or_mutation_created(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_audit_event_factory(fetcher_name=config.fetcher_name)
+
+        await list_fetcher_audit_events(
+            db_session, fetcher_name=config.fetcher_name, page=1, per_page=20
+        )
+
+        rows = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert len(rows) == 1
+
+    async def test_database_error_propagates_unchanged(
+        self,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def _boom(*args: Any, **kwargs: Any) -> None:
+            raise OperationalError("simulated", {}, Exception("boom"))
+
+        monkeypatch.setattr(db_session, "execute", _boom)
+
+        with pytest.raises(OperationalError):
+            await list_fetcher_audit_events(
+                db_session, fetcher_name="irrelevant", page=1, per_page=20
+            )
