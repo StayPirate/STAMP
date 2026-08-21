@@ -434,7 +434,7 @@ propagation. This means a no-op PATCH cannot be used to repair a missing
 RedBeat entry for an already-enabled fetcher. The remedy for a missing
 entry is a Beat restart (which reconciles all entries from PostgreSQL —
 see `docs/features/platform/fetcher-infrastructure.md`, "Startup
-Validation").
+Reconciliation").
 
 #### `list_fetcher_audit_events`
 

@@ -153,8 +153,9 @@ class FetcherAuditEventType(StrEnum):
     Category B — classification (Python Enum only, no CHECK constraint;
     adding a value requires only a code change). See
     `docs/features/platform/fetcher-infrastructure.md`
-    (FetcherAuditEventType Enum, Event Field Values) for the full event
-    type contract: field values and the one-event-per-field rule.
+    (FetcherAuditEventType Enum, Event Field Values) for the field value
+    contract, and `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`) for the one-event-per-changed-field rule.
     """
 
     DISABLED = "disabled"

@@ -1540,6 +1540,26 @@ class TestUpdateFetcherConfigGuards:
                 payload=UpdateConfigPayload(enabled=False),
             )
 
+    async def test_registered_fetcher_without_config_row_raises_not_found(
+        self,
+        db_session: AsyncSession,
+        user_factory: UserFactory,
+    ) -> None:
+        """A `FetcherConfig` row is a hard prerequisite for this
+        function — a registered fetcher with no row yet (bootstrap not
+        run) still raises `FetcherNotFoundError`, mirroring
+        `get_fetcher_config`'s equivalent guard."""
+        _register(_NoSettingsFetcher)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherNotFoundError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=_NoSettingsFetcher.name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(enabled=False),
+            )
+
     async def test_run_timeout_change_with_active_non_stale_run_raises(
         self,
         db_session: AsyncSession,
@@ -1739,6 +1759,39 @@ class TestUpdateFetcherConfigGuards:
                     custom_settings={"nonexistent": 1, "results_per_page": 5000}
                 ),
             )
+
+    async def test_custom_settings_guard_failure_leaves_standard_fields_unapplied(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """The mutation is atomic across the whole payload: a guard
+        failure on `custom_settings` (evaluated before any mutation)
+        must leave an otherwise-valid standard-field change in the same
+        PATCH unapplied, with no audit events created."""
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name, enabled=True
+        )
+        original_updated_at = config.updated_at
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(
+                    enabled=False, custom_settings={"nonexistent": 1}
+                ),
+            )
+
+        await db_session.refresh(config)
+        assert config.enabled is True
+        assert config.updated_at == original_updated_at
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
 
 
 # ---------------------------------------------------------------------------

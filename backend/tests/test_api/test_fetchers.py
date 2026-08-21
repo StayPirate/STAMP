@@ -1055,6 +1055,20 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.status_code == 422
         assert response.json()["code"] == "VALIDATION_ERROR"
 
+    async def test_request_delay_out_of_bounds_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"request_delay": 301.0},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
     async def test_schedule_override_too_long_returns_422(
         self,
         admin_client: AsyncClient,
@@ -1189,6 +1203,59 @@ class TestUpdateFetcherConfigEndpoint:
         )
         assert response.status_code == 200
         assert response.json()["data"]["custom_settings"] == {"results_per_page": 500}
+
+    async def test_schedule_override_explicit_null_reverts_to_default(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """An explicit `null` for `schedule_override` is a meaningful
+        value distinct from omission — it reverts the fetcher to its
+        code-defined `default_schedule` (`fetcher-operations.md`,
+        Update Fetcher Config, Validation rules)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, schedule_override="0 5 * * *"
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": None},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["schedule_override"] is None
+        assert data["effective_schedule"] == _StubFetcher.default_schedule
+
+        follow_up = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert follow_up.json()["data"]["schedule_override"] is None
+
+    async def test_custom_setting_explicit_null_resets_to_schema_default(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """An explicit `null` for a `custom_settings` key removes the
+        stored override, reverting `get_setting()` to the `Settings`
+        field's schema default (`fetcher-operations.md`, Update Fetcher
+        Config, Validation rules)."""
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name,
+            custom_settings={"results_per_page": 250},
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"results_per_page": None}},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["custom_settings"] == {}
+
+        follow_up = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert follow_up.json()["data"]["custom_settings"] == {}
 
     async def test_no_op_payload_returns_200_unchanged(
         self,
