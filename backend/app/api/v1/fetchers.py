@@ -2,22 +2,25 @@
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
 Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
-Fetcher Config, Get Fetcher Audit Log) for the authoritative endpoint
-contracts this module implements. Handlers stay thin: they validate,
-derive `has_manage_fetchers` from the optional principal (Public
-endpoints) or require the `manage_fetchers` capability outright (admin
-endpoints), delegate to `app.services.fetcher_operations`, and map the
-result to the documented response — no business logic or database
-query lives here.
+Fetcher Config, Update Fetcher Config, Get Fetcher Audit Log) for the
+authoritative endpoint contracts this module implements. Handlers stay
+thin: they validate, derive `has_manage_fetchers` from the optional
+principal (Public endpoints) or require the `manage_fetchers`
+capability outright (admin endpoints), delegate to
+`app.services.fetcher_operations`, and map the result to the documented
+response — no business logic or database query lives here.
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Query, status
+from redis.exceptions import RedisError
 
 from app.api.dependencies import (
     AuthenticatedPrincipal,
@@ -33,7 +36,7 @@ from app.core.dates import (
 from app.core.enums import Capability
 from app.core.errors import AppError, ErrorCode
 from app.core.permissions import get_capabilities
-from app.database import DatabaseSession
+from app.database import DatabaseSession, register_post_commit_callback
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.fetcher import (
@@ -42,6 +45,7 @@ from app.schemas.fetcher import (
     FetcherAuditQuery,
     FetcherConfigData,
     FetcherConfigResponse,
+    FetcherConfigUpdateRequest,
     FetcherDisabledPeriodData,
     FetcherLastRunData,
     FetcherListItemData,
@@ -56,14 +60,23 @@ from app.schemas.fetcher import (
     FetcherTimelineQuery,
     FetcherTimelineResponse,
 )
-from app.services import fetcher_operations, user_service
+from app.services import fetcher_operations, fetcher_schedule, user_service
 from app.services.fetcher_operations import (
+    UNSET,
+    FetcherAlreadyRunningError,
+    FetcherDeregisteredError,
     FetcherListItem,
     FetcherNotFoundError,
     FetcherRunNotFoundError,
     FetcherRunSummary,
+    FetcherSettingInvalidError,
+    FetcherSettingUnknownError,
     FetcherTimeline,
+    MissingType,
+    UpdateConfigPayload,
 )
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Fetchers"])
 
@@ -181,6 +194,55 @@ def _not_found(exc: Exception) -> AppError:
         status_code=status.HTTP_404_NOT_FOUND,
         code=ErrorCode.FETCHER_NOT_FOUND,
         detail=str(exc),
+    )
+
+
+def _deregistered(exc: Exception) -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.FETCHER_DEREGISTERED,
+        detail=str(exc),
+    )
+
+
+def _already_running(exc: Exception) -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.FETCHER_ALREADY_RUNNING,
+        detail=str(exc),
+    )
+
+
+def _setting_unknown(exc: FetcherSettingUnknownError) -> AppError:
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ErrorCode.FETCHER_SETTING_UNKNOWN,
+        detail=str(exc),
+    )
+
+
+def _setting_invalid(exc: FetcherSettingInvalidError) -> AppError:
+    return AppError(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        code=ErrorCode.FETCHER_SETTING_INVALID,
+        detail=str(exc),
+    )
+
+
+def _serialize_config(
+    config: fetcher_operations.FetcherConfigResult,
+) -> FetcherConfigData:
+    return FetcherConfigData(
+        fetcher_name=config.fetcher_name,
+        enabled=config.enabled,
+        schedule_override=config.schedule_override,
+        default_schedule=config.default_schedule,
+        effective_schedule=config.effective_schedule,
+        run_timeout=config.run_timeout,
+        request_delay=config.request_delay,
+        custom_settings=config.custom_settings,
+        settings_schema=config.settings_schema,
+        updated_at=config.updated_at,
     )
 
 
@@ -489,20 +551,123 @@ async def get_fetcher_config(
         )
     except FetcherNotFoundError as exc:
         raise _not_found(exc) from exc
-    return FetcherConfigResponse(
-        data=FetcherConfigData(
-            fetcher_name=config.fetcher_name,
-            enabled=config.enabled,
-            schedule_override=config.schedule_override,
-            default_schedule=config.default_schedule,
-            effective_schedule=config.effective_schedule,
-            run_timeout=config.run_timeout,
-            request_delay=config.request_delay,
-            custom_settings=config.custom_settings,
-            settings_schema=config.settings_schema,
-            updated_at=config.updated_at,
-        )
+    return FetcherConfigResponse(data=_serialize_config(config))
+
+
+def _build_update_payload(body: FetcherConfigUpdateRequest) -> UpdateConfigPayload:
+    """Translate `body.model_fields_set` into an `UpdateConfigPayload`
+    where an omitted field maps to `UNSET` and a present field carries
+    its parsed value through unchanged.
+
+    `enabled`, `run_timeout`, and `request_delay` are asserted non-`None`
+    when present: `FetcherConfigUpdateRequest`'s `_reject_null_*` field
+    validators already reject an explicit `null` for these three fields
+    before this function ever sees the body, so a present value is
+    always the validated type — mirrors the `AdminUserUpdateRequest`
+    `email` precedent (`app/api/v1/users.py`).
+    """
+    fields = body.model_fields_set
+
+    enabled: bool | MissingType = UNSET
+    if "enabled" in fields:
+        assert body.enabled is not None
+        enabled = body.enabled
+
+    schedule_override: str | MissingType | None = UNSET
+    if "schedule_override" in fields:
+        schedule_override = body.schedule_override
+
+    run_timeout: int | MissingType = UNSET
+    if "run_timeout" in fields:
+        assert body.run_timeout is not None
+        run_timeout = body.run_timeout
+
+    request_delay: float | MissingType = UNSET
+    if "request_delay" in fields:
+        assert body.request_delay is not None
+        request_delay = body.request_delay
+
+    custom_settings: dict[str, Any] | MissingType = UNSET
+    if "custom_settings" in fields:
+        assert body.custom_settings is not None
+        custom_settings = body.custom_settings
+
+    return UpdateConfigPayload(
+        enabled=enabled,
+        schedule_override=schedule_override,
+        run_timeout=run_timeout,
+        request_delay=request_delay,
+        custom_settings=custom_settings,
     )
+
+
+@router.patch(
+    "/fetchers/{fetcher_name}/config",
+    response_model=FetcherConfigResponse,
+    summary="Update fetcher config",
+    description=(
+        "Partially updates a fetcher's configuration — generic fields "
+        "(enabled, schedule_override, run_timeout, request_delay) and/or "
+        "fetcher-specific custom settings. Only the submitted fields are "
+        "changed; only actually-changed fields produce an audit event. "
+        "Schedule-affecting changes are propagated to redbeat after commit "
+        "on a best-effort basis. Requires the manage_fetchers capability."
+    ),
+)
+async def update_fetcher_config(
+    fetcher_name: str,
+    body: FetcherConfigUpdateRequest,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_FETCHERS)),
+    ],
+    db: DatabaseSession,
+) -> FetcherConfigResponse:
+    """Update fetcher config — see
+    `docs/features/platform/fetcher-operations.md` (Update Fetcher
+    Config)."""
+    try:
+        result = await fetcher_operations.update_fetcher_config(
+            db,
+            fetcher_name=fetcher_name,
+            user_id=principal.user.id,
+            payload=_build_update_payload(body),
+        )
+    except FetcherNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except FetcherDeregisteredError as exc:
+        raise _deregistered(exc) from exc
+    except FetcherAlreadyRunningError as exc:
+        raise _already_running(exc) from exc
+    except FetcherSettingUnknownError as exc:
+        raise _setting_unknown(exc) from exc
+    except FetcherSettingInvalidError as exc:
+        raise _setting_invalid(exc) from exc
+
+    propagation = result.propagation
+    if propagation is not None:
+
+        async def _propagate() -> None:
+            try:
+                await asyncio.to_thread(
+                    fetcher_schedule.propagate_config_update,
+                    celery_app,
+                    fetcher_name=propagation.fetcher_name,
+                    action=propagation.action,
+                    schedule_override=propagation.schedule_override,
+                    run_timeout=propagation.run_timeout,
+                )
+            except RedisError as exc:
+                logger.warning(
+                    "fetcher_config_redbeat_propagation_failed",
+                    fetcher_name=propagation.fetcher_name,
+                    action=propagation.action,
+                    error=str(exc),
+                )
+
+        register_post_commit_callback(db, _propagate)
+
+    return FetcherConfigResponse(data=_serialize_config(result.config))
 
 
 @router.get(

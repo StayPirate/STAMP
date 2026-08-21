@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -23,14 +23,21 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from celery import Celery
+from celery.schedules import crontab
 from fastapi import routing as fastapi_routing
 from fastapi.routing import APIRoute
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel, Field
+from redbeat import RedBeatSchedulerEntry
+from redis.exceptions import RedisError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.api.v1.fetchers as fetchers_module
+import app.services.fetcher_schedule as fetcher_schedule_module
 from app.api import dependencies
-from app.core.enums import Role
+from app.api.dependencies import SESSION_COOKIE_NAME
+from app.core.enums import Role, SessionCreationReason
+from app.database import get_db
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.fetcher_audit_event import FetcherAuditEvent
@@ -39,6 +46,7 @@ from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
+from app.services.session_service import create_session
 
 FetcherConfigFactory = Callable[..., Awaitable[FetcherConfig]]
 FetcherRunFactory = Callable[..., Awaitable[FetcherRun]]
@@ -80,6 +88,52 @@ async def admin_api_key_client(
     monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
     client.headers["Authorization"] = f"Bearer {token}"
     return client
+
+
+@pytest_asyncio.fixture
+async def admin_commit_client(
+    db_session: AsyncSession,
+    user_factory: UserFactory,
+    user_role_factory: UserRoleFactory,
+) -> AsyncGenerator[AsyncClient]:
+    """An admin-authenticated client whose `get_db` override performs a
+    real commit and executes post-commit callbacks.
+
+    The shared `client`/`admin_client` fixtures keep one rollback-owned
+    test transaction and never call `session.commit()`, so callbacks
+    registered via `register_post_commit_callback()` (the PATCH config
+    endpoint's post-commit RedBeat propagation) never run under them.
+    Mirrors `tests/test_api/test_users.py`'s `admin_commit_client` and
+    `tests/test_api/test_auth.py`'s `auth_client`. Redis isolation is
+    already composed by this file's autouse `_patch_celery_app` fixture
+    (which depends on `celery_test_app`, itself depending on
+    `redis_client`) — no separate dependency is needed here.
+    """
+    admin = await user_factory()
+    await user_role_factory(user_id=admin.id, role=Role.ADMIN.value)
+    created = await create_session(db_session, admin, SessionCreationReason.LOCAL_LOGIN)
+
+    async def _override_get_db() -> AsyncGenerator[AsyncSession]:
+        try:
+            yield db_session
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()
+            raise
+        else:
+            callbacks = db_session.info.pop("post_commit_callbacks", [])
+            for callback in callbacks:
+                await callback()
+
+    app.dependency_overrides[get_db] = _override_get_db
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as commit_client:
+            commit_client.cookies.set(SESSION_COOKIE_NAME, created.token)
+            yield commit_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
 
 
 @pytest.fixture(autouse=True)
@@ -150,12 +204,12 @@ async def _patch_celery_app(
 
 @pytest.mark.e2e
 class TestRouteInventory:
-    def test_only_the_six_read_endpoints_are_registered(self) -> None:
-        """No trigger, PATCH config, or IBS consumer endpoint is
-        introduced by this work item — see fetcher-operations.md
-        (Scope). Route discovery uses `iter_route_contexts()` — see
-        `tests/test_api_conventions.py` for why `app.routes` alone does
-        not expose routes included via `include_router()`.
+    def test_only_the_seven_endpoints_are_registered(self) -> None:
+        """No trigger or IBS consumer endpoint is introduced by this
+        work item — see fetcher-operations.md (Scope). Route discovery
+        uses `iter_route_contexts()` — see `tests/test_api_conventions.py`
+        for why `app.routes` alone does not expose routes included via
+        `include_router()`.
         """
         fetcher_routes = {
             (context.path, method)
@@ -171,6 +225,7 @@ class TestRouteInventory:
             ("/api/v1/fetchers/{fetcher_name}/runs/{run_id}", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/timeline", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/config", "GET"),
+            ("/api/v1/fetchers/{fetcher_name}/config", "PATCH"),
             ("/api/v1/fetchers/{fetcher_name}/audit-log", "GET"),
         }
 
@@ -713,11 +768,11 @@ class TestGetFetcherTimelineEndpoint:
 
 @pytest.mark.e2e
 class TestOutOfScopeEndpoints:
-    """No mutation or IBS consumer endpoint is introduced by this work
-    item — see `docs/features/platform/fetcher-operations.md` (Scope).
-    Verified here in addition to `TestRouteInventory` since a client
-    request to an unregistered path is the actually-observable contract
-    at the HTTP layer."""
+    """No manual-trigger or IBS consumer endpoint is introduced by this
+    work item — see `docs/features/platform/fetcher-operations.md`
+    (Scope). Verified here in addition to `TestRouteInventory` since a
+    client request to an unregistered path is the actually-observable
+    contract at the HTTP layer."""
 
     async def test_trigger_endpoint_not_found(
         self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
@@ -725,17 +780,6 @@ class TestOutOfScopeEndpoints:
         config = await fetcher_config_factory()
         response = await client.post(f"/api/v1/fetchers/{config.fetcher_name}/trigger")
         assert response.status_code == 404
-
-    async def test_patch_config_method_not_allowed(
-        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
-    ) -> None:
-        """The `config` path now exists (`GET`), but no mutation method
-        is registered on it — a `PATCH` yields `405`, not `404`."""
-        config = await fetcher_config_factory()
-        response = await admin_client.patch(
-            f"/api/v1/fetchers/{config.fetcher_name}/config"
-        )
-        assert response.status_code == 405
 
     async def test_ibs_consumer_status_endpoint_not_found(
         self, client: AsyncClient
@@ -869,11 +913,346 @@ class TestGetFetcherConfigEndpoint:
 
 
 # ---------------------------------------------------------------------------
-# GET /api/v1/fetchers/{fetcher_name}/audit-log
+# PATCH /api/v1/fetchers/{fetcher_name}/config
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
+class TestUpdateFetcherConfigEndpoint:
+    async def test_unauthenticated_returns_401(
+        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json={"enabled": False}
+        )
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+
+    async def test_ordinary_user_returns_403(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await authenticated_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json={"enabled": False}
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_empty_body_returns_422(
+        self, admin_client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json={}
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_unknown_fetcher_returns_404(self, admin_client: AsyncClient) -> None:
+        FETCHER_REGISTRY.clear()
+        response = await admin_client.patch(
+            "/api/v1/fetchers/no-such-fetcher/config", json={"enabled": False}
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_deregistered_fetcher_returns_409(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        config = await fetcher_config_factory()
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config", json={"enabled": False}
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "FETCHER_DEREGISTERED"
+
+    async def test_run_timeout_change_while_active_run_returns_409(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC),
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"run_timeout": 1800},
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "FETCHER_ALREADY_RUNNING"
+
+    async def test_unknown_custom_setting_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"nonexistent": 1}},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "FETCHER_SETTING_UNKNOWN"
+
+    async def test_invalid_custom_setting_value_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"results_per_page": 5000}},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "FETCHER_SETTING_INVALID"
+
+    async def test_invalid_cron_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": "not-a-cron"},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_run_timeout_out_of_bounds_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"run_timeout": 30},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_admin_jwt_updates_config_and_returns_updated_shape(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": False, "request_delay": 3.5},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["enabled"] is False
+        assert data["request_delay"] == 3.5
+
+        # The change is durable — a subsequent GET observes it.
+        follow_up = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert follow_up.json()["data"]["enabled"] is False
+
+    async def test_admin_api_key_updates_config(
+        self,
+        admin_api_key_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True
+        )
+        response = await admin_api_key_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": False},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["enabled"] is False
+
+    async def test_custom_setting_coercion_persists_canonical_value(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": {"results_per_page": "500"}},
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["custom_settings"] == {"results_per_page": 500}
+
+    async def test_no_op_payload_returns_200_unchanged(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True, request_delay=1.5
+        )
+        before = await admin_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        updated_at_before = before.json()["data"]["updated_at"]
+
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": True, "request_delay": 1.5},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["updated_at"] == updated_at_before
+
+    async def test_enabling_creates_redbeat_entry(
+        self,
+        admin_commit_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        celery_test_app: Celery,
+    ) -> None:
+        """Real Redis integration: enabling a fetcher creates its
+        canonical redbeat entry post-commit — see
+        `docs/features/platform/fetcher-infrastructure.md` (Runtime
+        Propagation). Uses `admin_commit_client` — the shared
+        `admin_client` never commits, so the post-commit callback that
+        performs this write never runs under it."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=False
+        )
+
+        response = await admin_commit_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": True},
+        )
+
+        assert response.status_code == 200
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, config.fetcher_name)
+        entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        assert entry.task == "run_fetcher"
+
+    async def test_disabling_removes_redbeat_entry(
+        self,
+        admin_commit_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        celery_test_app: Celery,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True
+        )
+        entry = RedBeatSchedulerEntry(
+            name=config.fetcher_name,
+            task="run_fetcher",
+            schedule=crontab.from_string(_StubFetcher.default_schedule),
+            args=[],
+            kwargs={"fetcher_name": config.fetcher_name, "triggered_by": "schedule"},
+            app=celery_test_app,
+        )
+        entry.save()
+
+        response = await admin_commit_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": False},
+        )
+
+        assert response.status_code == 200
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, config.fetcher_name)
+        with pytest.raises(KeyError):
+            RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+
+    async def test_request_delay_only_change_does_not_touch_redbeat(
+        self,
+        admin_commit_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        celery_test_app: Celery,
+    ) -> None:
+        """`request_delay` never propagates — no entry is created even
+        though the fetcher is enabled and has none yet."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=True, request_delay=0
+        )
+
+        response = await admin_commit_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"request_delay": 4.0},
+        )
+
+        assert response.status_code == 200
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, config.fetcher_name)
+        with pytest.raises(KeyError):
+            RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+
+    async def test_redis_failure_during_propagation_still_returns_200(
+        self,
+        admin_commit_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A Redis failure during post-commit propagation is logged at
+        WARNING and does not affect the already-committed PostgreSQL
+        change or the response — see
+        `docs/features/platform/fetcher-operations.md` (RedBeat
+        Post-Commit Propagation)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, enabled=False
+        )
+
+        def _raise_redis_error(*_args: Any, **_kwargs: Any) -> None:
+            raise RedisError("simulated Redis outage")
+
+        monkeypatch.setattr(
+            fetcher_schedule_module, "propagate_config_update", _raise_redis_error
+        )
+
+        with caplog.at_level("WARNING", logger="app.api.v1.fetchers"):
+            response = await admin_commit_client.patch(
+                f"/api/v1/fetchers/{config.fetcher_name}/config",
+                json={"enabled": True},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["enabled"] is True
+        assert "fetcher_config_redbeat_propagation_failed" in caplog.text
+
+        follow_up = await admin_commit_client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/config"
+        )
+        assert follow_up.json()["data"]["enabled"] is True
+
+
 class TestListFetcherAuditEventsEndpoint:
     async def test_unauthenticated_returns_401(
         self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
@@ -1237,9 +1616,18 @@ class TestFetchersConfigAndAuditLogOpenAPISurface:
         assert config_get["summary"]
         assert config_get["description"]
 
+        config_patch = openapi_paths["/api/v1/fetchers/{fetcher_name}/config"]["patch"]
+        assert config_patch["summary"]
+        assert config_patch["description"]
+
         audit_get = openapi_paths["/api/v1/fetchers/{fetcher_name}/audit-log"]["get"]
         assert audit_get["summary"]
         assert audit_get["description"]
+
+    def test_update_config_declares_a_request_body(self) -> None:
+        openapi_paths = app.openapi()["paths"]
+        config_patch = openapi_paths["/api/v1/fetchers/{fetcher_name}/config"]["patch"]
+        assert "requestBody" in config_patch
 
     def test_audit_log_query_parameters_are_declared(self) -> None:
         openapi_paths = app.openapi()["paths"]

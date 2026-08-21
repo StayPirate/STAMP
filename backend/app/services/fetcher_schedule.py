@@ -1,14 +1,22 @@
-"""RedBeat schedule construction, upsert/delete, and startup reconciliation.
+"""RedBeat schedule construction, upsert/delete, startup reconciliation,
+and PATCH post-commit propagation.
 
 See `docs/features/platform/fetcher-infrastructure.md` (Celery Beat
 Schedule Synchronization) for the full specification this module
 implements: effective schedule resolution, redbeat entry structure and
 options, startup reconciliation steps, and the PostgreSQL-master /
-redbeat-slave architecture.
+redbeat-slave architecture. See
+`docs/features/platform/fetcher-operations.md` (RedBeat Post-Commit
+Propagation) for `propagate_config_update()`'s contract.
 
-Called exclusively by the Beat startup handler
+`upsert_fetcher_entry`, `delete_fetcher_entry`, and
+`reconcile_beat_schedule` are called by the Beat startup handler
 (`app/tasks/beat_startup.py`) — worker processes never write redbeat
-entries (see "Who Writes Where" in the owning spec). Uses the
+entries (see "Who Writes Where" in the owning spec).
+`propagate_config_update()` is called by the
+`PATCH /api/v1/fetchers/{fetcher_name}/config` endpoint's post-commit
+callback (`app/api/v1/fetchers.py`) — the API server process is the
+other redbeat writer (see "Who Writes Where"). All writers use the
 `redbeat.RedBeatSchedulerEntry` public API exclusively; no raw Redis
 key is ever constructed by this module (see `docs/conventions.md`,
 Redis Key Conventions). Enumeration of the full stored schedule
@@ -24,7 +32,11 @@ and from `celery.schedules.crontab.from_string` (`ValueError` on an
 invalid cron expression) uncaught. No function in this module creates
 audit events. `reconcile_beat_schedule` is idempotent: re-running it
 with unchanged PostgreSQL/registry state reproduces the same redbeat
-state.
+state. `propagate_config_update()` is not idempotent in the general
+sense — each call applies the specific `action` requested by the
+caller — but calling it twice with the same arguments reproduces the
+same redbeat state (both `upsert_fetcher_entry` and
+`delete_fetcher_entry` are themselves idempotent).
 """
 
 from __future__ import annotations
@@ -32,7 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import floor
-from typing import Any
+from typing import Any, Literal, Protocol
 
 import structlog
 from celery import Celery
@@ -54,6 +66,33 @@ logger = structlog.get_logger(__name__)
 _RUN_FETCHER_TASK_NAME = "run_fetcher"
 
 
+class _ScheduleConfigLike(Protocol):
+    """Structural type for the two `FetcherConfig` attributes needed to
+    build a redbeat entry: `schedule_override` and `run_timeout`.
+
+    `_effective_schedule`, `_effective_options`, `_build_entry`, and
+    `upsert_fetcher_entry` accept this Protocol instead of the concrete
+    `FetcherConfig` ORM type so they can also be called with a
+    lightweight, detached snapshot — see `_ConfigSnapshot` and
+    `propagate_config_update()` below, used by the PATCH endpoint's
+    post-commit callback (`docs/features/platform/fetcher-operations.md`,
+    RedBeat Post-Commit Propagation). `FetcherConfig` itself satisfies
+    this Protocol structurally; no change to its own definition or to
+    the startup-reconciliation call sites is needed. Declared as
+    read-only `@property` members (rather than plain attribute
+    annotations) so a frozen (read-only) dataclass like
+    `_ConfigSnapshot` can satisfy the Protocol structurally — a plain
+    attribute annotation requires a settable member, which
+    `_ConfigSnapshot`'s frozen fields are not.
+    """
+
+    @property
+    def schedule_override(self) -> str | None: ...
+
+    @property
+    def run_timeout(self) -> int: ...
+
+
 @dataclass(frozen=True)
 class ReconciliationSummary:
     """Outcome counters for one full startup reconciliation pass.
@@ -73,7 +112,9 @@ class ReconciliationSummary:
     deregistered_removed: int
 
 
-def _effective_schedule(fetcher: type[BaseFetcher], config: FetcherConfig) -> crontab:
+def _effective_schedule(
+    fetcher: type[BaseFetcher], config: _ScheduleConfigLike
+) -> crontab:
     """Resolve and parse the effective cron schedule for `fetcher`.
 
     `config.schedule_override` wins when set; otherwise
@@ -88,7 +129,7 @@ def _effective_schedule(fetcher: type[BaseFetcher], config: FetcherConfig) -> cr
 
 
 def _effective_options(
-    fetcher: type[BaseFetcher], config: FetcherConfig
+    fetcher: type[BaseFetcher], config: _ScheduleConfigLike
 ) -> dict[str, Any]:
     """Build the `apply_async()` options dict for `fetcher`'s redbeat entry.
 
@@ -107,7 +148,7 @@ def _effective_options(
 
 
 def _build_entry(
-    celery_app: Celery, fetcher: type[BaseFetcher], config: FetcherConfig
+    celery_app: Celery, fetcher: type[BaseFetcher], config: _ScheduleConfigLike
 ) -> RedBeatSchedulerEntry:
     """Construct the canonical, unsaved redbeat entry for `fetcher`.
 
@@ -132,7 +173,7 @@ def _build_entry(
 
 
 def upsert_fetcher_entry(
-    celery_app: Celery, fetcher: type[BaseFetcher], config: FetcherConfig
+    celery_app: Celery, fetcher: type[BaseFetcher], config: _ScheduleConfigLike
 ) -> None:
     """Create or unconditionally overwrite `fetcher`'s canonical redbeat entry.
 
@@ -168,6 +209,63 @@ def delete_fetcher_entry(celery_app: Celery, fetcher_name: str) -> bool:
         return False
     RedBeatSchedulerEntry(name=fetcher_name, app=celery_app).delete()
     return True
+
+
+@dataclass(frozen=True)
+class _ConfigSnapshot:
+    """Minimal `_ScheduleConfigLike` snapshot carrying only the two
+    post-mutation values needed to build a redbeat entry — no ORM
+    reference, so it remains valid across the PATCH endpoint's commit
+    boundary (`docs/conventions.md`, Transaction Hygiene Rules)."""
+
+    schedule_override: str | None
+    run_timeout: int
+
+
+def propagate_config_update(
+    celery_app: Celery,
+    *,
+    fetcher_name: str,
+    action: Literal["delete", "upsert"],
+    schedule_override: str | None = None,
+    run_timeout: int = 0,
+) -> None:
+    """Apply one post-commit redbeat propagation step for a single PATCH.
+
+    Called by the `PATCH /api/v1/fetchers/{fetcher_name}/config`
+    endpoint's post-commit callback
+    (`app.services.fetcher_operations.update_fetcher_config()` builds
+    the descriptor this function consumes) — see
+    `docs/features/platform/fetcher-operations.md` (RedBeat Post-Commit
+    Propagation) for the precedence rules. The caller has already
+    resolved which single `action` applies; this function does not
+    re-evaluate precedence.
+
+    `action="delete"` removes the canonical entry unconditionally
+    (idempotent — see `delete_fetcher_entry`). `action="upsert"` looks
+    up `fetcher_name` in `FETCHER_REGISTRY` — guaranteed present,
+    since `update_fetcher_config()` rejects any mutation on a
+    deregistered fetcher before a propagation descriptor is ever built
+    — and creates/overwrites its canonical entry using the caller-
+    supplied, already-resolved post-mutation `schedule_override` and
+    `run_timeout` (not re-read from the database — the caller computed
+    the effective post-PATCH state under its own `FetcherConfig` row
+    lock).
+
+    Propagates any `RedisError` from the underlying client uncaught —
+    the caller is responsible for catching it, logging a WARNING, and
+    preserving the already-committed PostgreSQL state, per the section
+    above.
+    """
+    if action == "delete":
+        delete_fetcher_entry(celery_app, fetcher_name)
+        return
+
+    fetcher = FETCHER_REGISTRY[fetcher_name]
+    snapshot = _ConfigSnapshot(
+        schedule_override=schedule_override, run_timeout=run_timeout
+    )
+    upsert_fetcher_entry(celery_app, fetcher, snapshot)
 
 
 def _iter_all_entries(celery_app: Celery) -> list[RedBeatSchedulerEntry]:

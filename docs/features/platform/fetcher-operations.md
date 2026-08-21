@@ -322,6 +322,22 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
      individually. Keys set to `null` are removed from the JSONB column
      (reset to default). Keys not in the payload are unchanged. Keys
      with value equal to the currently stored value are no-ops.
+   - **Custom settings canonicalization**: each non-null submitted key
+     is validated by constructing the fetcher's `Settings` model over
+     the candidate merged state (current stored values plus the
+     submitted changes). Pydantic's own coercion rules apply (e.g., a
+     submitted string `"500"` for an `int` field is accepted and
+     coerced). The value that is persisted, compared for the diff in
+     step 5, and recorded in the audit event's `old_value`/`new_value`
+     (step 7) is the **canonical value produced by the validated
+     model** — via `model_dump(mode="json")`, extracting only the
+     submitted, non-null keys — never the raw payload value. This
+     guarantees the persisted JSONB, the value `get_setting()` returns
+     at runtime, and the audited value always agree in type and
+     representation. Only the submitted keys are extracted from the
+     validated model's dump; unrelated declared fields (defaults) are
+     never materialized into `custom_settings`, and omitted or orphaned
+     keys already stored are left untouched.
 7. **Audit events**: create one `FetcherAuditEvent` per actually-changed
    field, in deterministic order:
    1. `enabled` → event type `disabled` or `enabled`

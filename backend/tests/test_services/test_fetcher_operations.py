@@ -22,6 +22,7 @@ import threading
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -31,7 +32,7 @@ from pydantic import BaseModel, Field
 from redbeat import RedBeatSchedulerEntry
 from redbeat.schedulers import get_redis
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,8 +43,13 @@ from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_operations import (
+    FetcherAlreadyRunningError,
+    FetcherDeregisteredError,
     FetcherNotFoundError,
     FetcherRunNotFoundError,
+    FetcherSettingInvalidError,
+    FetcherSettingUnknownError,
+    UpdateConfigPayload,
     _count_recognized_settings,
     _is_stale,
     get_fetcher_config,
@@ -52,6 +58,7 @@ from app.services.fetcher_operations import (
     list_fetcher_audit_events,
     list_fetcher_runs,
     list_fetchers,
+    update_fetcher_config,
 )
 
 FetcherConfigFactory = Callable[..., Awaitable[FetcherConfig]]
@@ -104,6 +111,25 @@ class _WithSettingsFetcherStub:
 
 _NoSettingsFetcher = cast("type[BaseFetcher]", _NoSettingsFetcherStub)
 _WithSettingsFetcher = cast("type[BaseFetcher]", _WithSettingsFetcherStub)
+
+
+class _MultiSettingsModel(BaseModel):
+    """Two fields — used only to exercise the alphabetical audit-event
+    ordering of multiple `custom_settings` keys changed in one PATCH."""
+
+    alpha_setting: int = Field(default=1, ge=0, le=100)
+    zeta_setting: int = Field(default=1, ge=0, le=100)
+
+
+class _MultiSettingsFetcherStub:
+    name = "test_ops_multi_settings"
+    description = "Stub fetcher with two custom settings"
+    default_schedule = "0 6 * * *"
+    queue: str | None = None
+    Settings = _MultiSettingsModel
+
+
+_MultiSettingsFetcher = cast("type[BaseFetcher]", _MultiSettingsFetcherStub)
 
 
 def _register(*stubs: type[Any]) -> None:
@@ -1473,6 +1499,951 @@ class TestGetFetcherConfig:
 
         with pytest.raises(OperationalError):
             await get_fetcher_config(db_session, fetcher_name="irrelevant")
+
+
+# ---------------------------------------------------------------------------
+# update_fetcher_config — guards
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateFetcherConfigGuards:
+    async def test_unknown_fetcher_raises_not_found(
+        self, db_session: AsyncSession, user_factory: UserFactory
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        admin = await user_factory()
+
+        with pytest.raises(FetcherNotFoundError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name="no-such-fetcher",
+                user_id=admin.id,
+                payload=UpdateConfigPayload(enabled=False),
+            )
+
+    async def test_deregistered_fetcher_raises_deregistered(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        config = await fetcher_config_factory()
+        admin = await user_factory()
+
+        with pytest.raises(FetcherDeregisteredError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(enabled=False),
+            )
+
+    async def test_run_timeout_change_with_active_non_stale_run_raises(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC),
+        )
+        admin = await user_factory()
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(run_timeout=1800),
+            )
+
+        await db_session.refresh(config)
+        assert config.run_timeout == 3600
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
+
+    async def test_run_timeout_change_with_stale_run_finalizes_and_proceeds(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=60
+        )
+        stale_run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC) - timedelta(seconds=200),
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(run_timeout=120),
+        )
+
+        assert result.config.run_timeout == 120
+        await db_session.refresh(stale_run)
+        assert stale_run.status == "failure"
+        assert stale_run.error_message is not None
+        assert "stale" in stale_run.error_message.lower()
+
+    async def test_run_timeout_unchanged_value_skips_active_run_guard(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """`run_timeout` present but equal to the current value is a
+        no-op for that field — the guard does not apply, so an
+        unrelated field change succeeds even with a non-stale active
+        run."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600, request_delay=0
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC),
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(run_timeout=3600, request_delay=5.0),
+        )
+
+        assert result.config.request_delay == 5.0
+
+    async def test_unknown_custom_setting_raises(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"nonexistent": 1}),
+            )
+
+    async def test_no_settings_model_any_key_is_unknown(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"anything": 1}),
+            )
+
+    async def test_invalid_custom_setting_value_raises(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"results_per_page": 5000}),
+            )
+
+    async def test_unknown_key_checked_before_invalid_value(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingUnknownError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(
+                    custom_settings={"nonexistent": 1, "results_per_page": 5000}
+                ),
+            )
+
+
+# ---------------------------------------------------------------------------
+# update_fetcher_config — behavior, canonicalization, audit content
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateFetcherConfigBehavior:
+    async def test_disabling_creates_disabled_event_without_payload(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+
+        assert result.config.enabled is False
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.event_type == "disabled"
+        assert event.old_value is None
+        assert event.new_value is None
+        assert event.detail is None
+        assert event.user_id == admin.id
+
+    async def test_enabling_creates_enabled_event(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=False
+        )
+        admin = await user_factory()
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=True),
+        )
+
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.event_type == "enabled"
+
+    async def test_schedule_override_change_audits_str_values(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, schedule_override="0 1 * * *"
+        )
+        admin = await user_factory()
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(schedule_override="0 2 * * *"),
+        )
+
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.event_type == "config_changed"
+        assert event.old_value == "0 1 * * *"
+        assert event.new_value == "0 2 * * *"
+        assert event.detail == {"field": "schedule_override"}
+
+    async def test_schedule_override_reset_to_null(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, schedule_override="0 1 * * *"
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(schedule_override=None),
+        )
+
+        assert result.config.schedule_override is None
+        assert result.config.effective_schedule == _NoSettingsFetcher.default_schedule
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.old_value == "0 1 * * *"
+        assert event.new_value is None
+
+    async def test_run_timeout_and_request_delay_audit_str_values(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600, request_delay=0
+        )
+        admin = await user_factory()
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(run_timeout=600, request_delay=2.0),
+        )
+
+        events = {
+            e.detail["field"]: e
+            for e in (
+                (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+            )
+            if e.detail is not None
+        }
+        assert events["run_timeout"].old_value == "3600"
+        assert events["run_timeout"].new_value == "600"
+        assert events["request_delay"].old_value == "0"
+        assert events["request_delay"].new_value == "2.0"
+
+    async def test_custom_setting_new_key_audits_null_old_value(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": 250}),
+        )
+
+        assert result.config.custom_settings == {"results_per_page": 250}
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.old_value is None
+        assert event.new_value == "250"
+        assert event.detail == {"field": "custom_settings", "key": "results_per_page"}
+
+    async def test_custom_setting_reset_to_null_removes_key(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name,
+            custom_settings={"results_per_page": 250},
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": None}),
+        )
+
+        assert result.config.custom_settings == {}
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.old_value == "250"
+        assert event.new_value is None
+
+    async def test_custom_setting_coercion_persists_canonical_value(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """A coercible string value (`"500"`) is validated by the
+        `Settings` model and persisted/audited as its canonical integer
+        form — not the raw string payload
+        (`docs/features/platform/fetcher-operations.md`,
+        `update_fetcher_config`, step 6, Custom settings
+        canonicalization)."""
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_WithSettingsFetcher.name)
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": "500"}),
+        )
+
+        assert result.config.custom_settings == {"results_per_page": 500}
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.new_value == "500"
+
+    async def test_legacy_raw_value_is_corrected_to_canonical_type(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """A pre-existing stored value with the wrong JSON type (as if
+        written by direct DB manipulation before canonicalization was
+        enforced) is corrected to the canonical type by a PATCH that
+        submits the same logical value — the type mismatch itself
+        counts as an actual change (`"500" != 500`)."""
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name,
+            custom_settings={"results_per_page": "500"},
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": 500}),
+        )
+
+        assert result.config.custom_settings == {"results_per_page": 500}
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.old_value == '"500"'
+        assert event.new_value == "500"
+
+    async def test_custom_setting_no_op_when_value_matches_stored(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name,
+            custom_settings={"results_per_page": 250},
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": 250}),
+        )
+
+        assert result.propagation is None
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
+
+    async def test_orphaned_and_omitted_keys_are_untouched(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name,
+            custom_settings={"results_per_page": 250, "orphaned_key": "raw"},
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+
+        assert result.config.custom_settings == {
+            "results_per_page": 250,
+            "orphaned_key": "raw",
+        }
+
+    async def test_full_no_op_creates_no_audit_and_leaves_updated_at_unchanged(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name,
+            enabled=True,
+            run_timeout=3600,
+            request_delay=1.5,
+        )
+        original_updated_at = config.updated_at
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(
+                enabled=True, run_timeout=3600, request_delay=1.5
+            ),
+        )
+
+        assert result.propagation is None
+        assert result.config.updated_at == original_updated_at
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
+
+    async def test_multiple_field_changes_produce_events_in_deterministic_order(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_MultiSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_MultiSettingsFetcher.name,
+            enabled=True,
+            schedule_override="0 1 * * *",
+            run_timeout=3600,
+            request_delay=0,
+        )
+        admin = await user_factory()
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(
+                enabled=False,
+                schedule_override="0 2 * * *",
+                run_timeout=600,
+                request_delay=3.0,
+                custom_settings={"zeta_setting": 5, "alpha_setting": 9},
+            ),
+        )
+
+        events = (
+            (
+                await db_session.execute(
+                    select(FetcherAuditEvent).order_by(FetcherAuditEvent.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        ordering = []
+        for event in events:
+            if event.detail is None:
+                ordering.append(event.event_type)
+            elif event.detail["field"] == "custom_settings":
+                ordering.append(event.detail["key"])
+            else:
+                ordering.append(event.detail["field"])
+
+        assert ordering == [
+            "disabled",
+            "schedule_override",
+            "run_timeout",
+            "request_delay",
+            "alpha_setting",
+            "zeta_setting",
+        ]
+        assert all(e.user_id == admin.id for e in events)
+        assert len({e.created_at for e in events}) == 1
+
+
+# ---------------------------------------------------------------------------
+# update_fetcher_config — RedBeat propagation descriptor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateFetcherConfigPropagation:
+    async def test_enabled_false_produces_delete_action(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+
+        assert result.propagation is not None
+        assert result.propagation.action == "delete"
+
+    async def test_enabled_true_produces_upsert_with_effective_values(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name,
+            enabled=False,
+            schedule_override="0 9 * * *",
+            run_timeout=1200,
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=True),
+        )
+
+        assert result.propagation is not None
+        assert result.propagation.action == "upsert"
+        assert result.propagation.schedule_override == "0 9 * * *"
+        assert result.propagation.run_timeout == 1200
+
+    async def test_schedule_override_change_while_enabled_produces_upsert(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(schedule_override="0 7 * * *"),
+        )
+
+        assert result.propagation is not None
+        assert result.propagation.action == "upsert"
+
+    async def test_schedule_override_change_while_disabled_produces_no_propagation(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=False
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(schedule_override="0 7 * * *"),
+        )
+
+        assert result.propagation is None
+
+    async def test_request_delay_change_alone_produces_no_propagation(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True, request_delay=0
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(request_delay=9.0),
+        )
+
+        assert result.propagation is None
+
+    async def test_custom_settings_change_alone_produces_no_propagation(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        _register(_WithSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_WithSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={"results_per_page": 400}),
+        )
+
+        assert result.propagation is None
+
+
+# ---------------------------------------------------------------------------
+# update_fetcher_config — transaction contract
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateFetcherConfigTransaction:
+    async def test_does_not_commit(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+        commit_spy = AsyncMock(wraps=db_session.commit)
+        monkeypatch.setattr(db_session, "commit", commit_spy)
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+
+        commit_spy.assert_not_called()
+
+    async def test_flushes_within_the_caller_transaction(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """At least one explicit flush occurs within the caller's
+        transaction (never a commit/rollback). A second flush may occur
+        as a side effect of the `updated_at` attribute refresh
+        (`db.refresh(config, attribute_names=["updated_at"])`), whose
+        own `SELECT` is itself subject to the session's default
+        autoflush — the exact internal call count is not a contract."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        admin = await user_factory()
+        flush_spy = AsyncMock(wraps=db_session.flush)
+        monkeypatch.setattr(db_session, "flush", flush_spy)
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+
+        assert flush_spy.await_count >= 1
+
+    async def test_rollback_removes_mutation_and_audit_together(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """If the caller's transaction rolls back, neither the
+        `FetcherConfig` mutation nor its audit event survives — proving
+        both share the same transaction."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, enabled=True
+        )
+        fetcher_name = config.fetcher_name
+        admin = await user_factory()
+        # Commit the base state first so the later local rollback only
+        # undoes the mutation below, not the fixture-created rows.
+        await db_session.commit()
+
+        await update_fetcher_config(
+            db_session,
+            fetcher_name=fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(enabled=False),
+        )
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert len(events) == 1
+
+        await db_session.rollback()
+
+        # `config.fetcher_name` is not re-read here — `rollback()`
+        # expires every attribute on every object in the session,
+        # including the primary key, and an expired attribute's
+        # implicit reload is a synchronous operation unsupported
+        # outside a greenlet context under `AsyncSession`/asyncpg. The
+        # `fetcher_name` captured above (before any commit/rollback)
+        # is a plain `str`, unaffected by expiration.
+        refreshed = (
+            await db_session.execute(
+                select(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+            )
+        ).scalar_one()
+        assert refreshed.enabled is True
+        events_after = (
+            (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        )
+        assert events_after == []
+
+
+# ---------------------------------------------------------------------------
+# update_fetcher_config — true concurrency (FetcherConfig-root lock)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestUpdateFetcherConfigConcurrency:
+    """See docs/features/platform/testing-strategy.md (Concurrency
+    Testing) for the canonical two-session pattern applied here."""
+
+    async def test_concurrent_updates_serialize_on_the_config_lock(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        # A per-test unique name: this test commits real rows (see
+        # `db_session_factory`'s docstring), so a fixed registry name
+        # shared with other tests in this file risks collisions with
+        # leftover data from a previous failed run.
+        fetcher_name = f"concurrency_cfg_{uuid4().hex[:8]}"
+
+        class _ConcurrencyFetcherStub:
+            name = fetcher_name
+            description = "Concurrency test fetcher"
+            default_schedule = "0 3 * * *"
+            queue: str | None = None
+            Settings: type[BaseModel] | None = None
+
+        _register(cast("type[Any]", _ConcurrencyFetcherStub))
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+
+        admin = User(
+            username=f"cfgadmin{uuid4().hex[:8]}",
+            email=f"cfgadmin{uuid4().hex[:8]}@example.com",
+            password_hash="$2b$12$" + "a" * 53,
+        )
+        session_a.add(admin)
+        session_a.add(
+            FetcherConfig(
+                fetcher_name=fetcher_name,
+                enabled=True,
+                request_delay=0,
+            )
+        )
+        await session_a.commit()
+
+        # Session A acquires the FetcherConfig lock, applies its
+        # mutation, and flushes — but does not commit yet, holding the
+        # lock open.
+        result_a = await update_fetcher_config(
+            session_a,
+            fetcher_name=fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(request_delay=5.0),
+        )
+        assert result_a.config.request_delay == 5.0
+
+        # Session B's concurrent update attempt blocks on the same
+        # FetcherConfig row.
+        task_b = asyncio.create_task(
+            update_fetcher_config(
+                session_b,
+                fetcher_name=fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(request_delay=9.0),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        # Releasing A's lock lets B proceed — B observes A's committed
+        # value (5.0) as its "old" state, not the pre-A value (0.0).
+        await session_a.commit()
+        result_b = await asyncio.wait_for(task_b, timeout=5)
+        await session_b.commit()
+
+        assert result_b.config.request_delay == 9.0
+
+        events = (
+            (
+                await session_a.execute(
+                    select(FetcherAuditEvent)
+                    .where(FetcherAuditEvent.fetcher_name == fetcher_name)
+                    .order_by(FetcherAuditEvent.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [e.old_value for e in events] == ["0.0", "5.0"]
+        assert [e.new_value for e in events] == ["5.0", "9.0"]
+
+        # Explicit cleanup — committed rows are not covered by
+        # db_session_factory's rollback-on-teardown.
+        await session_a.execute(
+            delete(FetcherAuditEvent).where(
+                FetcherAuditEvent.fetcher_name == fetcher_name
+            )
+        )
+        await session_a.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+        )
+        await session_a.execute(delete(User).where(User.id == admin.id))
+        await session_a.commit()
 
 
 @pytest.mark.integration

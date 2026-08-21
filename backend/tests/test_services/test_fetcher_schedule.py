@@ -39,6 +39,7 @@ from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_schedule import (
     ReconciliationSummary,
     delete_fetcher_entry,
+    propagate_config_update,
     reconcile_beat_schedule,
     upsert_fetcher_entry,
 )
@@ -291,6 +292,113 @@ class TestDeleteFetcherEntry:
         deleted = delete_fetcher_entry(celery_test_app, "never_existed_fetcher")
 
         assert deleted is False
+
+
+@pytest.mark.integration
+class TestPropagateConfigUpdate:
+    """See `docs/features/platform/fetcher-operations.md` (RedBeat
+    Post-Commit Propagation) for the contract this function implements
+    — the caller (the PATCH endpoint's post-commit callback) has
+    already resolved which single `action` applies."""
+
+    def test_delete_action_removes_the_entry(self, celery_test_app: Celery) -> None:
+        _register(_NoQueueFetcher)
+        config = _make_config(fetcher_name=_NoQueueFetcher.name)
+        upsert_fetcher_entry(celery_test_app, _NoQueueFetcher, config)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="delete",
+        )
+
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name)
+        with pytest.raises(KeyError):
+            RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+
+    def test_delete_action_is_idempotent_when_no_entry_exists(
+        self, celery_test_app: Celery
+    ) -> None:
+        _register(_NoQueueFetcher)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="delete",
+        )
+        # No exception — delete is a no-op on a missing entry.
+
+    def test_upsert_action_creates_entry_using_caller_supplied_values(
+        self, celery_test_app: Celery
+    ) -> None:
+        _register(_NoQueueFetcher)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="upsert",
+            schedule_override="*/5 * * * *",
+            run_timeout=1200,
+        )
+
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name)
+        entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        assert entry.schedule.minute == {0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}
+        assert entry.options["time_limit"] == 1200
+
+    def test_upsert_action_falls_back_to_default_schedule_when_override_is_none(
+        self, celery_test_app: Celery
+    ) -> None:
+        _register(_NoQueueFetcher)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="upsert",
+            schedule_override=None,
+            run_timeout=3600,
+        )
+
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name)
+        entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        assert entry.schedule.hour == {3}
+
+    def test_upsert_action_overwrites_existing_entry(
+        self, celery_test_app: Celery
+    ) -> None:
+        _register(_NoQueueFetcher)
+        config = _make_config(fetcher_name=_NoQueueFetcher.name)
+        upsert_fetcher_entry(celery_test_app, _NoQueueFetcher, config)
+
+        propagate_config_update(
+            celery_test_app,
+            fetcher_name=_NoQueueFetcher.name,
+            action="upsert",
+            schedule_override="*/10 * * * *",
+            run_timeout=600,
+        )
+
+        key = RedBeatSchedulerEntry.generate_key(celery_test_app, _NoQueueFetcher.name)
+        entry = RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        assert entry.schedule.minute == {0, 10, 20, 30, 40, 50}
+        assert entry.options["time_limit"] == 600
+
+    def test_redis_error_propagates_uncaught(
+        self, celery_test_app: Celery, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _register(_NoQueueFetcher)
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise RedisError("simulated outage")
+
+        monkeypatch.setattr(fetcher_schedule_module, "delete_fetcher_entry", _raise)
+
+        with pytest.raises(RedisError):
+            propagate_config_update(
+                celery_test_app,
+                fetcher_name=_NoQueueFetcher.name,
+                action="delete",
+            )
 
 
 # ---------------------------------------------------------------------------

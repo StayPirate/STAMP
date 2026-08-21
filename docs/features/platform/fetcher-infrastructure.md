@@ -2756,10 +2756,22 @@ fetchers without coordination (they write different redbeat keys). For
 concurrent PATCH requests on the **same** fetcher:
 
 - PostgreSQL serializes the `FetcherConfig` updates (standard row-level
-  locking)
-- The redbeat write for the same entry is a simple key SET — the last
-  writer wins, which is correct since it reflects the latest committed
-  PostgreSQL state
+  locking): commits are strictly ordered
+- Each request's post-commit redbeat write is derived from that
+  request's own committed change, not from a fresh read of the latest
+  PostgreSQL state. The row lock orders the PostgreSQL commits but does
+  NOT order the post-commit redbeat writes relative to each other —
+  the redbeat write for the earlier commit can execute after the
+  redbeat write for the later commit (e.g., due to scheduling or
+  network delay), leaving the entry reflecting the earlier, now-stale
+  change
+- This is the same out-of-order propagation risk documented in
+  `docs/features/platform/fetcher-operations.md` (RedBeat Post-Commit
+  Propagation): it is not a correctness bug, only a momentary
+  divergence between redbeat and the authoritative PostgreSQL state.
+  The next Beat restart reconciles redbeat from PostgreSQL
+  unconditionally (Startup Reconciliation, step 2), which always
+  converges to the correct state regardless of write order
 
 #### Redbeat Distributed Lock
 
