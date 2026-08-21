@@ -122,8 +122,12 @@ class FetcherSettingUnknownError(FetcherOperationsServiceError):
 
 
 class FetcherSettingInvalidError(FetcherOperationsServiceError):
-    """A submitted `custom_settings` value fails the fetcher's
-    `Settings` model type/range/choices validation."""
+    """The candidate merged state (current stored `custom_settings`
+    values plus the submitted, non-null changes) fails the fetcher's
+    `Settings` model type/range/choices validation. The invalid field
+    is not necessarily one the caller submitted — see
+    `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`, Custom settings canonicalization)."""
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -949,16 +953,18 @@ async def update_fetcher_config(
     compare against the current persisted value; only actually-changed
     fields are applied. For `custom_settings`, each non-null submitted
     key is validated then **canonicalized**: the persisted value, the
-    no-op comparison, and the audit `old_value`/`new_value` all use the
-    canonical value produced by the validated `Settings` model
+    no-op comparison, and the audit `new_value` all use the canonical
+    value produced by the validated `Settings` model
     (`model_dump(mode="json")`) for that key — never the raw payload
     value (`docs/features/platform/fetcher-operations.md`,
     `update_fetcher_config`, step 6, Custom settings canonicalization).
-    A key set to `None` is removed (reset to default). Keys omitted
-    from `payload.custom_settings` and orphaned keys already stored are
-    never touched. If no field actually changed, the function is a
-    no-op: no mutation, no audit event, `updated_at` unchanged (no
-    `UPDATE` is ever issued), and `propagation=None`.
+    The audit `old_value` is the previously stored value, which is
+    already canonical since every prior write persisted the canonical
+    form. A key set to `None` is removed (reset to default). Keys
+    omitted from `payload.custom_settings` and orphaned keys already
+    stored are never touched. If no field actually changed, the
+    function is a no-op: no mutation, no audit event, `updated_at`
+    unchanged (no `UPDATE` is ever issued), and `propagation=None`.
 
     Q4 (audit events): one `FetcherAuditEvent` per actually-changed
     field, created via `FetcherAuditLog.log_event()`, in this order:

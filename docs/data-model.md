@@ -1528,7 +1528,9 @@ Audit trail for administrative actions on fetchers. Inherits `id`,
 | created_at           | TIMESTAMPTZ | Inherited from AuditEventMixin | When the event occurred      |
 
 See `docs/features/platform/fetcher-infrastructure.md` for the event
-type contract with field values and the one-event-per-field rule.
+type contract with field values, and
+`docs/features/platform/fetcher-operations.md` (`update_fetcher_config`)
+for the one-event-per-changed-field rule.
 
 #### FetcherAuditEventType Enum
 

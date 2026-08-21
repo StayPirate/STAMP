@@ -87,7 +87,7 @@ All exceptions inherit from `FetcherOperationsServiceError(ServiceError)`.
 | `FetcherDisabledError` | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false`) |
 | `FetcherAlreadyRunningError` | 409 | `FETCHER_ALREADY_RUNNING` | A non-stale run is active for this fetcher |
 | `FetcherSettingUnknownError` | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` |
-| `FetcherSettingInvalidError` | 422 | `FETCHER_SETTING_INVALID` | Value fails type/range/choices validation |
+| `FetcherSettingInvalidError` | 422 | `FETCHER_SETTING_INVALID` | The candidate merged state (current stored values plus submitted changes) fails the `Settings` model's type/range/choices validation — the invalid field may be a value the caller did not submit |
 | `FetcherBrokerUnavailableError` | 503 | `CELERY_UNAVAILABLE` | Task broker unavailable during manual trigger publication |
 
 #### System-Internal Exceptions
@@ -285,16 +285,23 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
 3. `FetcherAlreadyRunningError` — `run_timeout` is changing AND a
    non-stale run is active (see Run Timeout Active Guard below).
 4. `FetcherSettingUnknownError` — unknown key in `custom_settings`.
-5. `FetcherSettingInvalidError` — value fails validation.
+5. `FetcherSettingInvalidError` — the candidate merged state (current
+   stored values plus submitted changes) fails validation. The invalid
+   field is not necessarily one the caller submitted — see
+   `custom_settings` canonicalization below.
 
 **Q3 (behavior)**:
 
-1. **Input-only validation**: validate `schedule_override` cron syntax,
-   `run_timeout` bounds (60–604800), `request_delay` bounds (0–300).
-   These constraints are enforced at the request-schema layer (Pydantic
-   validators) and produce the global `422 VALIDATION_ERROR` response
-   per `docs/api-spec.md`. They execute before any database operation
-   and before the service function is called.
+1. **Input-only validation**: reject an empty request body (no fields
+   provided) with `422 VALIDATION_ERROR` and the message "At least one
+   field must be provided." Validate `schedule_override` cron syntax and
+   its 50-character storage bound (`FetcherConfig.schedule_override` is
+   `VARCHAR(50)`), `run_timeout` bounds (60–604800), `request_delay`
+   bounds (0–300). These constraints are enforced at the request-schema
+   layer (Pydantic validators) and produce the global `422
+   VALIDATION_ERROR` response per `docs/api-spec.md`. They execute
+   before any database operation and before the service function is
+   called.
 2. **Lock**: `SELECT ... FOR UPDATE` on `FetcherConfig` where
    `fetcher_name` matches. This is the first database operation.
 3. **Guards**: evaluate guards 1–5 in order. On any failure, raise the
@@ -327,17 +334,20 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
      the candidate merged state (current stored values plus the
      submitted changes). Pydantic's own coercion rules apply (e.g., a
      submitted string `"500"` for an `int` field is accepted and
-     coerced). The value that is persisted, compared for the diff in
-     step 5, and recorded in the audit event's `old_value`/`new_value`
+     coerced). The **new** value that is persisted, compared for the
+     diff in step 5, and recorded in the audit event's `new_value`
      (step 7) is the **canonical value produced by the validated
      model** — via `model_dump(mode="json")`, extracting only the
-     submitted, non-null keys — never the raw payload value. This
-     guarantees the persisted JSONB, the value `get_setting()` returns
-     at runtime, and the audited value always agree in type and
-     representation. Only the submitted keys are extracted from the
-     validated model's dump; unrelated declared fields (defaults) are
-     never materialized into `custom_settings`, and omitted or orphaned
-     keys already stored are left untouched.
+     submitted, non-null keys — never the raw payload value. The
+     **old** value recorded in the audit event's `old_value` is the
+     previously stored value (already canonical, since every prior
+     write persisted the canonical form). This guarantees the
+     persisted JSONB, the value `get_setting()` returns at runtime, and
+     the audited value always agree in type and representation. Only
+     the submitted keys are extracted from the validated model's dump;
+     unrelated declared fields (defaults) are never materialized into
+     `custom_settings`, and omitted or orphaned keys already stored are
+     left untouched.
 7. **Audit events**: create one `FetcherAuditEvent` per actually-changed
    field, in deterministic order:
    1. `enabled` → event type `disabled` or `enabled`
@@ -1134,8 +1144,12 @@ with a caller-owned transaction.
 ```
 
 **Validation rules**:
-- `schedule_override`: must be a valid 5-field cron expression, or `null`
-  to revert to the default schedule. Validated by constructing a
+- An empty request body (no fields provided) returns `422
+  VALIDATION_ERROR` with the message "At least one field must be
+  provided."
+- `schedule_override`: must be a valid 5-field cron expression of at
+  most 50 characters (matching the `VARCHAR(50)` storage column), or
+  `null` to revert to the default schedule. Validated by constructing a
   `celery.schedules.crontab` object — the same parser used by RedBeat at
   runtime — ensuring that any value accepted at PATCH time is guaranteed
   parseable at Beat startup
@@ -1144,9 +1158,14 @@ with a caller-owned transaction.
   detection threshold. Default: 3600 (1 hour)
 - `request_delay`: must be a float >= 0 and <= 300
 - `custom_settings`: each key must exist in the fetcher's `Settings`
-  model. Unknown keys → 422 `FETCHER_SETTING_UNKNOWN`. Invalid values →
-  422 `FETCHER_SETTING_INVALID`. Partial merge: omitted keys unchanged,
-  `null` resets to default
+  model. Unknown keys → 422 `FETCHER_SETTING_UNKNOWN`. Partial merge:
+  omitted keys unchanged, `null` resets a key to its `Settings` field
+  default. The submitted, non-null keys are validated together with
+  the fetcher's current stored values (candidate merged state, see
+  `update_fetcher_config`, step 6) — if the merged state fails
+  validation, the response is 422 `FETCHER_SETTING_INVALID`, and the
+  invalid field named in `detail` may be a previously stored value the
+  caller did not submit in this request
 
 **Response** (200 OK): the updated config object (same schema as GET
 config response).
@@ -1162,7 +1181,7 @@ complete mutation, audit, and propagation contract.
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but code removed |
 | 409 | `FETCHER_ALREADY_RUNNING` | `run_timeout` change while a non-stale run is active |
 | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` |
-| 422 | `FETCHER_SETTING_INVALID` | Value fails validation |
+| 422 | `FETCHER_SETTING_INVALID` | The candidate merged state fails validation — the invalid field may not be one the caller submitted |
 
 ### Get Fetcher Audit Log
 

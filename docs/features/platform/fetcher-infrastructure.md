@@ -1184,7 +1184,10 @@ This registry is used by:
   providing a standard JSON Schema that the admin UI renders
   dynamically
 - The API validation layer: the PATCH endpoint instantiates the
-  `Settings` model with the submitted values to validate them
+  `Settings` model with the candidate merged state (current stored
+  values plus the submitted changes) to validate it — see
+  `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`,
+  step 6, Custom settings canonicalization)
 - The `sentinel fetcher config` CLI command (settings display)
 
 Because Pydantic produces standard JSON Schema, the admin UI can render
@@ -2741,12 +2744,16 @@ safe because:
    "undone" by Beat's reconciliation. This is acceptable because it
    can only happen during the narrow window of Beat startup + concurrent
    PATCH, and the entry reflects a valid (though stale by one change)
-   PostgreSQL state. The stale entry persists until the admin re-issues
-   the PATCH or Beat restarts again. This is an operationally negligible
-   scenario (Beat startup takes < 1 second; a concurrent PATCH during
-   that exact window is rare). If it occurs, the admin observes the
-   old schedule in the API (since `next_run_at` is calculated from the
-   redbeat entry) and can re-issue the PATCH
+   PostgreSQL state. This is an operationally negligible scenario (Beat
+   startup takes < 1 second; a concurrent PATCH during that exact
+   window is rare). If it occurs, the admin observes the old schedule
+   in the API (since `next_run_at` is calculated from the redbeat
+   entry) until the next Beat restart reconciles it from the
+   authoritative PostgreSQL state. Re-issuing the same PATCH is NOT a
+   working remedy: a PATCH that submits only values identical to the
+   current persisted state is a no-op (see
+   `docs/features/platform/fetcher-operations.md`, "No-op PATCH
+   limitation") and does not trigger a fresh RedBeat write
 4. No locking between Beat startup and API writes is required
 
 #### Multiple API Replicas

@@ -1687,6 +1687,39 @@ class TestUpdateFetcherConfigGuards:
                 payload=UpdateConfigPayload(custom_settings={"results_per_page": 5000}),
             )
 
+    async def test_pre_existing_invalid_stored_value_blocks_unrelated_key_change(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """The merged candidate state — current stored values plus the
+        submitted changes — is validated as a whole (see
+        `docs/features/platform/fetcher-operations.md`,
+        `update_fetcher_config`, Custom settings canonicalization). A
+        previously stored value that has since become invalid (e.g.
+        after a `Settings` model constraint tightening, simulated here
+        by writing directly via the factory) blocks a PATCH that only
+        submits a different, currently-valid key — and the exception
+        message identifies the offending field even though the caller
+        never submitted it."""
+        _register(_MultiSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_MultiSettingsFetcher.name,
+            custom_settings={"alpha_setting": 500, "zeta_setting": 5},
+        )
+        admin = await user_factory()
+
+        with pytest.raises(FetcherSettingInvalidError) as exc_info:
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(custom_settings={"zeta_setting": 10}),
+            )
+
+        assert "alpha_setting" in str(exc_info.value)
+
     async def test_unknown_key_checked_before_invalid_value(
         self,
         db_session: AsyncSession,
@@ -2112,6 +2145,38 @@ class TestUpdateFetcherConfigPropagation:
             fetcher_name=config.fetcher_name,
             user_id=admin.id,
             payload=UpdateConfigPayload(enabled=False),
+        )
+
+        assert result.propagation is not None
+        assert result.propagation.action == "delete"
+
+    async def test_enabled_false_combined_with_schedule_change_still_deletes(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """`enabled -> false` takes precedence over any other
+        schedule-affecting change in the same PATCH: the entry is
+        deleted, not upserted with the new schedule/timeout — per
+        `docs/features/platform/fetcher-operations.md`
+        (`update_fetcher_config`, RedBeat Post-Commit Propagation)."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name,
+            enabled=True,
+            schedule_override="0 9 * * *",
+            run_timeout=1200,
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(
+                enabled=False, schedule_override="0 11 * * *", run_timeout=1800
+            ),
         )
 
         assert result.propagation is not None

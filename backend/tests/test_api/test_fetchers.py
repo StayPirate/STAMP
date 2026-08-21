@@ -1055,6 +1055,85 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.status_code == 422
         assert response.json()["code"] == "VALIDATION_ERROR"
 
+    async def test_schedule_override_too_long_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        """A syntactically valid cron expression longer than 50
+        characters — the `FetcherConfig.schedule_override` storage
+        bound — is rejected at the schema layer, never reaching a
+        database flush (`fetcher-operations.md`, Update Fetcher
+        Config, Validation rules)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        long_valid_cron = "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20 * * * *"
+        assert len(long_valid_cron) > 50
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"schedule_override": long_valid_cron},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_enabled_null_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"enabled": None},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_run_timeout_null_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"run_timeout": None},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_request_delay_null_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"request_delay": None},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
+    async def test_custom_settings_null_returns_422(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        _register(_StubFetcherWithSettings)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcherWithSettings.name
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"custom_settings": None},
+        )
+        assert response.status_code == 422
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
     async def test_admin_jwt_updates_config_and_returns_updated_shape(
         self,
         admin_client: AsyncClient,
