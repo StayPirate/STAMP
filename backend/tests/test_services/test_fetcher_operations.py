@@ -2115,6 +2115,36 @@ class TestUpdateFetcherConfigBehavior:
         events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
         assert events == []
 
+    async def test_empty_custom_settings_object_on_no_settings_fetcher_is_noop(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """An explicitly submitted empty `custom_settings` object
+        (`{}`) is distinct from omission (`MissingType`) and from
+        `null` (rejected at the schema layer) — the merge/validation
+        block is skipped because there are no keys to process. For a
+        fetcher with no `Settings` model, this guard also prevents an
+        `AttributeError` from calling `model_validate` on `None` —
+        proving the short-circuit is correct even when no settings
+        class exists to validate against."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+        original_updated_at = config.updated_at
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(custom_settings={}),
+        )
+
+        assert result.config.updated_at == original_updated_at
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
+
     async def test_multiple_field_changes_produce_events_in_deterministic_order(
         self,
         db_session: AsyncSession,
