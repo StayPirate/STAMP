@@ -3,8 +3,8 @@ admin config/audit-log endpoints.
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
 Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
-Fetcher Config, Get Fetcher Audit Log) for the authoritative
-request/response contract these schemas implement.
+Fetcher Config, Update Fetcher Config, Get Fetcher Audit Log) for the
+authoritative request/response contract these schemas implement.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from celery.schedules import crontab
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.common import PaginationMeta, UserReference
 
@@ -230,6 +231,95 @@ class FetcherConfigResponse(BaseModel):
     """Response body for `GET /api/v1/fetchers/{fetcher_name}/config`."""
 
     data: FetcherConfigData
+
+
+# ---------------------------------------------------------------------------
+# Update Fetcher Config
+# ---------------------------------------------------------------------------
+
+
+class FetcherConfigUpdateRequest(BaseModel):
+    """Request body for `PATCH /api/v1/fetchers/{fetcher_name}/config`
+    (`fetcher-operations.md`, Update Fetcher Config).
+
+    All fields are optional but at least one must be provided
+    (`docs/api-spec.md`, Partial Update Semantics). The route
+    distinguishes "omitted" from "explicitly provided" via
+    `model_fields_set` (see `AdminUserUpdateRequest` for the same
+    pattern). `enabled`, `run_timeout`, and `request_delay` are
+    non-nullable in the data model — an explicit `null` for any of
+    them is rejected here, before the service is called.
+    `schedule_override` accepts `null` to revert to the fetcher's
+    `default_schedule`. `custom_settings`, when provided, cannot itself
+    be `null` (the JSONB column is non-nullable) — but an individual
+    key *within* it may be `null`, resetting that key to its
+    `Settings` field default (`fetcher-operations.md`,
+    `update_fetcher_config`, step 6). Per-key/per-value validation
+    (unknown key, invalid value) is performed by the service layer,
+    which raises the dedicated `FetcherSettingUnknownError`/
+    `FetcherSettingInvalidError` (422
+    `FETCHER_SETTING_UNKNOWN`/`FETCHER_SETTING_INVALID`) — this schema
+    only validates the group-level shape and the input-only
+    constraints (`docs/features/platform/fetcher-operations.md`,
+    `update_fetcher_config`, Q3 step 1) that must produce the generic
+    `422 VALIDATION_ERROR`: `schedule_override` cron syntax and
+    50-character storage bound (matching `FetcherConfig.schedule_override`,
+    `VARCHAR(50)`), and the `run_timeout`/`request_delay` numeric bounds.
+    """
+
+    enabled: bool | None = None
+    schedule_override: str | None = Field(default=None, max_length=50)
+    run_timeout: int | None = Field(default=None, ge=60, le=604_800)
+    request_delay: float | None = Field(default=None, ge=0, le=300)
+    custom_settings: dict[str, Any] | None = None
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def _reject_null_enabled(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("enabled cannot be null.")
+        return value
+
+    @field_validator("schedule_override")
+    @classmethod
+    def _validate_cron(cls, value: str | None) -> str | None:
+        if value is not None:
+            # Raises `ValueError` on an invalid 5-field cron expression —
+            # the same parser redbeat uses at runtime (see
+            # `docs/features/platform/fetcher-operations.md`, Update
+            # Fetcher Config, Validation rules).
+            crontab.from_string(value)
+        return value
+
+    @field_validator("run_timeout", mode="before")
+    @classmethod
+    def _reject_null_run_timeout(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("run_timeout cannot be null.")
+        return value
+
+    @field_validator("request_delay", mode="before")
+    @classmethod
+    def _reject_null_request_delay(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("request_delay cannot be null.")
+        return value
+
+    @field_validator("custom_settings", mode="before")
+    @classmethod
+    def _reject_null_custom_settings(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError(
+                "custom_settings cannot be null; provide an object with the "
+                "individual keys to change."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _require_at_least_one_field(self) -> FetcherConfigUpdateRequest:
+        if not self.model_fields_set:
+            raise ValueError("At least one field must be provided.")
+        return self
 
 
 # ---------------------------------------------------------------------------

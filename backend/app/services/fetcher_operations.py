@@ -1,37 +1,40 @@
-"""Fetcher Operations Service — read functions.
+"""Fetcher Operations Service — reads and configuration mutation.
 
 See `docs/features/platform/fetcher-operations.md` (Fetcher Operations
 Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
-`get_fetcher_timeline`, `get_fetcher_config`,
+`get_fetcher_timeline`, `get_fetcher_config`, `update_fetcher_config`,
 `list_fetcher_audit_events`, Disabled Period Derivation) for the full
 specification this module implements.
 
 The four Public read functions (`list_fetchers`, `list_fetcher_runs`,
-`get_fetcher_run`, `get_fetcher_timeline`) and the two
-capability-protected reads (`get_fetcher_config`,
-`list_fetcher_audit_events`) are implemented here. The mutation
-functions (`update_fetcher_config`, `trigger_fetcher`) are owned by
-later work items (P3-08, P3-09) and are out of scope for this module as
-it stands.
+`get_fetcher_run`, `get_fetcher_timeline`), the two capability-protected
+reads (`get_fetcher_config`, `list_fetcher_audit_events`), and the
+capability-protected mutation (`update_fetcher_config`) are implemented
+here. `trigger_fetcher` is owned by a later work item (P3-09) and is
+out of scope for this module as it stands.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
-Completeness): all functions below accept a caller-supplied
-`AsyncSession`, perform reads only, never flush or commit, and create
-no audit events. Every function propagates only the exceptions listed
-in the Service Exceptions table below, plus standard database
-exceptions that surface as the global `500 INTERNAL_ERROR` response.
+Completeness): every read function accepts a caller-supplied
+`AsyncSession`, performs reads only, never flushes or commits, and
+creates no audit events. `update_fetcher_config` is the sole exception
+— see its own docstring for its transaction, audit, and re-invocation
+contract. Every function propagates only the exceptions listed in the
+Service Exceptions table below, plus standard database exceptions that
+surface as the global `500 INTERNAL_ERROR` response.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
 from celery import Celery
+from pydantic import ValidationError
 from redbeat import RedBeatSchedulerEntry
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
@@ -47,6 +50,7 @@ from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_audit_log import FetcherAuditLog
+from app.services.fetcher_execution import mark_run_stale
 
 logger = structlog.get_logger(__name__)
 
@@ -90,6 +94,43 @@ class FetcherRunNotFoundError(FetcherOperationsServiceError):
 
     def __init__(self) -> None:
         super().__init__("Fetcher run not found.")
+
+
+class FetcherDeregisteredError(FetcherOperationsServiceError):
+    """Fetcher exists in `FetcherConfig` but is not present in
+    `FETCHER_REGISTRY` (its code was removed)."""
+
+    def __init__(self) -> None:
+        super().__init__("Fetcher is deregistered.")
+
+
+class FetcherAlreadyRunningError(FetcherOperationsServiceError):
+    """`run_timeout` is changing and a non-stale run is currently active
+    for this fetcher."""
+
+    def __init__(self) -> None:
+        super().__init__("Fetcher has an active run; run_timeout cannot be changed.")
+
+
+class FetcherSettingUnknownError(FetcherOperationsServiceError):
+    """A submitted `custom_settings` key is not declared in the
+    fetcher's `Settings` model."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        super().__init__(f"Unknown custom setting: {key!r}")
+
+
+class FetcherSettingInvalidError(FetcherOperationsServiceError):
+    """The candidate merged state (current stored `custom_settings`
+    values plus the submitted, non-null changes) fails the fetcher's
+    `Settings` model type/range/choices validation. The invalid field
+    is not necessarily one the caller submitted — see
+    `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`, Custom settings canonicalization)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +249,79 @@ class FetcherConfigResult:
     updated_at: datetime
 
 
+class MissingType:
+    """Sentinel type for an omitted `UpdateConfigPayload` field.
+
+    Distinguishes "field not provided" (this sentinel) from an
+    explicit value — including `None` for the two fields where `None`
+    is meaningful (`schedule_override` reverts to the fetcher's
+    `default_schedule`; a `custom_settings` key set to `None` resets
+    that key to its `Settings` field default). Conceptually mirrors
+    `app.services.user_service._MissingType` (each service module
+    defining its own sentinel is the established pattern — see
+    `docs/features/identity/user-service.md`, `update_user()`, and
+    `docs/conventions.md`'s reference to `dataclasses.MISSING`), but is
+    public (no leading underscore): unlike `user_service._MissingType`,
+    which is only ever referenced inside its own module, the API router
+    (`app/api/v1/fetchers.py`) must reference this type directly to
+    annotate the locals it builds from
+    `FetcherConfigUpdateRequest.model_fields_set`.
+    """
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET: Any = MissingType()
+"""Public singleton instance of `MissingType`, typed `Any` so it can be
+assigned to any of `UpdateConfigPayload`'s per-field union types
+without a mypy complaint at every call site."""
+
+
+@dataclass(frozen=True)
+class UpdateConfigPayload:
+    """The set of changes requested via one `update_fetcher_config()`
+    call — see `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`, Q1). Each field defaults to `UNSET`
+    (omitted — the corresponding `FetcherConfig` column is left
+    untouched)."""
+
+    enabled: bool | MissingType = UNSET
+    schedule_override: str | MissingType | None = UNSET
+    run_timeout: int | MissingType = UNSET
+    request_delay: float | MissingType = UNSET
+    custom_settings: dict[str, Any] | MissingType = UNSET
+
+
+@dataclass(frozen=True)
+class FetcherConfigPropagation:
+    """Descriptor consumed by
+    `fetcher_schedule.propagate_config_update()` after the API
+    transaction dependency commits `update_fetcher_config()`'s
+    mutation. Carries only primitive values — no ORM reference — so it
+    remains valid across the commit boundary
+    (`docs/conventions.md`, Transaction Hygiene Rules). See
+    `docs/features/platform/fetcher-operations.md` (RedBeat
+    Post-Commit Propagation) for the precedence
+    `update_fetcher_config()` uses to decide `action`."""
+
+    fetcher_name: str
+    action: Literal["delete", "upsert"]
+    schedule_override: str | None
+    run_timeout: int
+
+
+@dataclass(frozen=True)
+class FetcherConfigMutationResult:
+    """Result of `update_fetcher_config()`: the updated (or unchanged,
+    for a no-op) config state, plus the post-commit RedBeat propagation
+    descriptor — `None` when no schedule-affecting field actually
+    changed."""
+
+    config: FetcherConfigResult
+    propagation: FetcherConfigPropagation | None
+
+
 @dataclass(frozen=True)
 class FetcherAuditEventPage:
     """One page of `FetcherAuditEvent` rows, with `actor` eagerly
@@ -245,6 +359,72 @@ def _count_recognized_settings(
     if settings_cls is None:
         return 0
     return sum(1 for key in custom_settings if key in settings_cls.model_fields)
+
+
+def _build_config_result(
+    config: FetcherConfig, fetcher_cls: type[BaseFetcher] | None
+) -> FetcherConfigResult:
+    """Merge a persisted `FetcherConfig` row with code-defined registry
+    metadata — shared by `get_fetcher_config()` and
+    `update_fetcher_config()` so both endpoints return an identical
+    shape from a single implementation."""
+    default_schedule: str | None
+    effective_schedule: str | None
+    settings_schema: dict[str, Any] | None
+
+    if fetcher_cls is not None:
+        default_schedule = fetcher_cls.default_schedule
+        effective_schedule = config.schedule_override or default_schedule
+        settings_schema = (
+            fetcher_cls.Settings.model_json_schema()
+            if fetcher_cls.Settings is not None
+            else None
+        )
+    else:
+        default_schedule = None
+        effective_schedule = config.schedule_override
+        settings_schema = None
+
+    return FetcherConfigResult(
+        fetcher_name=config.fetcher_name,
+        enabled=config.enabled,
+        schedule_override=config.schedule_override,
+        default_schedule=default_schedule,
+        effective_schedule=effective_schedule,
+        run_timeout=config.run_timeout,
+        request_delay=config.request_delay,
+        custom_settings=config.custom_settings,
+        settings_schema=settings_schema,
+        updated_at=config.updated_at,
+    )
+
+
+def _stringify_standard_value(value: Any) -> str | None:
+    """`str()` representation for a standard-field (`schedule_override`,
+    `run_timeout`, `request_delay`) audit value — `None` (stored as SQL
+    `NULL`) when the value itself is `None`, per
+    `docs/features/platform/fetcher-operations.md` (`update_fetcher_config`,
+    Audit value serialization)."""
+    return None if value is None else str(value)
+
+
+def _canonical_json_scalar(value: Any) -> str:
+    """Canonical JSON scalar serialization for a non-null
+    `custom_settings` audit value, per
+    `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`, Audit value serialization)."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _first_settings_error_message(exc: ValidationError) -> str:
+    """Build a concise, user-facing message from a `Settings` model
+    validation failure — one `field: message` entry per failing field,
+    joined with `; `."""
+    parts = [
+        f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+        for error in exc.errors()
+    ]
+    return "; ".join(parts)
 
 
 def _build_run_summary(
@@ -724,35 +904,299 @@ async def get_fetcher_config(
         raise FetcherNotFoundError()
 
     fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
-    default_schedule: str | None
-    effective_schedule: str | None
-    settings_schema: dict[str, Any] | None
+    return _build_config_result(config, fetcher_cls)
 
-    if fetcher_cls is not None:
-        default_schedule = fetcher_cls.default_schedule
-        effective_schedule = config.schedule_override or default_schedule
-        settings_schema = (
-            fetcher_cls.Settings.model_json_schema()
-            if fetcher_cls.Settings is not None
-            else None
-        )
-    else:
-        default_schedule = None
-        effective_schedule = config.schedule_override
-        settings_schema = None
 
-    return FetcherConfigResult(
-        fetcher_name=config.fetcher_name,
-        enabled=config.enabled,
-        schedule_override=config.schedule_override,
-        default_schedule=default_schedule,
-        effective_schedule=effective_schedule,
-        run_timeout=config.run_timeout,
-        request_delay=config.request_delay,
-        custom_settings=config.custom_settings,
-        settings_schema=settings_schema,
-        updated_at=config.updated_at,
+async def update_fetcher_config(
+    db: AsyncSession,
+    *,
+    fetcher_name: str,
+    user_id: UUID,
+    payload: UpdateConfigPayload,
+) -> FetcherConfigMutationResult:
+    """Atomically apply `payload`'s changes to `fetcher_name`'s
+    `FetcherConfig` row, audit every actually-changed field, and
+    compute the RedBeat propagation the caller must perform after
+    commit.
+
+    See `docs/features/platform/fetcher-operations.md`
+    (`update_fetcher_config`) for the full specification this function
+    implements — this docstring summarizes it, the spec is
+    authoritative.
+
+    Q2 (guards, evaluated in this order after the row lock):
+    1. `FetcherNotFoundError` — no `FetcherConfig` row for
+       `fetcher_name`.
+    2. `FetcherDeregisteredError` — the row exists but `fetcher_name`
+       is not in `FETCHER_REGISTRY`.
+    3. `FetcherAlreadyRunningError` — `payload.run_timeout` is provided,
+       differs from the current value, and a non-stale run is active
+       (a stale one is finalized in-place via
+       `fetcher_execution.mark_run_stale()` and the PATCH proceeds).
+    4. `FetcherSettingUnknownError` — a `payload.custom_settings` key is
+       not declared in the fetcher's `Settings` model.
+    5. `FetcherSettingInvalidError` — the merged candidate
+       `custom_settings` state fails `Settings` model validation. The
+       **entire** merged state (current stored values overlaid with
+       `payload.custom_settings`) is validated, mirroring the same
+       `Settings` model instantiation `BaseFetcher.run()` performs at
+       the start of every run (fetcher-infrastructure.md, "Runtime
+       validation of stored values") — this guarantees a PATCH never
+       leaves `custom_settings` in a state that would fail at the next
+       run. A pre-existing stored value that predates a `Settings`
+       model constraint tightening can therefore block an otherwise
+       unrelated field change until it is also corrected (explicitly,
+       or via `null` reset) in the same PATCH.
+
+    Q3 (behavior): for each of `enabled`, `schedule_override`,
+    `run_timeout`, `request_delay` present in `payload` (not `UNSET`),
+    compare against the current persisted value; only actually-changed
+    fields are applied. For `custom_settings`, each non-null submitted
+    key is validated then **canonicalized**: the persisted value, the
+    no-op comparison, and the audit `new_value` all use the canonical
+    value produced by the validated `Settings` model
+    (`model_dump(mode="json")`) for that key — never the raw payload
+    value (`docs/features/platform/fetcher-operations.md`,
+    `update_fetcher_config`, step 6, Custom settings canonicalization).
+    The audit `old_value` is the previously stored value, which is
+    already canonical since every prior write persisted the canonical
+    form. A key set to `None` is removed (reset to default). Keys
+    omitted from `payload.custom_settings` and orphaned keys already
+    stored are never touched. If no field actually changed, the
+    function is a no-op: no mutation, no audit event, `updated_at`
+    unchanged (no `UPDATE` is ever issued), and `propagation=None`.
+
+    Q4 (audit events): one `FetcherAuditEvent` per actually-changed
+    field, created via `FetcherAuditLog.log_event()`, in this order:
+    `enabled` (event type `enabled`/`disabled`, no payload) →
+    `schedule_override` → `run_timeout` → `request_delay` (all three:
+    event type `config_changed`, `detail={"field": <name>}`,
+    `old_value`/`new_value` as `str()` or `None`) → custom setting keys
+    in alphabetical order (event type `config_changed`,
+    `detail={"field": "custom_settings", "key": <key>}`,
+    `old_value`/`new_value` as canonical JSON scalars or `None`). All
+    events share this call's `user_id` and transaction timestamp.
+
+    Q5 (re-invocation): conditionally idempotent — re-submitting a
+    payload whose values already match the current persisted (and, for
+    `custom_settings`, canonicalized) state is a no-op. A payload that
+    still differs creates new audit events on every call.
+
+    Q6 (exceptions): `FetcherNotFoundError`, `FetcherDeregisteredError`,
+    `FetcherAlreadyRunningError`, `FetcherSettingUnknownError`,
+    `FetcherSettingInvalidError`.
+
+    Accepts a caller-supplied `AsyncSession` (caller-owned transaction):
+    flushes without committing or rolling back
+    (`docs/conventions.md`, Caller-Owned Service Transactions). Locks
+    the `FetcherConfig` row (`SELECT ... FOR UPDATE`) as the first
+    database operation (`docs/conventions.md`, Pessimistic Locking
+    Pattern). Performs no network I/O — the returned
+    `FetcherConfigPropagation` describes the RedBeat write the caller
+    must perform strictly after commit
+    (`docs/conventions.md`, Transaction Hygiene Rules).
+    """
+    now = datetime.now(UTC)
+
+    result = await db.execute(
+        select(FetcherConfig)
+        .where(FetcherConfig.fetcher_name == fetcher_name)
+        .with_for_update()
     )
+    config = result.scalar_one_or_none()
+    if config is None:
+        raise FetcherNotFoundError()
+
+    fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
+    if fetcher_cls is None:
+        raise FetcherDeregisteredError()
+
+    enabled = payload.enabled
+    schedule_override = payload.schedule_override
+    run_timeout = payload.run_timeout
+    request_delay = payload.request_delay
+    custom_settings = payload.custom_settings
+
+    # --- Guard 3: Run Timeout Active Guard --------------------------------
+    if not isinstance(run_timeout, MissingType) and run_timeout != config.run_timeout:
+        active_result = await db.execute(
+            select(FetcherRun).where(
+                FetcherRun.fetcher_name == fetcher_name,
+                FetcherRun.status == FetcherRunStatus.RUNNING.value,
+            )
+        )
+        active_run = active_result.scalar_one_or_none()
+        if active_run is not None:
+            if _is_stale(
+                active_run.status, active_run.started_at, config.run_timeout, now
+            ):
+                mark_run_stale(
+                    active_run,
+                    now=now,
+                    run_timeout=config.run_timeout,
+                    fetcher_name=fetcher_name,
+                )
+            else:
+                raise FetcherAlreadyRunningError()
+
+    # --- Guards 4-5: custom_settings validation and canonicalization -----
+    canonical_changes: dict[str, Any | None] = {}
+    if not isinstance(custom_settings, MissingType):
+        settings_cls = fetcher_cls.Settings
+        declared_fields = settings_cls.model_fields if settings_cls is not None else {}
+        for key in custom_settings:
+            if key not in declared_fields:
+                raise FetcherSettingUnknownError(key)
+
+        if settings_cls is not None and custom_settings:
+            candidate = dict(config.custom_settings)
+            for key, value in custom_settings.items():
+                if value is None:
+                    candidate.pop(key, None)
+                else:
+                    candidate[key] = value
+            try:
+                validated = settings_cls.model_validate(candidate)
+            except ValidationError as exc:
+                raise FetcherSettingInvalidError(
+                    _first_settings_error_message(exc)
+                ) from exc
+            dumped = validated.model_dump(mode="json")
+            for key, value in custom_settings.items():
+                canonical_changes[key] = None if value is None else dumped[key]
+
+    # --- Compute diff: standard fields -------------------------------------
+    changes: list[tuple[str, Any, Any]] = []
+    if not isinstance(enabled, MissingType) and enabled != config.enabled:
+        changes.append(("enabled", config.enabled, enabled))
+    if (
+        not isinstance(schedule_override, MissingType)
+        and schedule_override != config.schedule_override
+    ):
+        changes.append(
+            ("schedule_override", config.schedule_override, schedule_override)
+        )
+    if not isinstance(run_timeout, MissingType) and run_timeout != config.run_timeout:
+        changes.append(("run_timeout", config.run_timeout, run_timeout))
+    if (
+        not isinstance(request_delay, MissingType)
+        and request_delay != config.request_delay
+    ):
+        changes.append(("request_delay", config.request_delay, request_delay))
+
+    # --- Compute diff: custom settings (alphabetical) ----------------------
+    custom_changes: list[tuple[str, Any, Any]] = []
+    for key in sorted(canonical_changes):
+        new_value = canonical_changes[key]
+        old_value = config.custom_settings.get(key)
+        if new_value != old_value:
+            custom_changes.append((key, old_value, new_value))
+
+    if not changes and not custom_changes:
+        return FetcherConfigMutationResult(
+            config=_build_config_result(config, fetcher_cls), propagation=None
+        )
+
+    # --- Mutate -------------------------------------------------------------
+    for field, _old, new in changes:
+        setattr(config, field, new)
+
+    if custom_changes:
+        updated_custom = dict(config.custom_settings)
+        for key, _old, new in custom_changes:
+            if new is None:
+                updated_custom.pop(key, None)
+            else:
+                updated_custom[key] = new
+        config.custom_settings = updated_custom
+
+    # --- Audit events (deterministic order) ---------------------------------
+    for field, old, new in changes:
+        if field == "enabled":
+            await FetcherAuditLog.log_event(
+                db,
+                event_type=(
+                    FetcherAuditEventType.ENABLED
+                    if new
+                    else FetcherAuditEventType.DISABLED
+                ),
+                fetcher_name=fetcher_name,
+                user_id=user_id,
+            )
+        else:
+            await FetcherAuditLog.log_event(
+                db,
+                event_type=FetcherAuditEventType.CONFIG_CHANGED,
+                fetcher_name=fetcher_name,
+                user_id=user_id,
+                old_value=_stringify_standard_value(old),
+                new_value=_stringify_standard_value(new),
+                detail={"field": field},
+            )
+    for key, old, new in custom_changes:
+        await FetcherAuditLog.log_event(
+            db,
+            event_type=FetcherAuditEventType.CONFIG_CHANGED,
+            fetcher_name=fetcher_name,
+            user_id=user_id,
+            old_value=_canonical_json_scalar(old) if old is not None else None,
+            new_value=_canonical_json_scalar(new) if new is not None else None,
+            detail={"field": "custom_settings", "key": key},
+        )
+
+    await db.flush()
+    # `updated_at` is a server-computed `onupdate=func.now()` value —
+    # SQLAlchemy does not include it in `RETURNING` for an UPDATE (only
+    # for INSERT), so after the flush above the in-memory attribute is
+    # expired. An implicit lazy-reload of an expired attribute is
+    # synchronous and unsupported under `AsyncSession`/asyncpg (raises
+    # `MissingGreenlet`); refreshing it explicitly here is the async-safe
+    # equivalent, and only costs a query on the branch that actually
+    # mutated something.
+    await db.refresh(config, attribute_names=["updated_at"])
+
+    return FetcherConfigMutationResult(
+        config=_build_config_result(config, fetcher_cls),
+        propagation=_build_propagation(fetcher_name, changes, config),
+    )
+
+
+def _build_propagation(
+    fetcher_name: str, changes: list[tuple[str, Any, Any]], config: FetcherConfig
+) -> FetcherConfigPropagation | None:
+    """Compute the RedBeat propagation descriptor per the precedence in
+    `docs/features/platform/fetcher-operations.md` (RedBeat Post-Commit
+    Propagation). `config` reflects the already-applied, not-yet-committed
+    mutation — its `.enabled`/`.schedule_override`/`.run_timeout` are the
+    effective post-PATCH values."""
+    changed_fields = {field for field, _old, _new in changes}
+
+    if "enabled" in changed_fields:
+        if not config.enabled:
+            return FetcherConfigPropagation(
+                fetcher_name=fetcher_name,
+                action="delete",
+                schedule_override=None,
+                run_timeout=0,
+            )
+        return FetcherConfigPropagation(
+            fetcher_name=fetcher_name,
+            action="upsert",
+            schedule_override=config.schedule_override,
+            run_timeout=config.run_timeout,
+        )
+
+    if (
+        "schedule_override" in changed_fields or "run_timeout" in changed_fields
+    ) and config.enabled:
+        return FetcherConfigPropagation(
+            fetcher_name=fetcher_name,
+            action="upsert",
+            schedule_override=config.schedule_override,
+            run_timeout=config.run_timeout,
+        )
+
+    return None
 
 
 async def list_fetcher_audit_events(

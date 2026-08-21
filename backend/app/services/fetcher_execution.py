@@ -4,13 +4,19 @@ See `docs/features/platform/fetcher-infrastructure.md` (Concurrency
 Control — Atomic Run Acquisition Protocol, Stale Run Detection) for the
 full specification this module implements.
 
-This module is called exclusively by the `run_fetcher` Celery task
-wrapper (`app/tasks/fetchers.py`). It is not an API-facing service —
-it raises no HTTP-mapped exceptions. Every exception defined or raised
-here either propagates uncaught to Celery (permanent task failure, no
-retry — see fetcher-infrastructure.md, Celery Integration, "No
-top-level retry") or is a plain `ValueError` per the specification's
-literal text for manual `run_id` rejection.
+`acquire_fetcher_run()` and `finalize_manual_run_as_failure()` are
+called exclusively by the `run_fetcher` Celery task wrapper
+(`app/tasks/fetchers.py`) — neither is an API-facing service, and
+neither raises an HTTP-mapped exception. Every exception defined or
+raised by them either propagates uncaught to Celery (permanent task
+failure, no retry — see fetcher-infrastructure.md, Celery Integration,
+"No top-level retry") or is a plain `ValueError` per the
+specification's literal text for manual `run_id` rejection.
+
+`mark_run_stale()` is also called by
+`app.services.fetcher_operations.update_fetcher_config()` (an
+API-facing service) under its own `FetcherConfig` lock — see that
+function's docstring.
 
 Registry lookup (`FETCHER_REGISTRY` membership) is the caller's
 responsibility: the task wrapper determines whether `fetcher_name` is
@@ -152,7 +158,7 @@ async def acquire_fetcher_run(
         elapsed = (now - active_run.started_at).total_seconds()
         stale_threshold = config.run_timeout + _STALE_MARGIN_SECONDS
         if elapsed > stale_threshold:
-            _mark_run_stale(
+            mark_run_stale(
                 active_run,
                 now=now,
                 run_timeout=config.run_timeout,
@@ -251,7 +257,7 @@ async def finalize_manual_run_as_failure(
     await db.flush()
 
 
-def _mark_run_stale(
+def mark_run_stale(
     run: FetcherRun, *, now: datetime, run_timeout: int, fetcher_name: str
 ) -> None:
     """Finalize a stale `FetcherRun` in place (caller flushes/commits).
@@ -261,6 +267,17 @@ def _mark_run_stale(
     project's structlog convention (`docs/conventions.md`, Logging) —
     a snake_case event name with structured keyword context — rather
     than the spec's illustrative message text.
+
+    Shared by two callers under two different pessimistic locks:
+    `acquire_fetcher_run()` above (locks `FetcherConfig` as part of the
+    Atomic Run Acquisition Protocol) and
+    `fetcher_operations.update_fetcher_config()` (locks `FetcherConfig`
+    as part of the Run Timeout Active Guard — see
+    `docs/features/platform/fetcher-operations.md`,
+    `update_fetcher_config`, step 4). Public (no leading underscore)
+    specifically to support this second caller in another module —
+    duplicating this finalization logic would risk the two call sites
+    drifting on the stale-run field values or log event shape.
     """
     elapsed = (now - run.started_at).total_seconds()
     run.status = FetcherRunStatus.FAILURE.value
