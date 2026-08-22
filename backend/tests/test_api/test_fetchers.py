@@ -1099,6 +1099,32 @@ class TestUpdateFetcherConfigEndpoint:
         assert response.status_code == 409
         assert response.json()["code"] == "FETCHER_ALREADY_RUNNING"
 
+    async def test_run_timeout_change_while_active_queued_run_returns_409(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """The Run Timeout Active Guard covers `queued` runs too, not
+        only `running` ones — see
+        `docs/features/platform/fetcher-operations.md`
+        (`update_fetcher_config`, Run Timeout Active Guard)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"run_timeout": 1800},
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "FETCHER_ALREADY_RUNNING"
+
     async def test_unknown_custom_setting_returns_422(
         self,
         admin_client: AsyncClient,

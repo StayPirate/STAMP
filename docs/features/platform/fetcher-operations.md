@@ -305,8 +305,8 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
 2. `FetcherDeregisteredError` — fetcher deregistered (in DB, not in
    registry).
 3. `FetcherAlreadyRunningError` — `run_timeout` is changing AND a
-   non-stale `running` run exists (see Run Timeout Active Guard below;
-   a `queued` run does not trigger this guard).
+   non-stale active (`queued` or `running`) run exists (see Run Timeout
+   Active Guard below).
 4. `FetcherSettingUnknownError` — unknown key in `custom_settings`.
 5. `FetcherSettingInvalidError` — the candidate merged state (current
    stored values plus submitted changes) fails validation. The invalid
@@ -332,25 +332,34 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
    propagation occur.
 4. **Run Timeout Active Guard**: if `run_timeout` is present in the
    payload AND differs from the current value: query `FetcherRun` where
-   `fetcher_name` matches AND `status = 'running'`. This guard applies
-   only to `running` runs, not `queued` ones: a `queued` run's own
-   staleness is evaluated against the fixed Queued Stale Threshold
-   (600 seconds from `created_at`), which does not depend on
-   `run_timeout` at all, and the Celery task for an eventual manual
-   adoption already has its `time_limit`/`soft_time_limit` fixed at
-   publication time (an earlier, separate transaction) regardless of
-   any later `run_timeout` change — there is no consistency to protect
-   for a run that has not yet been adopted. If a `running` run exists,
-   evaluate staleness using the **current** (pre-PATCH) `run_timeout`:
-   stale if `now() - started_at > current_run_timeout + 60`.
+   `fetcher_name` matches AND `status IN ('queued', 'running')`. This
+   guard covers both active statuses — not `running` alone — because a
+   manual run's Celery task already has its `time_limit`/
+   `soft_time_limit` fixed at publication time (an earlier, separate
+   transaction), before adoption. If `run_timeout` were free to change
+   while that run is still `queued`, the *live* `FetcherConfig.run_timeout`
+   read by Stale Run Detection after adoption could diverge from the
+   value the already-published task is executing under, breaking the
+   invariant that the Running Stale Threshold is always set above the
+   task's actual hard time limit (see
+   `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+   Detection, "Relationship to hard time limit") — a lowered
+   `run_timeout` could then cause the still-executing process to be
+   declared stale and a second run started while the first is still
+   alive. Evaluate staleness using the row's own status and the
+   **current** (pre-PATCH) `run_timeout` where applicable: Queued Stale
+   Threshold (`created_at`, fixed 600 seconds) if `queued`; Running
+   Stale Threshold (`started_at`, `current_run_timeout + 60`) if
+   `running`.
    - If **not stale**: raise `FetcherAlreadyRunningError`. The entire
      PATCH fails atomically — no field is modified, no audit event is
      created, no RedBeat propagation occurs.
    - If **stale**: finalize the stale run under the same lock (same
-     semantics as the Running Stale Threshold in
+     semantics as the Queued/Running Stale Threshold in
      `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-     Detection, for the finalization message and fields). Proceed with
-     mutation.
+     Detection, for the finalization message and fields, using
+     `mark_queued_run_stale()` for a `queued` row and `mark_run_stale()`
+     for a `running` row). Proceed with mutation.
    - If `run_timeout` is present but equal to the current value: no-op
      for this field, guard does not apply.
 5. **Compute diff**: for each field in the payload, compare with current
@@ -609,19 +618,36 @@ Celery task.
 
 This is covered by the Queued Stale Threshold (600 seconds — see
 `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-Detection): the orphaned row is finalized by the next trigger attempt
-or scheduled acquisition once it crosses that threshold. During the
-stale-detection window:
-- Scheduled triggers are silently discarded (active `queued` run).
-- Manual triggers return `409 FETCHER_ALREADY_RUNNING`.
+Detection): the orphaned row becomes *eligible* for finalization once
+it crosses that threshold, but finalization itself is lazy — it only
+happens when some subsequent acquisition attempt for the same fetcher
+actually runs: the next scheduled acquisition, a manual trigger attempt
+(guard 4, "Stale run handling"), or a `PATCH .../config` request that
+changes `run_timeout` (Run Timeout Active Guard, which evaluates the
+same threshold). During the stale-eligible window, and for as long as
+none of those three attempts occurs:
+- Scheduled triggers are silently discarded (active `queued` run) —
+  unless the fetcher is disabled, in which case no scheduled attempt
+  exists at all.
+- Manual triggers return `409 FETCHER_ALREADY_RUNNING` — unless the
+  fetcher is disabled or deregistered, in which case guards 2–3 reject
+  the request before stale handling is ever reached, leaving the
+  orphaned row untouched.
 - `GET /api/v1/fetchers` shows `stale: true` once the threshold is
-  reached, alerting the operator.
+  reached, alerting the operator regardless of the fetcher's
+  enabled/registered state.
 
 This crash scenario is functionally equivalent to the "worker dies
 before adopting the task" case that Queued Stale Detection is designed
-to cover. The recovery window is bounded by 600 seconds (10 minutes),
-independent of the fetcher's `run_timeout`. No additional mechanism
-(outbox, heartbeat, or lease) is introduced.
+to cover. 600 seconds (10 minutes) is the eligibility threshold, not a
+guaranteed recovery latency: a fetcher that is disabled or deregistered
+has no acquisition attempt to trigger finalization, so its orphaned
+`queued` row remains visible as active-and-stale (via `stale: true`)
+until the fetcher is re-enabled/re-registered and its next attempt
+runs. No additional mechanism (outbox, heartbeat, lease, or background
+reaper) is introduced to bound this further — the operator-visible
+`stale: true` signal is the intended recovery path for this residual
+case.
 
 ##### Ambiguous Broker Acknowledgement
 

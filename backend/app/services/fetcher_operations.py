@@ -50,7 +50,7 @@ from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_audit_log import FetcherAuditLog
-from app.services.fetcher_execution import mark_run_stale
+from app.services.fetcher_execution import mark_queued_run_stale, mark_run_stale
 
 logger = structlog.get_logger(__name__)
 
@@ -957,9 +957,11 @@ async def update_fetcher_config(
     2. `FetcherDeregisteredError` — the row exists but `fetcher_name`
        is not in `FETCHER_REGISTRY`.
     3. `FetcherAlreadyRunningError` — `payload.run_timeout` is provided,
-       differs from the current value, and a non-stale run is active
-       (a stale one is finalized in-place via
-       `fetcher_execution.mark_run_stale()` and the PATCH proceeds).
+       differs from the current value, and a non-stale active
+       (`queued` or `running`) run exists (a stale one is finalized
+       in-place via `fetcher_execution.mark_queued_run_stale()` or
+       `mark_run_stale()`, matching the row's own status, and the PATCH
+       proceeds).
     4. `FetcherSettingUnknownError` — a `payload.custom_settings` key is
        not declared in the fetcher's `Settings` model.
     5. `FetcherSettingInvalidError` — the merged candidate
@@ -1045,11 +1047,18 @@ async def update_fetcher_config(
     custom_settings = payload.custom_settings
 
     # --- Guard 3: Run Timeout Active Guard --------------------------------
+    # Covers both active statuses (`queued` and `running`), not `running`
+    # alone — see docs/features/platform/fetcher-infrastructure.md
+    # (Stale Run Detection, Running Stale Threshold, "Relationship to
+    # hard time limit") for why a `run_timeout` change must not be
+    # allowed while a manual run is still `queued`.
     if not isinstance(run_timeout, MissingType) and run_timeout != config.run_timeout:
         active_result = await db.execute(
             select(FetcherRun).where(
                 FetcherRun.fetcher_name == fetcher_name,
-                FetcherRun.status == FetcherRunStatus.RUNNING.value,
+                FetcherRun.status.in_(
+                    [FetcherRunStatus.QUEUED.value, FetcherRunStatus.RUNNING.value]
+                ),
             )
         )
         active_run = active_result.scalar_one_or_none()
@@ -1061,12 +1070,17 @@ async def update_fetcher_config(
                 config.run_timeout,
                 now,
             ):
-                mark_run_stale(
-                    active_run,
-                    now=now,
-                    run_timeout=config.run_timeout,
-                    fetcher_name=fetcher_name,
-                )
+                if active_run.status == FetcherRunStatus.QUEUED.value:
+                    mark_queued_run_stale(
+                        active_run, now=now, fetcher_name=fetcher_name
+                    )
+                else:
+                    mark_run_stale(
+                        active_run,
+                        now=now,
+                        run_timeout=config.run_timeout,
+                        fetcher_name=fetcher_name,
+                    )
             else:
                 raise FetcherAlreadyRunningError()
 

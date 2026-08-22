@@ -1791,25 +1791,71 @@ class TestUpdateFetcherConfigGuards:
         events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
         assert events == []
 
-    async def test_run_timeout_change_with_active_queued_run_does_not_raise(
+    async def test_run_timeout_change_with_active_non_stale_queued_run_raises(
         self,
         db_session: AsyncSession,
         fetcher_config_factory: FetcherConfigFactory,
         fetcher_run_factory: FetcherRunFactory,
         user_factory: UserFactory,
     ) -> None:
-        """The Run Timeout Active Guard applies only to `running` runs
-        — a `queued` run (not yet adopted) does not block the change.
-        See `docs/features/platform/fetcher-operations.md`
-        (`update_fetcher_config`, Run Timeout Active Guard)."""
+        """The Run Timeout Active Guard covers both active statuses —
+        a non-stale `queued` run blocks a `run_timeout` change exactly
+        like a `running` one. See
+        `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+        Detection, "Relationship to hard time limit") for why: the
+        manual run's Celery task already has its hard `time_limit`
+        fixed at publication time, so lowering `run_timeout` while it
+        is still `queued` could later cause the Running Stale
+        Threshold (evaluated with the new, smaller value after
+        adoption) to declare the still-executing process stale and
+        start a second run."""
         _register(_NoSettingsFetcher)
         config = await fetcher_config_factory(
             fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
         )
-        await fetcher_run_factory(
+        queued_run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
             status="queued",
             started_at=None,
+        )
+        admin = await user_factory()
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(run_timeout=1800),
+            )
+
+        await db_session.refresh(config)
+        assert config.run_timeout == 3600
+        await db_session.refresh(queued_run)
+        assert queued_run.status == "queued"
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
+
+    async def test_run_timeout_change_with_stale_queued_run_finalizes_and_proceeds(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """A `queued` run that has crossed the fixed 600-second Queued
+        Stale Threshold is finalized in place (via
+        `mark_queued_run_stale()`, `started_at`/`duration_seconds` left
+        `NULL`) under the same lock, and the PATCH proceeds — mirroring
+        the existing stale-`running` behavior."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
+        )
+        stale_queued_run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=datetime.now(UTC) - timedelta(seconds=601),
         )
         admin = await user_factory()
 
@@ -1821,6 +1867,12 @@ class TestUpdateFetcherConfigGuards:
         )
 
         assert result.config.run_timeout == 1800
+        await db_session.refresh(stale_queued_run)
+        assert stale_queued_run.status == "failure"
+        assert stale_queued_run.started_at is None
+        assert stale_queued_run.duration_seconds is None
+        assert stale_queued_run.error_message is not None
+        assert "stale" in stale_queued_run.error_message.lower()
 
     async def test_run_timeout_change_with_stale_run_finalizes_and_proceeds(
         self,

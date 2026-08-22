@@ -1783,9 +1783,16 @@ raise `ValueError`, no retry).
     `status = failure`,
     `error_message = "Fetcher deregistered between trigger and execution"`,
     `finished_at = now()`, `started_at` and `duration_seconds` left
-    `NULL` (no execution occurred), commit, and return. If the record
-    cannot be retrieved (database error or not found), log ERROR and
-    raise without retry.
+    `NULL` (no execution occurred), commit, and return.
+    - If exactly one row is updated: finalization succeeded.
+    - If zero rows are updated (the run was already finalized by a
+      concurrent path — e.g., the API's publication-failure
+      compensation, or a redelivered Celery message reaching this same
+      branch twice): log INFO and return without altering the row —
+      this is not an error, and does not raise.
+    - If the record cannot be retrieved at all (database error, or the
+      row genuinely does not exist for this `run_id`/`fetcher_name`
+      pair): log ERROR and raise without retry.
 
 **Synchronous bridge**: the task function uses a single
 `asyncio.run()` call wrapping the complete async acquisition-and-
@@ -3019,10 +3026,15 @@ transaction owned by the `run_fetcher` task wrapper):
    - **Active run exists and is NOT stale**:
      - Scheduled trigger: discard silently (log INFO, no `FetcherRun`
        created, return).
-     - Manual trigger with a supplied `run_id`: this case was already
-       handled by the API-level guard — if it reaches the task, the
-       active row IS the supplied `run_id` row (a `queued` run
-       awaiting its own adoption). Continue to step 6.
+     - Manual trigger with a supplied `run_id`: normally the active row
+       IS the supplied `run_id` row (a `queued` run awaiting its own
+       adoption). It may also be that same row already adopted
+       (`running`) by a concurrent worker delivery, or a *different*,
+       newer run that superseded this one after it was finalized as
+       stale in a previous pass. Do not treat either case as an error —
+       continue to step 6, whose conditional predicate (keyed on the
+       specific `run_id`, not on "whichever row is currently active")
+       determines the correct outcome for all three cases.
    - **Active run exists and IS stale**: finalize it under the same
      lock (see "Stale Run Detection" for the per-status message and
      fields — a stale `queued` row is finalized with `started_at` and
@@ -3161,6 +3173,19 @@ already dead (killed by the hard limit at `run_timeout`). The stale
 detection mechanism therefore never needs to kill or revoke a task —
 it only cleans up the orphaned database record left behind by a
 force-killed process.
+
+This invariant requires the effective `run_timeout` to never decrease
+while an **active** run (`queued` or `running`) exists for the fetcher —
+not `running` alone. A manual run's Celery task has its `time_limit`
+fixed at publication time, while it is still `queued`; if `run_timeout`
+could be lowered during that window, the Running Stale Threshold
+evaluated after adoption would use the new, smaller value against a
+process still executing under the old, larger hard limit, potentially
+declaring it stale — and starting a second execution — while it is
+still alive. The `update_fetcher_config()` Run Timeout Active Guard
+(`docs/features/platform/fetcher-operations.md`) enforces this by
+rejecting a `run_timeout` change while any non-stale active run exists,
+for both statuses.
 
 ### Queued Stale Threshold
 

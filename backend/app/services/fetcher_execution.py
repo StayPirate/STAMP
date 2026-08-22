@@ -13,12 +13,13 @@ failure, no retry — see fetcher-infrastructure.md, Celery Integration,
 "No top-level retry") or is a plain `ValueError` per the
 specification's literal text for manual `run_id` rejection.
 
-`mark_run_stale()` is also called by
+`mark_run_stale()` and `mark_queued_run_stale()` are also called by
 `app.services.fetcher_operations.update_fetcher_config()` (an
 API-facing service) under its own `FetcherConfig` lock — see that
-function's docstring. `mark_run_stale()` covers only `running` runs;
-`update_fetcher_config()`'s Run Timeout Active Guard intentionally does
-not consider `queued` runs (see `docs/features/platform/fetcher-operations.md`,
+function's docstring. `update_fetcher_config()`'s Run Timeout Active
+Guard covers both active statuses (`queued` and `running`), calling
+whichever of these two functions matches the active row's own status
+(see `docs/features/platform/fetcher-operations.md`,
 `update_fetcher_config`, Run Timeout Active Guard).
 
 Registry lookup (`FETCHER_REGISTRY` membership) is the caller's
@@ -402,12 +403,14 @@ def mark_queued_run_stale(run: FetcherRun, *, now: datetime, fetcher_name: str) 
     are left untouched — they remain `NULL`, since the run was never
     adopted.
 
-    Currently called only by `acquire_fetcher_run()` above, under the
-    `FetcherConfig` lock. Kept as a separate public function (mirroring
-    `mark_run_stale()` above) rather than a branch inside it: the two
-    finalizations set different fields (a `queued` run has no
-    `started_at`/`duration_seconds` to preserve or compute) and use a
-    different elapsed-time basis (`created_at`, not `started_at`).
+    Called by `acquire_fetcher_run()` above, under the `FetcherConfig`
+    lock, and by `fetcher_operations.update_fetcher_config()` (Run
+    Timeout Active Guard), under its own `FetcherConfig` lock. Kept as
+    a separate public function (mirroring `mark_run_stale()` above)
+    rather than a branch inside it: the two finalizations set different
+    fields (a `queued` run has no `started_at`/`duration_seconds` to
+    preserve or compute) and use a different elapsed-time basis
+    (`created_at`, not `started_at`).
     """
     elapsed = (now - run.created_at).total_seconds()
     run.status = FetcherRunStatus.FAILURE.value

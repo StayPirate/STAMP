@@ -35,6 +35,7 @@ class _RunRow(TypedDict):
     finished_at: Any
     duration_seconds: Any
     error_message: Any
+    created_at: Any
 
 
 async def _seed_pre_migration_rows(database_url: str) -> None:
@@ -94,6 +95,33 @@ async def _seed_queued_row(database_url: str) -> None:
         await engine.dispose()
 
 
+async def _seed_pre_adoption_failure_row(database_url: str) -> None:
+    """Insert a `failure` manual run with `started_at IS NULL` — the
+    shape produced by the disabled/deregistered/stale-queued
+    finalization paths (`finalize_manual_run_as_failure()`,
+    `mark_queued_run_stale()`) for a run that never reached adoption.
+    Only valid after the migration under test has run (`started_at`
+    nullable). Exercises `downgrade()`'s second normalization statement
+    (`WHERE started_at IS NULL`), distinct from the first
+    (`WHERE status = 'queued'`), which this row never matches."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO fetcher_run "
+                    "(fetcher_name, status, finished_at, error_message, "
+                    "items_created, items_updated, items_failed, triggered_by) "
+                    "VALUES ('migration_test_fetcher', 'failure', "
+                    "now() - interval '5 minutes', "
+                    "'Fetcher disabled between trigger and execution', "
+                    "0, 0, 0, 'manual')"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
 async def _fetch_rows(database_url: str) -> list[_RunRow]:
     engine = create_async_engine(database_url)
     try:
@@ -101,7 +129,7 @@ async def _fetch_rows(database_url: str) -> list[_RunRow]:
             result = await conn.execute(
                 text(
                     "SELECT status, started_at, finished_at, duration_seconds, "
-                    "error_message FROM fetcher_run "
+                    "error_message, created_at FROM fetcher_run "
                     "WHERE fetcher_name = 'migration_test_fetcher' "
                     "ORDER BY created_at ASC"
                 )
@@ -113,6 +141,7 @@ async def _fetch_rows(database_url: str) -> list[_RunRow]:
                     "finished_at": row.finished_at,
                     "duration_seconds": row.duration_seconds,
                     "error_message": row.error_message,
+                    "created_at": row.created_at,
                 }
                 for row in result
             ]
@@ -204,11 +233,30 @@ class TestQueuedFetcherRunStatusMigration:
         assert queued_row["finished_at"] is None
         assert queued_row["duration_seconds"] is None
 
+        # A pre-adoption `failure` row (never adopted — the
+        # disabled/deregistered/stale-queued finalization shape) is
+        # also now valid, and exercises downgrade()'s *second*
+        # normalization statement (`WHERE started_at IS NULL`),
+        # distinct from the first (`WHERE status = 'queued'`), since
+        # this row is already `failure` and never matches the first.
+        run_sync(_seed_pre_adoption_failure_row(alembic_test_database_url))
+        rows_with_pre_adoption_failure = _fetch(alembic_test_database_url)
+        assert len(rows_with_pre_adoption_failure) == 4
+        pre_adoption_failure_row = next(
+            r
+            for r in rows_with_pre_adoption_failure
+            if r["error_message"] == "Fetcher disabled between trigger and execution"
+        )
+        assert pre_adoption_failure_row["started_at"] is None
+        assert pre_adoption_failure_row["duration_seconds"] is None
+
         # 3. Downgrade back to the previous head — the `queued` row is
         # normalized to `failure` with a synthetic `started_at`/
-        # `finished_at` and `duration_seconds = 0`; the two
-        # pre-existing rows (already non-NULL `started_at`) are
-        # untouched.
+        # `finished_at` and `duration_seconds = 0`; the pre-adoption
+        # `failure` row is normalized with a synthetic `started_at`/
+        # `duration_seconds` while its `finished_at`/`error_message`
+        # are left untouched; the two pre-existing rows (already
+        # non-NULL `started_at`) are untouched.
         command.downgrade(cfg, _PREVIOUS_HEAD)
         _downgraded_checks, downgraded_indexes, downgraded_nullable = _inspect(
             alembic_test_database_url
@@ -217,20 +265,43 @@ class TestQueuedFetcherRunStatusMigration:
         assert downgraded_nullable is False
 
         downgraded_rows = _fetch(alembic_test_database_url)
-        assert len(downgraded_rows) == 3
+        assert len(downgraded_rows) == 4
         statuses = [row["status"] for row in downgraded_rows]
-        assert statuses.count("failure") == 1
+        assert statuses.count("failure") == 2
         assert statuses.count("success") == 1
         assert statuses.count("running") == 1
         assert all(row["started_at"] is not None for row in downgraded_rows)
-        normalized_row = next(
+        normalized_queued_row = next(
             r
             for r in downgraded_rows
-            if r["status"] == "failure" and r["duration_seconds"] == 0
+            if r["error_message"]
+            == "Reverted to a schema version that does not support the queued status"
         )
-        assert normalized_row["started_at"] == normalized_row["finished_at"]
-        assert normalized_row["error_message"] == (
-            "Reverted to a schema version that does not support the queued status"
+        assert (
+            normalized_queued_row["started_at"] == normalized_queued_row["created_at"]
+        )
+        assert (
+            normalized_queued_row["finished_at"] == normalized_queued_row["created_at"]
+        )
+        assert normalized_queued_row["duration_seconds"] == 0
+
+        normalized_pre_adoption_failure_row = next(
+            r
+            for r in downgraded_rows
+            if r["error_message"] == "Fetcher disabled between trigger and execution"
+        )
+        assert (
+            normalized_pre_adoption_failure_row["started_at"]
+            == normalized_pre_adoption_failure_row["created_at"]
+        )
+        assert normalized_pre_adoption_failure_row["duration_seconds"] == 0
+        # `finished_at` and `error_message` are untouched by step 2 —
+        # only `started_at`/`duration_seconds` are normalized. Proven
+        # by `finished_at` still differing from the synthesized
+        # `started_at` (seeded 5 minutes before `created_at`).
+        assert (
+            normalized_pre_adoption_failure_row["finished_at"]
+            != normalized_pre_adoption_failure_row["started_at"]
         )
 
         # 4. Re-upgrade to head — idempotent: no errors, schema facts
