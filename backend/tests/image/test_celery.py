@@ -53,6 +53,16 @@ fetcher yet, and the existing `TestWorkerStartup`/`TestBeatSchedule`
 classes above already prove worker/Beat complete their full startup
 sequence successfully (which includes the bootstrap step).
 
+`TestWorkerStartupPoolValidationFailFast` covers the worker pool
+validation fail-fast contract added by `docs/deployment.md` (Celery
+Worker Pool Requirement) and `docs/features/platform/
+fetcher-infrastructure.md` (Worker Startup Handler, step 1): a worker
+started with any pool other than `prefork` must exit with a non-zero
+code before the fetcher config bootstrap runs and before the consumer
+starts accepting tasks. The positive path (a worker started with
+`--pool=prefork`, the default in docker-compose.smoke.yml, completes
+startup) is already proven by `TestWorkerStartup` above.
+
 `TestBeatScheduleReconciliation` covers the RedBeat schedule
 reconciliation contract added by `docs/features/platform/fetcher-infrastructure.md`
 (Startup Reconciliation, Reconciliation Steps): a Beat restart removes
@@ -566,6 +576,57 @@ class TestWorkerStartupBootstrapFailFast:
         assert "worker_startup_completed" not in logs, (
             f"worker unexpectedly completed startup despite the "
             f"unreachable database: {logs!r}"
+        )
+
+
+@pytest.mark.image
+class TestWorkerStartupPoolValidationFailFast:
+    """docs/deployment.md (Celery Worker Pool Requirement) and
+    docs/features/platform/fetcher-infrastructure.md (Worker Startup
+    Handler, step 1): a worker started with any pool other than
+    `prefork` must exit with a non-zero code — before the fetcher
+    config bootstrap runs and before the consumer starts accepting
+    tasks.
+
+    Uses an isolated, independently-named compose project (not the
+    primary stack shared by every other test in this suite) — see
+    `TestWorkerStartupBootstrapFailFast` above for why (avoiding a
+    host-port collision with the primary stack's `api` container). The
+    worker's `command` is overridden to `--pool=solo` (Compose replaces
+    the base service's `command` list entirely, it does not append);
+    no `DATABASE_URL` override is needed here, since the pool
+    validation gate runs — and fails — before any database access is
+    attempted.
+    """
+
+    def test_solo_pool_prevents_worker_from_starting(
+        self, isolated_compose_stack: IsolatedComposeStack
+    ) -> None:
+        override = (
+            "services:\n"
+            "  worker:\n"
+            "    command:\n"
+            "      - celery\n"
+            "      - -A\n"
+            "      - app.celery_app\n"
+            "      - worker\n"
+            "      - --pool=solo\n"
+            "      - --loglevel=info\n"
+        )
+
+        isolated_compose_stack.up(override, "worker")
+        isolated_compose_stack.wait_until_exited("worker")
+
+        logs = isolated_compose_stack.logs("worker")
+        assert "worker_startup_failed" in logs, (
+            f"expected the fail-fast log marker in worker logs: {logs!r}"
+        )
+        assert "worker_pool_validation" in logs, (
+            f"expected the pool-validation stage marker in worker logs: {logs!r}"
+        )
+        assert "worker_startup_completed" not in logs, (
+            f"worker unexpectedly completed startup despite the "
+            f"unsupported pool: {logs!r}"
         )
 
 
