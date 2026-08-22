@@ -44,9 +44,10 @@ class FetcherRun(Base):
     Primary data source for the fetcher dashboard charts. Records are
     retained indefinitely (no retention policy — see
     `docs/features/platform/fetcher-infrastructure.md`, Data
-    Retention). Has no `updated_at`: finalization is the only in-place
-    update and is fully captured by `finished_at`
-    (`docs/data-model.md`, Notes).
+    Retention). Has no `updated_at`: the `queued -> running` adoption
+    transition and finalization are the only in-place updates, and both
+    are fully captured by `started_at`/`finished_at` (`docs/data-model.md`,
+    Notes).
     """
 
     __tablename__ = "fetcher_run"
@@ -59,6 +60,11 @@ class FetcherRun(Base):
             "ix_fetcher_run_fetcher_name_started_at",
             "fetcher_name",
             "started_at",
+        ),
+        Index(
+            "ix_fetcher_run_fetcher_name_created_at",
+            "fetcher_name",
+            "created_at",
         ),
     )
 
@@ -73,8 +79,8 @@ class FetcherRun(Base):
         ForeignKey("fetcher_config.fetcher_name", ondelete="RESTRICT"),
         nullable=False,
     )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     finished_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

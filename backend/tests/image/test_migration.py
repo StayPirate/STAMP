@@ -279,6 +279,13 @@ async def main() -> None:
     assert composite_index["column_names"] == ["fetcher_name", "started_at"], (
         composite_index
     )
+    assert (
+        "ix_fetcher_run_fetcher_name_created_at" in fetcher_run_indexes
+    ), fetcher_run_indexes
+    created_at_index = fetcher_run_indexes["ix_fetcher_run_fetcher_name_created_at"]
+    assert created_at_index["column_names"] == ["fetcher_name", "created_at"], (
+        created_at_index
+    )
     fetcher_run_fk_by_column = {
         fk["constrained_columns"][0]: fk for fk in fetcher_run_fks
     }

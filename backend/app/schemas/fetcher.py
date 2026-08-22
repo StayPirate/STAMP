@@ -78,7 +78,8 @@ class FetcherLastRunData(BaseModel):
     (List Fetchers, Fields)."""
 
     id: UUID
-    started_at: datetime
+    created_at: datetime
+    started_at: datetime | None
     finished_at: datetime | None
     duration_seconds: float | None
     status: str

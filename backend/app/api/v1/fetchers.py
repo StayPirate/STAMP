@@ -109,6 +109,7 @@ async def _resolve_has_manage_fetchers(
 def _common_run_fields(run: FetcherRunSummary) -> dict[str, Any]:
     return {
         "id": run.id,
+        "created_at": run.created_at,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "duration_seconds": run.duration_seconds,
@@ -274,18 +275,22 @@ def _fetcher_run_list_query(
     *,
     status: Annotated[
         str | None,
-        Query(description="Filter by run status (success, failure, partial, running)."),
+        Query(
+            description=(
+                "Filter by run status (queued, running, success, failure, partial)."
+            )
+        ),
     ] = None,
     from_date: Annotated[
         str | None,
         Query(
-            description="ISO 8601 date/datetime; inclusive lower bound on started_at."
+            description="ISO 8601 date/datetime; inclusive lower bound on created_at."
         ),
     ] = None,
     to_date: Annotated[
         str | None,
         Query(
-            description="ISO 8601 date/datetime; inclusive upper bound on started_at."
+            description="ISO 8601 date/datetime; inclusive upper bound on created_at."
         ),
     ] = None,
     page: Annotated[int, Query(ge=1, le=2_147_483_647, description="Page number.")] = 1,

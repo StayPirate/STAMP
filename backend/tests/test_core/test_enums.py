@@ -129,11 +129,12 @@ class TestSettingAuditEventTypeEnum:
 
 @pytest.mark.unit
 class TestFetcherRunStatusEnum:
-    """FetcherRunStatus must have exactly the four members defined in
+    """FetcherRunStatus must have exactly the five members defined in
     fetcher-infrastructure.md (FetcherRunStatus Enum)."""
 
     def test_exact_members(self) -> None:
         assert {member.value for member in FetcherRunStatus} == {
+            "queued",
             "running",
             "success",
             "failure",
@@ -141,7 +142,7 @@ class TestFetcherRunStatusEnum:
         }
 
     def test_count(self) -> None:
-        assert len(list(FetcherRunStatus)) == 4
+        assert len(list(FetcherRunStatus)) == 5
 
 
 @pytest.mark.unit

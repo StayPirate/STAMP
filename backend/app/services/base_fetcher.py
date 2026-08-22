@@ -595,6 +595,12 @@ class BaseFetcher:
                     raise RuntimeError(
                         f"FetcherRun {run_id} not found during finalization"
                     )
+                if run.started_at is None:
+                    raise RuntimeError(
+                        f"FetcherRun {run_id} has no started_at during "
+                        "finalization — run() must only be invoked on an "
+                        "already-adopted (running) run"
+                    )
                 run.finished_at = finished_at
                 run.duration_seconds = (finished_at - run.started_at).total_seconds()
                 run.status = status

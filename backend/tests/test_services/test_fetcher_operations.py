@@ -156,26 +156,59 @@ def _ops_log_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
 
 @pytest.mark.unit
 class TestIsStale:
-    def test_non_running_status_is_never_stale(self) -> None:
+    def test_terminal_status_is_never_stale(self) -> None:
         now = datetime.now(UTC)
-        assert _is_stale("success", now - timedelta(hours=10), 3600, now) is False
+        assert (
+            _is_stale(
+                "success",
+                now - timedelta(hours=10),
+                now - timedelta(hours=10),
+                3600,
+                now,
+            )
+            is False
+        )
 
     def test_running_under_threshold_is_not_stale(self) -> None:
         now = datetime.now(UTC)
         started_at = now - timedelta(seconds=3600 + 59)
-        assert _is_stale("running", started_at, 3600, now) is False
+        assert _is_stale("running", started_at, started_at, 3600, now) is False
 
     def test_running_at_exact_threshold_is_not_stale(self) -> None:
         """Boundary: `elapsed == run_timeout + 60` is NOT stale — the
         contract requires strictly greater than the threshold."""
         now = datetime.now(UTC)
         started_at = now - timedelta(seconds=3660)
-        assert _is_stale("running", started_at, 3600, now) is False
+        assert _is_stale("running", started_at, started_at, 3600, now) is False
 
     def test_running_over_threshold_is_stale(self) -> None:
         now = datetime.now(UTC)
         started_at = now - timedelta(seconds=3661)
-        assert _is_stale("running", started_at, 3600, now) is True
+        assert _is_stale("running", started_at, started_at, 3600, now) is True
+
+    def test_queued_under_threshold_is_not_stale(self) -> None:
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=599)
+        assert _is_stale("queued", created_at, None, 3600, now) is False
+
+    def test_queued_at_exact_threshold_is_not_stale(self) -> None:
+        """Boundary: `elapsed == 600` is NOT stale — strictly greater
+        than the fixed Queued Stale Threshold."""
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=600)
+        assert _is_stale("queued", created_at, None, 3600, now) is False
+
+    def test_queued_over_threshold_is_stale(self) -> None:
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=601)
+        assert _is_stale("queued", created_at, None, 3600, now) is True
+
+    def test_queued_staleness_is_independent_of_run_timeout(self) -> None:
+        """The Queued Stale Threshold is a fixed 600 seconds — an
+        unusually large `run_timeout` does not extend it."""
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=601)
+        assert _is_stale("queued", created_at, None, 604800, now) is True
 
 
 @pytest.mark.unit
@@ -447,6 +480,44 @@ class TestListFetchersLastRun:
         assert privileged_items[0].last_run is not None
         assert privileged_items[0].last_run.triggered_by_user is not None
         assert privileged_items[0].last_run.triggered_by_user.id == actor.id
+
+    async def test_queued_run_is_last_run_with_null_started_at(
+        self,
+        db_session: AsyncSession,
+        celery_test_app: Celery,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """A `queued` manual run (no `started_at`) is selected as
+        `last_run` when it is the most recent by `created_at` — see
+        `docs/features/platform/fetcher-operations.md`
+        (`list_fetchers`)."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+        now = datetime.now(UTC)
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="success",
+            started_at=now - timedelta(hours=1),
+        )
+        queued = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=now,
+        )
+
+        items = await list_fetchers(
+            db_session, has_manage_fetchers=False, celery_app=celery_test_app
+        )
+
+        last_run = items[0].last_run
+        assert last_run is not None
+        assert last_run.id == queued.id
+        assert last_run.started_at is None
+        assert last_run.finished_at is None
+        assert last_run.duration_seconds is None
+        assert last_run.stale is False
 
 
 @pytest.mark.integration
@@ -876,6 +947,103 @@ class TestListFetcherRuns:
 
         assert page.items[0].stale is True
 
+    async def test_filters_by_queued_status(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_run_factory(fetcher_name=config.fetcher_name, status="success")
+        queued = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name, status="queued", started_at=None
+        )
+
+        page = await list_fetcher_runs(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            page=1,
+            per_page=20,
+            status="queued",
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == queued.id
+        assert page.items[0].started_at is None
+        assert page.items[0].finished_at is None
+        assert page.items[0].duration_seconds is None
+
+    async def test_queued_run_ordered_and_filtered_by_created_at(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """A `queued` run (no `started_at`) must still be correctly
+        positioned in history by `created_at` — see
+        `docs/features/platform/fetcher-operations.md`
+        (`list_fetcher_runs`)."""
+        config = await fetcher_config_factory()
+        now = datetime.now(UTC)
+        older = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="success",
+            started_at=now - timedelta(hours=2),
+        )
+        queued = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=now,
+        )
+
+        page = await list_fetcher_runs(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            page=1,
+            per_page=20,
+            from_date=now - timedelta(minutes=1),
+            to_date=now + timedelta(minutes=1),
+        )
+
+        assert page.total == 1
+        assert page.items[0].id == queued.id
+
+        full_page = await list_fetcher_runs(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            page=1,
+            per_page=20,
+        )
+        assert [item.id for item in full_page.items] == [queued.id, older.id]
+
+    async def test_queued_run_is_stale_after_600_seconds(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=datetime.now(UTC) - timedelta(seconds=601),
+        )
+
+        page = await list_fetcher_runs(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            page=1,
+            per_page=20,
+        )
+
+        assert page.items[0].stale is True
+
 
 # ---------------------------------------------------------------------------
 # get_fetcher_run
@@ -1075,6 +1243,38 @@ class TestGetFetcherTimelinePoints:
 
         assert timeline.points[0].duration_seconds is None
         assert timeline.points[0].status == "running"
+
+    async def test_queued_point_uses_created_at_as_timestamp(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """A `queued` run has no `started_at`; the timeline point uses
+        `created_at` as its `timestamp` — see
+        `docs/features/platform/fetcher-operations.md`
+        (`get_fetcher_timeline`)."""
+        config = await fetcher_config_factory()
+        now = datetime.now(UTC)
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=now,
+        )
+
+        timeline = await get_fetcher_timeline(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            from_date=now - timedelta(hours=1),
+            to_date=now + timedelta(hours=1),
+        )
+
+        assert len(timeline.points) == 1
+        assert timeline.points[0].timestamp == now
+        assert timeline.points[0].duration_seconds is None
+        assert timeline.points[0].status == "queued"
 
     async def test_bounds_are_inclusive(
         self,
@@ -1590,6 +1790,37 @@ class TestUpdateFetcherConfigGuards:
         assert config.run_timeout == 3600
         events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
         assert events == []
+
+    async def test_run_timeout_change_with_active_queued_run_does_not_raise(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """The Run Timeout Active Guard applies only to `running` runs
+        — a `queued` run (not yet adopted) does not block the change.
+        See `docs/features/platform/fetcher-operations.md`
+        (`update_fetcher_config`, Run Timeout Active Guard)."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+        )
+        admin = await user_factory()
+
+        result = await update_fetcher_config(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            user_id=admin.id,
+            payload=UpdateConfigPayload(run_timeout=1800),
+        )
+
+        assert result.config.run_timeout == 1800
 
     async def test_run_timeout_change_with_stale_run_finalizes_and_proceeds(
         self,

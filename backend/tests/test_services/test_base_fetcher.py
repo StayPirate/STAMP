@@ -1785,6 +1785,32 @@ class TestRunLifecycleFinalizationFailure:
         assert fetcher_name in caplog.text
         assert str(bogus_run_id) in caplog.text
 
+    async def test_null_started_at_raises_and_does_not_mask_success(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """`run()` must only ever be invoked on an already-adopted run
+        (`started_at` populated) — see
+        `docs/features/platform/fetcher-infrastructure.md`
+        (`BaseFetcher.run()` Parameters). A violation of this
+        precondition (a `queued` run reaching finalization) fails
+        loudly rather than computing a nonsensical duration."""
+        fetcher_name, run_id = await fetcher_lifecycle()
+        async with real_session_factory() as session:
+            run = await session.get(FetcherRun, run_id)
+            assert run is not None
+            run.started_at = None
+            run.status = "queued"
+            await session.commit()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            pass
+
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
+        with pytest.raises(RuntimeError, match="has no started_at during"):
+            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+
 
 @pytest.mark.integration
 class TestRunLifecycleAuditTrail:

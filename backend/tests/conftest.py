@@ -881,6 +881,15 @@ def fetcher_run_factory(
     - `fetcher_name`: a freshly created `FetcherConfig` row's name, when
       not overridden.
     - `started_at`: the current UTC time.
+    - `created_at`: defaults to the same value as `started_at` (when
+      `started_at` is not `None`), or to the current UTC time (when
+      `started_at` is explicitly `None`, e.g. a `queued` run). List,
+      history, and timeline queries order and filter on `created_at`
+      (see `docs/features/platform/fetcher-operations.md`), so most
+      tests that override `started_at` to control chronological
+      ordering get the matching `created_at` for free. Override
+      `created_at` explicitly to simulate real queue latency (a gap
+      between acceptance and adoption).
     - `status`: `"running"` (a fictional, valid string value; not
       validated against `FetcherRunStatus` at this layer).
     - `triggered_by`: `"schedule"`.
@@ -895,6 +904,12 @@ def fetcher_run_factory(
             "triggered_by": "schedule",
         }
         defaults.update(overrides)
+        if "created_at" not in overrides:
+            defaults["created_at"] = (
+                defaults["started_at"]
+                if defaults["started_at"] is not None
+                else datetime.now(UTC)
+            )
         instance = FetcherRun(**defaults)
         db_session.add(instance)
         await db_session.flush()

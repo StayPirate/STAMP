@@ -53,6 +53,7 @@ from app.services.session_service import create_session
 
 _ADMIN_USERNAME = "imagefetchersapiadmin"
 _FETCHER_NAME = "imagesmoketestfetcher"
+_QUEUED_FETCHER_NAME = "imagesmoketestfetcherqueued"
 
 
 async def arrange():
@@ -97,18 +98,34 @@ async def arrange():
             user_id=admin.id,
         )
         db.add(audit_event)
+        # A separate fetcher/run dedicated to the `queued` lifecycle
+        # representation — kept independent of `_FETCHER_NAME` above so
+        # it cannot become that fetcher's `last_run` and interfere with
+        # the deregistered-fetcher assertions there.
+        queued_config = FetcherConfig(fetcher_name=_QUEUED_FETCHER_NAME)
+        db.add(queued_config)
+        await db.flush()
+        queued_run = FetcherRun(
+            fetcher_name=_QUEUED_FETCHER_NAME,
+            status="queued",
+            triggered_by="manual",
+            triggered_by_user_id=admin.id,
+        )
+        db.add(queued_run)
         await db.flush()
         admin_session = await create_session(
             db, admin, SessionCreationReason.LOCAL_LOGIN
         )
         await db.commit()
-        return admin.id, admin_session.token, run.id
+        return admin.id, admin_session.token, run.id, queued_run.id
 
 
 async def cleanup(admin_id):
     async with async_session_factory() as db:
         await db.execute(
-            delete(FetcherRun).where(FetcherRun.fetcher_name == _FETCHER_NAME)
+            delete(FetcherRun).where(
+                FetcherRun.fetcher_name.in_([_FETCHER_NAME, _QUEUED_FETCHER_NAME])
+            )
         )
         await db.execute(
             delete(FetcherAuditEvent).where(
@@ -116,7 +133,9 @@ async def cleanup(admin_id):
             )
         )
         await db.execute(
-            delete(FetcherConfig).where(FetcherConfig.fetcher_name == _FETCHER_NAME)
+            delete(FetcherConfig).where(
+                FetcherConfig.fetcher_name.in_([_FETCHER_NAME, _QUEUED_FETCHER_NAME])
+            )
         )
         await db.execute(delete(UserRole).where(UserRole.user_id == admin_id))
         await db.execute(delete(Session).where(Session.user_id == admin_id))
@@ -270,8 +289,33 @@ def unauthenticated_invalid_credential_returns_401():
     print("fetchers-invalid-credential-401-ok")
 
 
+def get_fetcher_run_detail_shows_queued_run(queued_run_id):
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_QUEUED_FETCHER_NAME}/runs/{queued_run_id}"
+    )
+    assert status == 200, (status, body)
+    data = body["data"]
+    assert data["status"] == "queued"
+    assert data["started_at"] is None
+    assert data["finished_at"] is None
+    assert data["duration_seconds"] is None
+    assert data["created_at"] is not None
+    print("fetchers-run-detail-queued-ok")
+
+
+def list_fetcher_runs_filters_by_queued_status():
+    status, body = _request(
+        "GET", f"/api/v1/fetchers/{_QUEUED_FETCHER_NAME}/runs",
+        token=None,
+    )
+    assert status == 200, (status, body)
+    assert body["meta"]["total"] == 1, body
+    assert body["data"][0]["status"] == "queued"
+    print("fetchers-runs-list-queued-ok")
+
+
 async def main():
-    admin_id, admin_token, run_id = await arrange()
+    admin_id, admin_token, run_id, queued_run_id = await arrange()
     try:
         await asyncio.to_thread(list_fetchers_anonymous_shows_deregistered_fetcher)
         await asyncio.to_thread(list_fetcher_runs_returns_paginated_envelope)
@@ -296,6 +340,10 @@ async def main():
             get_fetcher_audit_log_admin_shows_event, admin_token, admin_id
         )
         await asyncio.to_thread(unauthenticated_invalid_credential_returns_401)
+        await asyncio.to_thread(
+            get_fetcher_run_detail_shows_queued_run, queued_run_id
+        )
+        await asyncio.to_thread(list_fetcher_runs_filters_by_queued_status)
     finally:
         await cleanup(admin_id)
 
@@ -327,3 +375,5 @@ def test_fetchers_api_read_paths_are_observable_in_built_image(
     assert "fetchers-audit-log-anonymous-401-ok" in result.stdout
     assert "fetchers-audit-log-admin-ok" in result.stdout
     assert "fetchers-invalid-credential-401-ok" in result.stdout
+    assert "fetchers-run-detail-queued-ok" in result.stdout
+    assert "fetchers-runs-list-queued-ok" in result.stdout

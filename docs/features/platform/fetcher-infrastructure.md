@@ -31,6 +31,9 @@ periodic tasks declared via Celery's native `beat_schedule` (see
 | **Run** | A single execution of a fetcher, tracked from start to finish with metrics (duration, item counts, status). |
 | **Registry** | An in-memory dictionary of all registered fetcher classes, populated automatically via `BaseFetcher` auto-discovery. |
 | **Cursor** | Used in two distinct senses: (1) **Conceptual cursor** — any mechanism a fetcher uses to determine where to resume on the next run (timestamp, page token, commit SHA, offset). A fetcher classified as "cursor-based" uses some form of incremental checkpoint. (2) **`FetcherRun.cursor` column** — the optional JSONB column in the `FetcherRun` table, used only by fetchers that need structured checkpoint data not representable by the scalar fields of `FetcherRun` (e.g., git commit SHA + commit date). Fetchers that use `started_at` as their checkpoint (e.g., NVD, GHSA) are conceptually cursor-based but leave the JSONB column NULL. |
+| **Queued** | The `FetcherRun.status` value for a manually triggered run that has been accepted and durably persisted, but not yet adopted by a worker. Manual-only — a scheduled run is never `queued`. See "Concurrency Control" for the full lifecycle. |
+| **Adoption** | The atomic transition of a `queued` run to `running`, performed by the `run_fetcher` task wrapper under the `FetcherConfig` lock. "Running" means adoption has already happened — it never describes a run that is merely enqueued in the broker. |
+| **Active run** | A `FetcherRun` whose `status` is `queued` or `running` — the two non-terminal statuses. The single-instance invariant (only one active run per fetcher) is evaluated over this combined set, not over `running` alone. |
 
 ## Related Specifications
 
@@ -72,9 +75,12 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    **Parameters**:
 
    - `run_id`: the UUID of the already-committed `FetcherRun` record
-     (created by the task wrapper for scheduled triggers, or pre-created
-     by the API for manual triggers and adopted by the task wrapper).
-     The record has `status = running` at this point.
+     (created directly as `running` by the task wrapper for scheduled
+     triggers, or pre-created as `queued` by the API for manual
+     triggers and atomically adopted — transitioned to `running` — by
+     the task wrapper before `run()` is ever called). The record has
+     `status = running` and a non-`NULL` `started_at` at this point —
+     `run()` never receives a `queued` run.
    - `config`: an immutable, detached runtime configuration snapshot
      built from the locked `FetcherConfig` row during the acquisition
      transaction. Contains `run_timeout`, `request_delay`,
@@ -215,13 +221,15 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    Persistence) for the git-specific usage pattern and query.
 
    **Finalization fields**: `finished_at = now()`,
-   `duration_seconds = finished_at - started_at` (includes queue wait
-   time for manual triggers — `started_at` reflects when the run was
-   created/adopted, not when execution began), `status` (per
-   precedence above), `items_created`, `items_updated`,
-   `items_failed`, `error_message`, `error_detail`,
-   `error_traceback` (per "Error Message Sanitization"), and `cursor`
-   (when applicable).
+   `duration_seconds = finished_at - started_at` — execution time only.
+   `started_at` reflects the moment the worker adopted the run (see
+   "Concurrency Control" — Atomic Run Acquisition Protocol), never the
+   moment a manual trigger was accepted. Time spent `queued` before
+   adoption is never included in `duration_seconds` — it is derivable
+   as `started_at - created_at` when needed. `status` (per precedence
+   above), `items_created`, `items_updated`, `items_failed`,
+   `error_message`, `error_detail`, `error_traceback` (per "Error
+   Message Sanitization"), and `cursor` (when applicable).
 
    **Finalization database failure**: if the finalization session
    cannot connect to the database or the UPDATE/commit fails:
@@ -1766,13 +1774,18 @@ raise `ValueError`, no retry).
     worker executing it. The next Beat reconciliation removes the
     stale entry.
   - **Manual trigger** (`run_id` is present): the pre-created
-    `FetcherRun` record must be finalized. Open a short session,
-    retrieve the record by `run_id`, update it to
+    `FetcherRun` record must be finalized, but only if it is still
+    `queued` — a manual run reaches this branch strictly before
+    adoption is attempted, so this is always a `queued -> failure`
+    transition, never a `running -> failure` one. Open a short
+    session, attempt a conditional atomic UPDATE:
+    `WHERE id = :run_id AND status = 'queued'` setting
     `status = failure`,
     `error_message = "Fetcher deregistered between trigger and execution"`,
-    `finished_at = now()`, `duration_seconds = 0`, commit, and return.
-    If the record cannot be retrieved (database error or not found),
-    log ERROR and raise without retry.
+    `finished_at = now()`, `started_at` and `duration_seconds` left
+    `NULL` (no execution occurred), commit, and return. If the record
+    cannot be retrieved (database error or not found), log ERROR and
+    raise without retry.
 
 **Synchronous bridge**: the task function uses a single
 `asyncio.run()` call wrapping the complete async acquisition-and-
@@ -2963,11 +2976,17 @@ transaction owned by the `run_fetcher` task wrapper):
    level.
 
 2. **Check enabled state**: if `enabled = false`:
-   - If `run_id` was supplied (manual trigger): retrieve the
-     pre-created `FetcherRun` and update it to
+   - If `run_id` was supplied (manual trigger): attempt a **conditional
+     atomic UPDATE** on the pre-created `FetcherRun`:
+     `WHERE id = :run_id AND status = 'queued'` setting
      `status = failure`,
      `error_message = 'Fetcher disabled between trigger and execution'`,
-     `finished_at = now()`, `duration_seconds = 0`. Commit and return.
+     `finished_at = now()`. `started_at` and `duration_seconds` remain
+     `NULL` — the run was never adopted. Commit. If zero rows are
+     updated (a concurrent adoption or another finalization already
+     changed the row's status), skip the update, log INFO, and return
+     without altering the row — defer to whichever transition already
+     won.
    - If no `run_id` (scheduled trigger): log DEBUG
      `"Fetcher '%s' is disabled — skipping run"` and return without
      creating any record.
@@ -2981,41 +3000,73 @@ transaction owned by the `run_fetcher` task wrapper):
    `FetcherConfig` occur.
 
 4. **Query active runs**: query `FetcherRun` where
-   `fetcher_name = <name>` AND `status = 'running'`. Under the
-   `FetcherConfig` lock, this query's result is stable — no concurrent
-   transaction can insert a new running row for this fetcher.
+   `fetcher_name = <name>` AND `status IN ('queued', 'running')`.
+   Under the `FetcherConfig` lock, this query's result is stable — no
+   concurrent transaction can insert or adopt a competing active row
+   for this fetcher. At most one active row is ever expected: the
+   API-level guard (see `docs/features/platform/fetcher-operations.md`,
+   Trigger Fetcher) rejects a new manual trigger while any active run
+   exists, and this same lock serializes every scheduled insertion and
+   every manual adoption. More than one active row indicates a
+   data-integrity bug, not a valid runtime state — the implementation
+   raises rather than silently choosing one to act on.
 
-5. **Evaluate active runs**:
-   - **Active run exists and is NOT stale**: for scheduled triggers,
-     discard silently (log INFO, no `FetcherRun` created, return). For
-     manual triggers with a supplied `run_id`, this case was already
-     handled by the API-level guard — if it reaches the task, the
-     supplied `run_id` row IS the active run (see step 6).
-   - **Active run exists and IS stale**: finalize the stale run under
-     the same lock (see "Stale Run Detection" below). Continue to
-     step 6.
+5. **Evaluate active runs** (staleness is evaluated per the active
+   row's own status — Queued Stale Threshold from `created_at` if
+   `queued`, Running Stale Threshold from `started_at` if `running`;
+   see "Stale Run Detection"):
    - **No active run**: continue to step 6.
+   - **Active run exists and is NOT stale**:
+     - Scheduled trigger: discard silently (log INFO, no `FetcherRun`
+       created, return).
+     - Manual trigger with a supplied `run_id`: this case was already
+       handled by the API-level guard — if it reaches the task, the
+       active row IS the supplied `run_id` row (a `queued` run
+       awaiting its own adoption). Continue to step 6.
+   - **Active run exists and IS stale**: finalize it under the same
+     lock (see "Stale Run Detection" for the per-status message and
+     fields — a stale `queued` row is finalized with `started_at` and
+     `duration_seconds` left `NULL`). Continue to step 6. If the
+     finalized row is the manual trigger's own supplied `run_id` (a
+     `queued` run that outlived the Queued Stale Threshold before any
+     worker reached it), step 6's adoption predicate then correctly
+     fails and the run is skipped without execution.
 
 6. **Acquire or adopt the run record**:
    - **Scheduled trigger** (`run_id` is `None`): INSERT a new
      `FetcherRun` with `status = running`, `triggered_by = schedule`,
      `started_at = now()`. The new row is visible to subsequent
      lock-holders after commit.
-   - **Manual trigger** (`run_id` is provided): retrieve the
-     pre-created `FetcherRun` by `run_id`. The row is adopted (not
-     treated as a competing run) only when ALL of the following
-     predicates hold:
-     - Row exists.
-     - `fetcher_name` matches the task's `fetcher_name`.
-     - `status` is `running` (not already finalized).
-     If any predicate fails:
-     - Row does not exist: log ERROR, raise `ValueError` (no retry).
-     - `fetcher_name` mismatch: log ERROR, raise `ValueError`
-       (no retry).
-     - Status is not `running` (already finalized — e.g., by
-       broker-failure handling): log INFO
-       `"FetcherRun '%s' already finalized (status=%s) — skipping"`,
-       return without execution (no retry, no error).
+   - **Manual trigger** (`run_id` is provided): attempt a
+     **conditional atomic UPDATE**:
+
+     ```sql
+     UPDATE fetcher_run
+     SET status = 'running', started_at = :now
+     WHERE id = :run_id
+       AND fetcher_name = :fetcher_name
+       AND status = 'queued'
+     ```
+
+     - If exactly one row is updated: adoption succeeded. `started_at`
+       is now set to the adoption time — the moment execution begins,
+       never the moment the manual trigger was accepted (`created_at`
+       already records that).
+     - If zero rows are updated, re-read the row to distinguish why:
+       - Row does not exist: log ERROR, raise `ValueError` (no retry).
+       - `fetcher_name` mismatch: log ERROR, raise `ValueError`
+         (no retry).
+       - `status` is `failure` (already finalized by this same
+         protocol's stale/disabled/deregistered handling, or by the
+         API's publication-failure compensation): log INFO
+         `"FetcherRun '%s' already finalized (status=%s) — skipping"`,
+         return without execution (no retry, no error).
+       - `status` is `running`, `success`, or `partial` (a duplicate
+         or redelivered Celery message for a run already adopted or
+         completed): log INFO
+         `"FetcherRun '%s' already adopted or completed (status=%s) — skipping duplicate delivery"`,
+         return without execution (no retry, no error, no second
+         invocation of `BaseFetcher.run()`).
 
 7. **Commit the acquisition transaction**: the `FetcherRun` row
    (new or adopted) is now committed with `status = running`. The
@@ -3027,22 +3078,29 @@ transaction owned by the `run_fetcher` task wrapper):
    "BaseFetcher Base Class").
 
 **No partial unique index is required**: the `FetcherConfig`-root lock
-serializes all acquisition paths. A partial unique index on
-`(fetcher_name) WHERE status = 'running'` would provide defense-in-depth
-but is not necessary for correctness and is not introduced.
+serializes all acquisition and adoption paths across both active
+statuses. A partial unique index on
+`(fetcher_name) WHERE status IN ('queued', 'running')` would provide
+defense-in-depth but is not necessary for correctness and is not
+introduced.
 
 ### Behavior Matrix
 
-This applies to all trigger sources:
+This applies to all trigger sources. "Active" below means the
+existing run's status is `queued` or `running`:
 
-| Scenario | Active run triggered by | New attempt triggered by | Behavior |
+| Scenario | Active run status / triggered by | New attempt triggered by | Behavior |
 |---|---|---|---|
-| Admin triggers while schedule is running | `schedule` | `manual` | API returns **409 Conflict** with message indicating the fetcher is already running |
-| Schedule fires while manual run is active | `manual` | `schedule` | Silent discard with log (async — no caller to notify) |
-| Schedule fires while previous schedule run is still active | `schedule` | `schedule` | Silent discard with log |
-| Admin triggers while another manual run is active | `manual` | `manual` | API returns **409 Conflict** |
-| Schedule fires while stale run exists | any | `schedule` | Stale run marked as `failure`, new run proceeds |
-| Admin triggers while stale run exists | any | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
+| Admin triggers while schedule is running | `running` / `schedule` | `manual` | API returns **409 Conflict** with message indicating the fetcher is already running |
+| Admin triggers while a manual run is still queued | `queued` / `manual` | `manual` | API returns **409 Conflict** |
+| Schedule fires while a manual run is active (queued or running) | `queued` or `running` / `manual` | `schedule` | Silent discard with log (async — no caller to notify) |
+| Schedule fires while previous schedule run is still active | `running` / `schedule` | `schedule` | Silent discard with log |
+| Admin triggers while another manual run is active | `queued` or `running` / `manual` | `manual` | API returns **409 Conflict** |
+| Worker adopts a queued manual run before any compensation | `queued` / `manual` | (worker adoption, not a new attempt) | `queued -> running`; a concurrent publication-failure compensation attempt updates zero rows and is a no-op |
+| Publication failure finalizes a queued manual run before the worker adopts it | `queued` / `manual` | (API compensation, not a new attempt) | `queued -> failure`; the worker's later adoption attempt updates zero rows, logs, and skips without execution |
+| Duplicate or redelivered Celery message for an already-adopted or completed run | `running`, `success`, `failure`, or `partial` / `manual` | (redelivery, not a new attempt) | Adoption predicate fails; skip without execution, no retry, no error |
+| Schedule fires while stale run exists | any active status | `schedule` | Stale run marked as `failure`, new run proceeds |
+| Admin triggers while stale run exists | any active status | `manual` | Stale run marked as `failure`, new run proceeds (API returns **202 Accepted**) |
 
 The distinction is:
 
@@ -3054,20 +3112,27 @@ The distinction is:
 
 ## Stale Run Detection
 
-A run is considered **stale** when it has been in `running` status for
-longer than `run_timeout + 60` seconds (the **stale threshold**). The
-60-second margin is a hardcoded constant (not configurable). It ensures
-that the hard time limit (`time_limit = run_timeout`) has had time to
-terminate the process before a new run is started — guaranteeing the
-single-instance invariant even if the soft time limit was not honored.
-The default `run_timeout` is 3600 (1 hour), yielding a stale threshold
-of 3660 seconds. The minimum allowed `run_timeout` is 60 seconds
-(threshold: 120s); the maximum is 604800 seconds (7 days, threshold:
-604860s). Stale detection is always active for every fetcher.
+Two distinct stale conditions exist — one for each active status — using
+different time bases and thresholds. Both are always active for every
+fetcher; neither is configurable per fetcher beyond `run_timeout` itself
+(which only affects the `running` threshold).
 
-When a stale run is detected (by the Celery task, the API trigger
-endpoint, or the PATCH config endpoint's Run Timeout Active Guard), it
-is resolved by updating the stale `FetcherRun` record:
+### Running Stale Threshold
+
+A run is considered stale in `running` status when it has been running
+(elapsed from `started_at`) for longer than `run_timeout + 60` seconds
+(the **Running Stale Threshold**). The 60-second margin is a hardcoded
+constant (not configurable). It ensures that the hard time limit
+(`time_limit = run_timeout`) has had time to terminate the process
+before a new run is started — guaranteeing the single-instance
+invariant even if the soft time limit was not honored. The default
+`run_timeout` is 3600 (1 hour), yielding a threshold of 3660 seconds.
+The minimum allowed `run_timeout` is 60 seconds (threshold: 120s); the
+maximum is 604800 seconds (7 days, threshold: 604860s).
+
+When a `running` run is detected as stale (by the Celery task, the API
+trigger endpoint, or the PATCH config endpoint's Run Timeout Active
+Guard), it is resolved by updating the stale `FetcherRun` record:
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}, timeout
@@ -3082,13 +3147,14 @@ logger.warning("Marking stale run %s for '%s' as failure (running since %s, time
                run_id, fetcher_name, started_at, run_timeout)
 ```
 
-Stale run detection is a recovery mechanism for unclean process
-terminations (OOM-kill, node crash, `kill -9`). Celery workers handle
-`SIGTERM` via the Celery runtime's own signal handling — when a worker
-shuts down gracefully, active tasks are revoked and their `FetcherRun`
-records are finalized by the `run()` method's exception handler.
+Stale run detection in `running` status is a recovery mechanism for
+unclean process terminations (OOM-kill, node crash, `kill -9`). Celery
+workers handle `SIGTERM` via the Celery runtime's own signal handling —
+when a worker shuts down gracefully, active tasks are revoked and their
+`FetcherRun` records are finalized by the `run()` method's exception
+handler.
 
-**Relationship to hard time limit**: the stale threshold is
+**Relationship to hard time limit**: the Running Stale Threshold is
 intentionally set ABOVE the hard time limit (`run_timeout + 60 > run_timeout`).
 This ensures that when stale detection triggers, the process is
 already dead (killed by the hard limit at `run_timeout`). The stale
@@ -3096,11 +3162,50 @@ detection mechanism therefore never needs to kill or revoke a task —
 it only cleans up the orphaned database record left behind by a
 force-killed process.
 
+### Queued Stale Threshold
+
+A manual run is considered stale in `queued` status when it has been
+queued (elapsed from `created_at`) for longer than **600 seconds (10
+minutes)** — a fixed constant, independent of `run_timeout` and not
+configurable per fetcher. This bounds how long a committed manual
+trigger can wait for worker adoption before the API-visible run is
+treated as failed, so that a request the system can never fulfill
+(API process crashed after commit but before publication, the broker
+never delivered or accepted the task, or delivery raced an already
+disabled/deregistered fetcher) does not block the single-instance
+invariant indefinitely. It is deliberately independent of `run_timeout`
+because queue wait and execution time are different concerns — coupling
+them would make a fetcher's execution budget also govern how long its
+manual triggers may sit unclaimed.
+
+When a `queued` run is detected as stale (by the Celery task during
+adoption, by a future manual trigger attempt, or by the PATCH config
+endpoint's Run Timeout Active Guard — see
+`docs/features/platform/fetcher-operations.md`), it is resolved by
+updating the stale `FetcherRun` record:
+
+- `status` → `failure`
+- `error_message` → `"Marked as stale (queued for {elapsed}s, timeout 600s)"`
+- `finished_at` → `now()`
+- `started_at` → remains `NULL` (the run was never adopted)
+- `duration_seconds` → remains `NULL` (no execution occurred)
+
+Detecting a `queued` run as stale never involves killing or revoking a
+Celery task — a task may still be in flight or may never have been
+published at all. The finalization only marks the durable API-visible
+record as failed; if a worker later attempts adoption, the atomic
+`queued -> running` UPDATE finds `status != queued` and skips execution
+without error (see "Atomic Run Acquisition Protocol", step 6).
+
 Note: Celery broker unavailability during the trigger endpoint is handled
-synchronously (the FetcherRun record is immediately marked as failure).
-Stale detection is therefore NOT the recovery mechanism for enqueue
-failures — it covers only cases where the worker process dies after
-having accepted the task (SIGKILL, OOM, network partition).
+synchronously (the `FetcherRun` record is immediately marked as failure
+via the `queued -> failure` compensation, when the run has not yet been
+adopted). The Queued Stale Threshold is therefore not the primary
+recovery mechanism for a confirmed enqueue failure — it covers the
+residual cases where the confirmation itself never happens: a process
+crash between commit and publication, or a publication whose outcome
+is genuinely ambiguous and the run is neither adopted nor compensated
+within the threshold.
 
 ## Data Model
 
@@ -3113,10 +3218,10 @@ the dashboard charts.
 |---|---|---|---|
 | id | UUID | PK | Internal identifier |
 | fetcher_name | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
-| started_at | TIMESTAMPTZ | NOT NULL | When the run started |
-| finished_at | TIMESTAMPTZ | nullable | When the run ended (NULL while running) |
-| duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` in seconds |
-| status | VARCHAR(20) | NOT NULL | `running`, `success`, `failure`, `partial` |
+| started_at | TIMESTAMPTZ | nullable | When a worker adopted the run and began executing it. `NULL` while `status = queued`, and remains `NULL` if the run is finalized as `failure` without ever being adopted |
+| finished_at | TIMESTAMPTZ | nullable | When the run reached a terminal status. `NULL` while `status` is `queued` or `running` |
+| duration_seconds | FLOAT | nullable | Computed: `finished_at - started_at` — execution time only. `NULL` whenever `started_at` is `NULL` |
+| status | VARCHAR(20) | NOT NULL | `queued`, `running`, `success`, `failure`, `partial` |
 | items_created | INTEGER | NOT NULL, DEFAULT 0 | Number of new records created |
 | items_updated | INTEGER | NOT NULL, DEFAULT 0 | Number of existing records updated |
 | items_failed | INTEGER | NOT NULL, DEFAULT 0 | Number of items that failed processing |
@@ -3126,16 +3231,25 @@ the dashboard charts.
 | triggered_by | VARCHAR(20) | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
 | cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the git-specific usage pattern |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp — for a manual run, this is also the moment the trigger was accepted and the run entered `queued` |
 
 **Indexes**:
 
-- (fetcher_name, started_at) — composite index supporting timeline
-  queries and cursor lookups at any date range.
+- (fetcher_name, started_at) — composite index supporting
+  execution-time queries: cursor lookup (last `success`/`partial` run)
+  and any query that requires a populated `started_at`.
+- (fetcher_name, created_at) — composite index supporting history,
+  filtering, and timeline queries, which must include `queued` runs
+  (`started_at IS NULL`) in chronological order. `list_fetchers()`,
+  `list_fetcher_runs()`, and `get_fetcher_timeline()`
+  (`docs/features/platform/fetcher-operations.md`) all order and filter
+  on `created_at`, not `started_at`, for this reason.
 
 **Notes**:
-- `finished_at` is NULL while a run is in progress (status `running`).
-  This can be used to detect stale runs (running for too long).
+- `finished_at` is NULL while a run is `queued` or `running`. Combined
+  with `status`, this can be used to detect stale runs (see "Stale Run
+  Detection" — the elapsed basis differs between `queued` and
+  `running`).
 - `error_detail` and `error_traceback` are stored for debugging but MUST
   NOT be exposed to users without the `manage_fetchers` capability via
   the API.
@@ -3146,7 +3260,9 @@ the dashboard charts.
   `status IN ('success', 'partial')` for the same `fetcher_name`,
   ordered by `started_at DESC`, limit 1). Fetchers that derive their
   starting point from other columns (e.g., `started_at`) leave
-  `cursor` NULL.
+  `cursor` NULL. A `success`/`partial` run always has a non-`NULL`
+  `started_at` — only a `running` run can transition to one of those
+  statuses, and adoption always sets `started_at`.
 - The cursor value must be a JSON-serializable dict. `BaseFetcher.run()`
   validates via `json.dumps()` before writing; a non-serializable value
   raises `TypeError` and the run fails without persisting a cursor.
@@ -3155,9 +3271,10 @@ the dashboard charts.
 
 | Value | Description |
 |---|---|
-| `running` | Execution in progress |
+| `queued` | Manual run accepted and persisted; not yet adopted by a worker. Manual-only — a scheduled run is never `queued` |
+| `running` | A worker has atomically adopted the run and is currently executing it |
 | `success` | Completed without errors |
-| `failure` | Execution failed. Either: (a) `execute()` raised an unhandled exception, or (b) `execute()` returned normally but all items failed (`items_failed > 0` and `items_created + items_updated == 0`) — see "Status determination precedence" |
+| `failure` | Terminated without executing (never adopted — stale, disabled, deregistered, or publication failure — see "Concurrency Control") or execution failed: (a) `execute()` raised an unhandled exception, or (b) `execute()` returned normally but all items failed (`items_failed > 0` and `items_created + items_updated == 0`) — see "Status determination precedence" |
 | `partial` | Completed but some items failed (`items_failed > 0`) and at least one item succeeded (`items_created + items_updated > 0`). Implies `execute()` returned normally (no exception raised) |
 
 ### FetcherRunTriggeredBy Enum
@@ -3349,15 +3466,18 @@ timestamp and `user_id`. If the same PATCH also changes `enabled` to
 `FetcherRun` records are retained indefinitely. At ~15 fetchers with 1–4
 executions per day, the table grows by approximately 20,000 rows per
 year — negligible for PostgreSQL. No cleanup task or retention policy is
-necessary. Orphaned runs (stuck in `running` status due to unclean
-process termination) are resolved automatically by the existing Stale Run
-Detection mechanism at the next trigger attempt or config PATCH.
+necessary. Orphaned runs (stuck in `queued` or `running` status due to
+an unpublished trigger or an unclean process termination) are resolved
+automatically by the existing Stale Run Detection mechanism at the next
+trigger attempt or config PATCH.
 
 **Manual purge**: if an operator needs to reduce table size for
 operational reasons (disaster recovery, database refresh), a simple
 time-based DELETE is sufficient:
-`DELETE FROM fetcher_run WHERE started_at < now() - interval 'N days'`.
-No application-level coordination is required.
+`DELETE FROM fetcher_run WHERE created_at < now() - interval 'N days'`.
+Filtering on `created_at` (rather than `started_at`) ensures a `queued`
+run that was never adopted (`started_at IS NULL`) is still eligible for
+purge. No application-level coordination is required.
 
 ## Deregistered Fetcher Lifecycle
 
