@@ -125,9 +125,10 @@ class FetcherRunStatus(StrEnum):
     `chk_fetcher_run_status_valid`; adding a value requires an Alembic
     migration). See `docs/features/platform/fetcher-infrastructure.md`
     (FetcherRunStatus Enum) for the full status determination
-    precedence.
+    precedence and lifecycle transitions.
     """
 
+    QUEUED = "queued"
     RUNNING = "running"
     SUCCESS = "success"
     FAILURE = "failure"

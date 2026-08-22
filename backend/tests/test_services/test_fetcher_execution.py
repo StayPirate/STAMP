@@ -111,7 +111,8 @@ class TestAcquireFetcherRunDisabled:
         config = await fetcher_config_factory(enabled=False)
         run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
-            status="running",
+            status="queued",
+            started_at=None,
             triggered_by="manual",
         )
         now = datetime.now(UTC)
@@ -129,7 +130,8 @@ class TestAcquireFetcherRunDisabled:
         assert run.status == "failure"
         assert run.error_message == ("Fetcher disabled between trigger and execution")
         assert run.finished_at == now
-        assert run.duration_seconds == 0
+        assert run.started_at is None
+        assert run.duration_seconds is None
 
 
 # ---------------------------------------------------------------------------
@@ -319,20 +321,26 @@ class TestAcquireFetcherRunManualAdoption:
         config = await fetcher_config_factory()
         run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
-            status="running",
+            status="queued",
+            started_at=None,
             triggered_by="manual",
         )
+        now = datetime.now(UTC)
 
         result = await acquire_fetcher_run(
             db_session,
             fetcher_name=config.fetcher_name,
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
-            now=datetime.now(UTC),
+            now=now,
         )
 
         assert isinstance(result, FetcherAcquisition)
         assert result.run_id == run.id
+
+        await db_session.refresh(run)
+        assert run.status == "running"
+        assert run.started_at == now
 
         rows = (
             (
@@ -374,7 +382,8 @@ class TestAcquireFetcherRunManualAdoption:
         other_config = await fetcher_config_factory()
         run = await fetcher_run_factory(
             fetcher_name=other_config.fetcher_name,
-            status="running",
+            status="queued",
+            started_at=None,
             triggered_by="manual",
         )
 
@@ -416,6 +425,65 @@ class TestAcquireFetcherRunManualAdoption:
         assert run.status == "failure"
         assert "manual_run_already_finalized" in _service_log_text(caplog)
 
+    async def test_already_running_run_is_a_duplicate_delivery_skip(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A redelivered Celery message for a run a previous delivery
+        already adopted (`status = running`) must not be re-executed —
+        see fetcher-infrastructure.md, Atomic Run Acquisition Protocol,
+        step 6, duplicate-delivery handling."""
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            triggered_by="manual",
+        )
+
+        with caplog.at_level("INFO"):
+            result = await acquire_fetcher_run(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.MANUAL,
+                run_id=run.id,
+                now=datetime.now(UTC),
+            )
+
+        assert result is None
+        await db_session.refresh(run)
+        assert run.status == "running"
+        assert "manual_run_already_adopted_or_completed" in _service_log_text(caplog)
+
+    async def test_already_success_run_is_a_duplicate_delivery_skip(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="success",
+            triggered_by="manual",
+            finished_at=datetime.now(UTC),
+        )
+
+        with caplog.at_level("INFO"):
+            result = await acquire_fetcher_run(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.MANUAL,
+                run_id=run.id,
+                now=datetime.now(UTC),
+            )
+
+        assert result is None
+        assert "manual_run_already_adopted_or_completed" in _service_log_text(caplog)
+
     async def test_manual_run_stale_before_adoption_marks_stale_and_returns_none(
         self,
         db_session: AsyncSession,
@@ -423,22 +491,25 @@ class TestAcquireFetcherRunManualAdoption:
         fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A manual run picked up so late that its own pre-created row has
-        already crossed the stale threshold is marked stale at step 5 and
-        then discarded as already-finalized at step 6 — it is never
+        """A manual run picked up so late that its own pre-created
+        `queued` row has already crossed the Queued Stale Threshold
+        (600s from `created_at`) is marked stale at step 5 and then
+        discarded as already-finalized at step 6 — it is never
         (re-)executed. See fetcher-infrastructure.md, Atomic Run
-        Acquisition Protocol, step 5 note.
+        Acquisition Protocol, step 5 note; Stale Run Detection, Queued
+        Stale Threshold.
         """
         config = await fetcher_config_factory(run_timeout=60)
-        started_at = datetime.now(UTC)
+        created_at = datetime.now(UTC)
         manual_run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
-            status="running",
+            status="queued",
+            started_at=None,
+            created_at=created_at,
             triggered_by="manual",
-            started_at=started_at,
         )
-        # One second beyond run_timeout + 60 == 120: stale.
-        now = started_at + timedelta(seconds=121)
+        # One second beyond the fixed 600s Queued Stale Threshold: stale.
+        now = created_at + timedelta(seconds=601)
 
         with caplog.at_level("INFO"):
             result = await acquire_fetcher_run(
@@ -457,7 +528,9 @@ class TestAcquireFetcherRunManualAdoption:
         await db_session.flush()
         await db_session.refresh(manual_run)
         assert manual_run.status == "failure"
-        assert "Marked as stale" in (manual_run.error_message or "")
+        assert manual_run.started_at is None
+        assert manual_run.duration_seconds is None
+        assert "Marked as stale (queued for" in (manual_run.error_message or "")
         assert "manual_run_already_finalized" in _service_log_text(caplog)
 
         # No replacement run was created for the manual trigger.
@@ -476,6 +549,159 @@ class TestAcquireFetcherRunManualAdoption:
 
 
 # ---------------------------------------------------------------------------
+# Queued Stale Threshold boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestAcquireFetcherRunQueuedStaleBoundary:
+    """Mirrors `TestAcquireFetcherRunStaleBoundary` for the fixed
+    600-second Queued Stale Threshold
+    (`docs/features/platform/fetcher-infrastructure.md`, Stale Run
+    Detection, Queued Stale Threshold)."""
+
+    async def test_elapsed_equal_to_threshold_is_not_stale(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        config = await fetcher_config_factory()
+        created_at = datetime.now(UTC)
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=created_at,
+            triggered_by="manual",
+        )
+        # Exactly 600 seconds: NOT stale (strict `>`).
+        now = created_at + timedelta(seconds=600)
+
+        result = await acquire_fetcher_run(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            triggered_by=FetcherRunTriggeredBy.MANUAL,
+            run_id=run.id,
+            now=now,
+        )
+
+        assert isinstance(result, FetcherAcquisition)
+        await db_session.refresh(run)
+        assert run.status == "running"
+
+    async def test_elapsed_one_second_beyond_threshold_is_stale(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        config = await fetcher_config_factory()
+        created_at = datetime.now(UTC)
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=created_at,
+            triggered_by="manual",
+        )
+        now = created_at + timedelta(seconds=601)
+
+        with caplog.at_level("WARNING"):
+            result = await acquire_fetcher_run(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.MANUAL,
+                run_id=run.id,
+                now=now,
+            )
+
+        assert result is None
+        await db_session.refresh(run)
+        assert run.status == "failure"
+        assert run.started_at is None
+        assert run.duration_seconds is None
+        assert run.finished_at == now
+        assert run.error_message == "Marked as stale (queued for 601s, timeout 600s)"
+        log_text = _service_log_text(caplog)
+        assert "fetcher_run_marked_stale_queued" in log_text
+
+    async def test_scheduled_trigger_finalizes_stale_queued_run_and_proceeds(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        """A stale `queued` manual run does not block a scheduled
+        trigger from proceeding — it is finalized under the same lock
+        and a fresh scheduled run is created."""
+        config = await fetcher_config_factory()
+        created_at = datetime.now(UTC)
+        stale_queued = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            created_at=created_at,
+            triggered_by="manual",
+        )
+        now = created_at + timedelta(seconds=601)
+
+        result = await acquire_fetcher_run(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            triggered_by=FetcherRunTriggeredBy.SCHEDULE,
+            run_id=None,
+            now=now,
+        )
+
+        assert isinstance(result, FetcherAcquisition)
+        assert result.run_id != stale_queued.id
+        await db_session.refresh(stale_queued)
+        assert stale_queued.status == "failure"
+
+        new_run = await db_session.get(FetcherRun, result.run_id)
+        assert new_run is not None
+        assert new_run.status == "running"
+        assert new_run.triggered_by == "schedule"
+
+
+# ---------------------------------------------------------------------------
+# Multiple active rows anomaly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestAcquireFetcherRunMultipleActiveRowsAnomaly:
+    """The `FetcherConfig` lock and the API-level guard are expected to
+    make more than one simultaneous active (`queued` or `running`) row
+    per fetcher impossible. If observed anyway (e.g. data corruption,
+    a bug elsewhere), this is a fail-fast condition rather than a
+    silently resolved one."""
+
+    async def test_two_active_rows_raise_runtime_error(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name, status="queued", started_at=None
+        )
+        await fetcher_run_factory(fetcher_name=config.fetcher_name, status="running")
+
+        with pytest.raises(RuntimeError, match="Multiple active FetcherRun rows"):
+            await acquire_fetcher_run(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.SCHEDULE,
+                run_id=None,
+                now=datetime.now(UTC),
+            )
+
+
+# ---------------------------------------------------------------------------
 # finalize_manual_run_as_failure()
 # ---------------------------------------------------------------------------
 
@@ -487,7 +713,9 @@ class TestFinalizeManualRunAsFailure:
         db_session: AsyncSession,
         fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
     ) -> None:
-        run = await fetcher_run_factory(status="running", triggered_by="manual")
+        run = await fetcher_run_factory(
+            status="queued", started_at=None, triggered_by="manual"
+        )
         now = datetime.now(UTC)
 
         await finalize_manual_run_as_failure(
@@ -504,7 +732,8 @@ class TestFinalizeManualRunAsFailure:
             "Fetcher deregistered between trigger and execution"
         )
         assert run.finished_at == now
-        assert run.duration_seconds == 0
+        assert run.started_at is None
+        assert run.duration_seconds is None
 
     async def test_missing_run_raises_value_error(
         self, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
@@ -523,7 +752,74 @@ class TestFinalizeManualRunAsFailure:
                 now=datetime.now(UTC),
             )
 
-        assert "manual_run_finalization_target_missing" in _service_log_text(caplog)
+    async def test_fetcher_name_mismatch_raises_value_error(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The conditional UPDATE's `fetcher_name` predicate means a
+        `run_id` that exists but belongs to a different fetcher matches
+        zero rows — the same outcome as a wholly missing `run_id`.
+        Unlike `acquire_fetcher_run`'s equivalent guard (which raises a
+        distinct message and log event per cause), this function does
+        NOT distinguish the two: both collapse into the same "not
+        found" `ValueError` message and the same
+        `manual_run_finalization_target_missing` log event, per
+        `docs/features/platform/fetcher-infrastructure.md` (Celery
+        Integration — Unknown and deregistered fetcher handling, which
+        specifies a single combined case). The row is left untouched
+        in both cases."""
+        other_config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=other_config.fetcher_name,
+            status="queued",
+            started_at=None,
+            triggered_by="manual",
+        )
+
+        with (
+            caplog.at_level("ERROR"),
+            pytest.raises(ValueError, match=str(run.id)),
+        ):
+            await finalize_manual_run_as_failure(
+                db_session,
+                run_id=run.id,
+                fetcher_name="a_different_fetcher",
+                error_message="Fetcher deregistered between trigger and execution",
+                now=datetime.now(UTC),
+            )
+
+        await db_session.refresh(run)
+        assert run.status == "queued"
+        assert run.error_message is None
+        assert run.finished_at is None
+
+    async def test_already_transitioned_run_is_a_silent_no_op(
+        self,
+        db_session: AsyncSession,
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A run already adopted (`running`) by a concurrent path when
+        this conditional UPDATE runs is left untouched — the caller
+        (e.g. a redelivered deregistration finalize) defers to
+        whichever transition already won."""
+        run = await fetcher_run_factory(status="running", triggered_by="manual")
+
+        with caplog.at_level("INFO"):
+            await finalize_manual_run_as_failure(
+                db_session,
+                run_id=run.id,
+                fetcher_name=run.fetcher_name,
+                error_message="Fetcher deregistered between trigger and execution",
+                now=datetime.now(UTC),
+            )
+
+        await db_session.refresh(run)
+        assert run.status == "running"
+        assert "manual_run_already_transitioned" in _service_log_text(caplog)
 
 
 # ---------------------------------------------------------------------------
@@ -617,9 +913,8 @@ class TestAcquireFetcherRunConcurrency:
         session_a.add(FetcherConfig(fetcher_name=fetcher_name, run_timeout=3600))
         manual_run = FetcherRun(
             fetcher_name=fetcher_name,
-            status="running",
+            status="queued",
             triggered_by="manual",
-            started_at=datetime.now(UTC),
         )
         session_a.add(manual_run)
         await session_a.commit()
@@ -669,6 +964,165 @@ class TestAcquireFetcherRunConcurrency:
         assert len(rows) == 1
         assert rows[0].id == manual_run.id
         assert rows[0].status == "running"
+        assert rows[0].started_at == now
+
+        await session_a.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+        )
+        await session_a.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+        )
+        await session_a.commit()
+
+    async def test_adoption_wins_concurrent_compensation_is_a_no_op(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        """Simulates the ambiguous-broker-acknowledgement race described
+        in `docs/features/platform/fetcher-operations.md` (Ambiguous
+        Broker Acknowledgement): worker adoption (`queued -> running`)
+        and a publication-failure compensation (`queued -> failure`)
+        both attempt a conditional atomic UPDATE against the same
+        `queued` row. Ordinary PostgreSQL row-level locking on `UPDATE`
+        — not the `FetcherConfig` lock — is what makes exactly one of
+        them win; the other observes zero rows affected and is a safe
+        no-op."""
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+        fetcher_name = f"concurrency_fetcher_{uuid4().hex[:8]}"
+
+        session_a.add(FetcherConfig(fetcher_name=fetcher_name, run_timeout=3600))
+        manual_run = FetcherRun(
+            fetcher_name=fetcher_name,
+            status="queued",
+            triggered_by="manual",
+        )
+        session_a.add(manual_run)
+        await session_a.commit()
+
+        now = datetime.now(UTC)
+        # Session A performs worker adoption — the UPDATE inside
+        # acquire_fetcher_run() takes an uncommitted row lock on the
+        # FetcherRun row (in addition to the FetcherConfig lock).
+        acquisition_a = await acquire_fetcher_run(
+            session_a,
+            fetcher_name=fetcher_name,
+            triggered_by=FetcherRunTriggeredBy.MANUAL,
+            run_id=manual_run.id,
+            now=now,
+        )
+        assert acquisition_a is not None
+
+        # Session B (the publication-failure compensation) attempts its
+        # own conditional UPDATE concurrently — it blocks on the row
+        # lock session A already holds, even though it never touches
+        # FetcherConfig.
+        task_b = asyncio.create_task(
+            finalize_manual_run_as_failure(
+                session_b,
+                run_id=manual_run.id,
+                fetcher_name=fetcher_name,
+                error_message="Manual run could not be dispatched to the task broker",
+                now=datetime.now(UTC),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        # Releasing A's locks lets B proceed — B's UPDATE re-evaluates
+        # against the committed 'running' state and matches zero rows.
+        await session_a.commit()
+        await asyncio.wait_for(task_b, timeout=5)
+        await session_b.commit()
+
+        rows = (
+            (
+                await session_a.execute(
+                    select(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].status == "running"
+        assert rows[0].started_at == now
+
+        await session_a.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+        )
+        await session_a.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+        )
+        await session_a.commit()
+
+    async def test_compensation_wins_concurrent_worker_adoption_is_a_no_op(
+        self,
+        db_session_factory: Callable[[], Awaitable[AsyncSession]],
+    ) -> None:
+        """The reverse race: the publication-failure compensation
+        commits first, so the worker's later adoption attempt finds the
+        run already finalized and does not execute it."""
+        session_a = await db_session_factory()
+        session_b = await db_session_factory()
+        fetcher_name = f"concurrency_fetcher_{uuid4().hex[:8]}"
+
+        session_a.add(FetcherConfig(fetcher_name=fetcher_name, run_timeout=3600))
+        manual_run = FetcherRun(
+            fetcher_name=fetcher_name,
+            status="queued",
+            triggered_by="manual",
+        )
+        session_a.add(manual_run)
+        await session_a.commit()
+
+        now = datetime.now(UTC)
+        # Session A performs the compensation first — takes an
+        # uncommitted row lock on the FetcherRun row via its own
+        # conditional UPDATE.
+        await finalize_manual_run_as_failure(
+            session_a,
+            run_id=manual_run.id,
+            fetcher_name=fetcher_name,
+            error_message="Manual run could not be dispatched to the task broker",
+            now=now,
+        )
+
+        # Session B (a worker that received the task despite the
+        # publication error) attempts adoption concurrently — it
+        # blocks on the same row lock.
+        task_b = asyncio.create_task(
+            acquire_fetcher_run(
+                session_b,
+                fetcher_name=fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.MANUAL,
+                run_id=manual_run.id,
+                now=datetime.now(UTC),
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        await session_a.commit()
+        acquisition_b = await asyncio.wait_for(task_b, timeout=5)
+        await session_b.commit()
+
+        # Compensation won: the worker's adoption attempt found the run
+        # already finalized and did not execute it.
+        assert acquisition_b is None
+
+        rows = (
+            (
+                await session_a.execute(
+                    select(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].status == "failure"
+        assert rows[0].started_at is None
 
         await session_a.execute(
             delete(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)

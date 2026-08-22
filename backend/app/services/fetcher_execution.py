@@ -13,10 +13,14 @@ failure, no retry — see fetcher-infrastructure.md, Celery Integration,
 "No top-level retry") or is a plain `ValueError` per the
 specification's literal text for manual `run_id` rejection.
 
-`mark_run_stale()` is also called by
+`mark_run_stale()` and `mark_queued_run_stale()` are also called by
 `app.services.fetcher_operations.update_fetcher_config()` (an
 API-facing service) under its own `FetcherConfig` lock — see that
-function's docstring.
+function's docstring. `update_fetcher_config()`'s Run Timeout Active
+Guard covers both active statuses (`queued` and `running`), calling
+whichever of these two functions matches the active row's own status
+(see `docs/features/platform/fetcher-operations.md`,
+`update_fetcher_config`, Run Timeout Active Guard).
 
 Registry lookup (`FETCHER_REGISTRY` membership) is the caller's
 responsibility: the task wrapper determines whether `fetcher_name` is
@@ -33,7 +37,7 @@ from datetime import datetime
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import FetcherRunStatus, FetcherRunTriggeredBy
@@ -43,9 +47,17 @@ from app.services.base_fetcher import FetcherRunConfig
 
 logger = structlog.get_logger(__name__)
 
-# Hardcoded stale-detection margin (seconds) — see
-# fetcher-infrastructure.md (Stale Run Detection). Not configurable.
+# Hardcoded stale-detection margin (seconds) for `running` runs — see
+# fetcher-infrastructure.md (Stale Run Detection, Running Stale
+# Threshold). Not configurable.
 _STALE_MARGIN_SECONDS = 60
+
+# Hardcoded stale-detection threshold (seconds) for `queued` runs — see
+# fetcher-infrastructure.md (Stale Run Detection, Queued Stale
+# Threshold). Fixed and independent of `run_timeout`: a `queued` run's
+# own execution has not started, so the fetcher's execution budget has
+# no bearing on how long it may sit unclaimed. Not configurable.
+_QUEUED_STALE_SECONDS = 600
 
 
 class FetcherConfigMissingError(RuntimeError):
@@ -65,9 +77,9 @@ class FetcherAcquisition:
     `BaseFetcher.run()`.
 
     `run_id` identifies the committed `running` row — freshly inserted
-    for a scheduled trigger, or adopted for a manual trigger. `config`
-    is the immutable runtime configuration snapshot taken under the
-    same `FetcherConfig` lock.
+    for a scheduled trigger, or adopted (transitioned from `queued`)
+    for a manual trigger. `config` is the immutable runtime
+    configuration snapshot taken under the same `FetcherConfig` lock.
     """
 
     run_id: UUID
@@ -99,19 +111,32 @@ async def acquire_fetcher_run(
     implies `run_id is not None`) — the caller performs that
     validation before invoking this function.
 
+    A manual `run_id` identifies a `FetcherRun` pre-created by the API
+    as `queued`. This function never receives (and never creates) a
+    `queued` row itself — it only ever adopts one via an atomic
+    `queued -> running` transition (step 6) or finalizes one as stale
+    (step 5). A scheduled trigger has no pre-created row: it is always
+    created directly as `running`.
+
     Returns:
         `FetcherAcquisition` when a run was created or adopted and
         execution should proceed. `None` when the caller should return
         without executing the fetcher: the fetcher is disabled, a
         non-stale scheduled duplicate was discarded, or the manually
-        supplied run was already finalized (e.g., by broker-failure
-        handling).
+        supplied run was already finalized or adopted by a concurrent
+        path (e.g., broker-failure compensation, a redelivered Celery
+        message).
 
     Raises:
         FetcherConfigMissingError: no `FetcherConfig` row exists for
             `fetcher_name`.
         ValueError: (manual trigger only) the supplied `run_id` does
             not exist, or exists for a different `fetcher_name`.
+        RuntimeError: more than one active (`queued` or `running`) row
+            exists for `fetcher_name`. The `FetcherConfig` lock and the
+            API-level guard are expected to make this impossible; if
+            observed, it is a data-integrity bug and this function
+            fails loudly rather than silently choosing a row to act on.
     """
     result = await db.execute(
         select(FetcherConfig)
@@ -149,31 +174,50 @@ async def acquire_fetcher_run(
     active_result = await db.execute(
         select(FetcherRun).where(
             FetcherRun.fetcher_name == fetcher_name,
-            FetcherRun.status == FetcherRunStatus.RUNNING.value,
+            FetcherRun.status.in_(
+                [FetcherRunStatus.QUEUED.value, FetcherRunStatus.RUNNING.value]
+            ),
         )
     )
-    active_run = active_result.scalar_one_or_none()
+    active_runs = active_result.scalars().all()
+    if len(active_runs) > 1:
+        raise RuntimeError(
+            f"Multiple active FetcherRun rows for '{fetcher_name}': "
+            f"{[str(run.id) for run in active_runs]} — the FetcherConfig "
+            "lock and API-level guard should make this impossible"
+        )
+    active_run = active_runs[0] if active_runs else None
 
     if active_run is not None:
-        elapsed = (now - active_run.started_at).total_seconds()
-        stale_threshold = config.run_timeout + _STALE_MARGIN_SECONDS
-        if elapsed > stale_threshold:
-            mark_run_stale(
-                active_run,
-                now=now,
-                run_timeout=config.run_timeout,
-                fetcher_name=fetcher_name,
+        if active_run.status == FetcherRunStatus.QUEUED.value:
+            elapsed = (now - active_run.created_at).total_seconds()
+            is_stale = elapsed > _QUEUED_STALE_SECONDS
+        else:
+            assert active_run.started_at is not None, (
+                "a 'running' FetcherRun always has a non-NULL started_at"
             )
+            elapsed = (now - active_run.started_at).total_seconds()
+            is_stale = elapsed > config.run_timeout + _STALE_MARGIN_SECONDS
+
+        if is_stale:
+            if active_run.status == FetcherRunStatus.QUEUED.value:
+                mark_queued_run_stale(active_run, now=now, fetcher_name=fetcher_name)
+            else:
+                mark_run_stale(
+                    active_run,
+                    now=now,
+                    run_timeout=config.run_timeout,
+                    fetcher_name=fetcher_name,
+                )
         elif run_id is None:
             logger.info(
                 "scheduled_run_skipped_active_run_exists",
                 fetcher_name=fetcher_name,
             )
             return None
-        # else: manual trigger — the active row IS the supplied
-        # run_id (already guarded at the API level). Fall through to
-        # the adoption logic below, which re-fetches and validates it
-        # explicitly by identity.
+        # else: manual trigger — the active row IS the supplied run_id
+        # (still queued, not yet stale). Fall through to the adoption
+        # attempt below, which re-targets it explicitly by identity.
 
     if run_id is None:
         new_run = FetcherRun(
@@ -185,6 +229,21 @@ async def acquire_fetcher_run(
         db.add(new_run)
         await db.flush()
         return FetcherAcquisition(run_id=new_run.id, config=run_config)
+
+    adopted_result = await db.execute(
+        update(FetcherRun)
+        .where(
+            FetcherRun.id == run_id,
+            FetcherRun.fetcher_name == fetcher_name,
+            FetcherRun.status == FetcherRunStatus.QUEUED.value,
+        )
+        .values(status=FetcherRunStatus.RUNNING.value, started_at=now)
+        .returning(FetcherRun.id)
+    )
+    adopted_id = adopted_result.scalar_one_or_none()
+    await db.flush()
+    if adopted_id is not None:
+        return FetcherAcquisition(run_id=adopted_id, config=run_config)
 
     run = await db.get(FetcherRun, run_id)
     if run is None:
@@ -203,15 +262,21 @@ async def acquire_fetcher_run(
             f"FetcherRun '{run_id}' belongs to fetcher '{run.fetcher_name}', "
             f"not '{fetcher_name}'"
         )
-    if run.status != FetcherRunStatus.RUNNING.value:
+    if run.status == FetcherRunStatus.FAILURE.value:
         logger.info(
             "manual_run_already_finalized",
             run_id=str(run_id),
             status=run.status,
         )
         return None
-
-    return FetcherAcquisition(run_id=run.id, config=run_config)
+    # `running`, `success`, or `partial`: a duplicate or redelivered
+    # Celery message for a run already adopted or completed.
+    logger.info(
+        "manual_run_already_adopted_or_completed",
+        run_id=str(run_id),
+        status=run.status,
+    )
+    return None
 
 
 async def finalize_manual_run_as_failure(
@@ -222,8 +287,8 @@ async def finalize_manual_run_as_failure(
     error_message: str,
     now: datetime,
 ) -> None:
-    """Finalize a manually pre-created `FetcherRun` as an immediate
-    failure with zero duration and no accompanying audit event.
+    """Finalize a manually pre-created, still-`queued` `FetcherRun` as
+    an immediate failure with no accompanying audit event.
 
     Shared by two acquisition-time failure paths where the fetcher
     never executes: the fetcher was deregistered (caller: the
@@ -234,39 +299,69 @@ async def finalize_manual_run_as_failure(
     Integration — Unknown and deregistered fetcher handling; and
     Concurrency Control — Atomic Run Acquisition Protocol, step 2).
 
-    Sets `status = failure`, `error_message` to the caller-supplied
-    message, `finished_at = now`, `duration_seconds = 0`. Flushes but
-    does not commit — the caller's transaction owns durability.
+    Performs a **conditional atomic UPDATE**
+    (`WHERE id = :run_id AND fetcher_name = :fetcher_name AND
+    status = 'queued'`) setting `status = failure`, the caller-supplied
+    `error_message`, and `finished_at = now`. `started_at` and
+    `duration_seconds` are left untouched — they remain `NULL`, since
+    the run was never adopted. This is safe to call even when a
+    concurrent path (e.g., a future broker-failure compensation, or a
+    redelivered Celery message racing this same call) has already
+    transitioned the row away from `queued`: the UPDATE then matches
+    zero rows and is silently a no-op, deferring to whichever
+    transition already won. Flushes but does not commit — the caller's
+    transaction owns durability.
 
     Raises:
         ValueError: `run_id` does not identify an existing
-            `FetcherRun`.
+            `FetcherRun` row for `fetcher_name`.
     """
+    result = await db.execute(
+        update(FetcherRun)
+        .where(
+            FetcherRun.id == run_id,
+            FetcherRun.fetcher_name == fetcher_name,
+            FetcherRun.status == FetcherRunStatus.QUEUED.value,
+        )
+        .values(
+            status=FetcherRunStatus.FAILURE.value,
+            error_message=error_message,
+            finished_at=now,
+        )
+        .returning(FetcherRun.id)
+    )
+    updated_id = result.scalar_one_or_none()
+    await db.flush()
+    if updated_id is not None:
+        return
+
     run = await db.get(FetcherRun, run_id)
-    if run is None:
+    if run is None or run.fetcher_name != fetcher_name:
         logger.error(
             "manual_run_finalization_target_missing",
             run_id=str(run_id),
             fetcher_name=fetcher_name,
         )
         raise ValueError(f"FetcherRun '{run_id}' not found")
-    run.status = FetcherRunStatus.FAILURE.value
-    run.error_message = error_message
-    run.finished_at = now
-    run.duration_seconds = 0
-    await db.flush()
+    logger.info(
+        "manual_run_already_transitioned",
+        run_id=str(run_id),
+        status=run.status,
+    )
 
 
 def mark_run_stale(
     run: FetcherRun, *, now: datetime, run_timeout: int, fetcher_name: str
 ) -> None:
-    """Finalize a stale `FetcherRun` in place (caller flushes/commits).
+    """Finalize a stale `running` `FetcherRun` in place (caller
+    flushes/commits).
 
     See `docs/features/platform/fetcher-infrastructure.md` (Stale Run
-    Detection) for the exact field values. The log event follows the
-    project's structlog convention (`docs/conventions.md`, Logging) —
-    a snake_case event name with structured keyword context — rather
-    than the spec's illustrative message text.
+    Detection, Running Stale Threshold) for the exact field values. The
+    log event follows the project's structlog convention
+    (`docs/conventions.md`, Logging) — a snake_case event name with
+    structured keyword context — rather than the spec's illustrative
+    message text.
 
     Shared by two callers under two different pessimistic locks:
     `acquire_fetcher_run()` above (locks `FetcherConfig` as part of the
@@ -279,6 +374,9 @@ def mark_run_stale(
     duplicating this finalization logic would risk the two call sites
     drifting on the stale-run field values or log event shape.
     """
+    assert run.started_at is not None, (
+        "a 'running' FetcherRun always has a non-NULL started_at"
+    )
     elapsed = (now - run.started_at).total_seconds()
     run.status = FetcherRunStatus.FAILURE.value
     run.error_message = (
@@ -292,4 +390,37 @@ def mark_run_stale(
         fetcher_name=fetcher_name,
         started_at=run.started_at.isoformat(),
         run_timeout=run_timeout,
+    )
+
+
+def mark_queued_run_stale(run: FetcherRun, *, now: datetime, fetcher_name: str) -> None:
+    """Finalize a stale `queued` `FetcherRun` in place (caller
+    flushes/commits).
+
+    See `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+    Detection, Queued Stale Threshold) for the exact field values and
+    the fixed 600-second threshold. `started_at` and `duration_seconds`
+    are left untouched — they remain `NULL`, since the run was never
+    adopted.
+
+    Called by `acquire_fetcher_run()` above, under the `FetcherConfig`
+    lock, and by `fetcher_operations.update_fetcher_config()` (Run
+    Timeout Active Guard), under its own `FetcherConfig` lock. Kept as
+    a separate public function (mirroring `mark_run_stale()` above)
+    rather than a branch inside it: the two finalizations set different
+    fields (a `queued` run has no `started_at`/`duration_seconds` to
+    preserve or compute) and use a different elapsed-time basis
+    (`created_at`, not `started_at`).
+    """
+    elapsed = (now - run.created_at).total_seconds()
+    run.status = FetcherRunStatus.FAILURE.value
+    run.error_message = (
+        f"Marked as stale (queued for {elapsed:.0f}s, timeout {_QUEUED_STALE_SECONDS}s)"
+    )
+    run.finished_at = now
+    logger.warning(
+        "fetcher_run_marked_stale_queued",
+        run_id=str(run.id),
+        fetcher_name=fetcher_name,
+        created_at=run.created_at.isoformat(),
     )

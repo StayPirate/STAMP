@@ -99,10 +99,18 @@ class TestFetcherRunMetadata:
     any database round-trip."""
 
     def test_no_updated_at_column(self) -> None:
-        """FetcherRun has no `updated_at` — finalization is the only
-        in-place update and is fully captured by `finished_at`
-        (docs/data-model.md, Notes)."""
+        """FetcherRun has no `updated_at` — the `queued -> running`
+        adoption transition and finalization are the only in-place
+        updates, and both are fully captured by
+        `started_at`/`finished_at` (docs/data-model.md, Notes)."""
         assert not hasattr(FetcherRun, "updated_at")
+
+    def test_started_at_column_is_nullable(self) -> None:
+        """`started_at` is `NULL` while `status = queued` (see
+        `docs/features/platform/fetcher-infrastructure.md`, Concurrency
+        Control)."""
+        column = FetcherRun.__table__.columns["started_at"]
+        assert column.nullable is True
 
     def test_id_is_uuid_primary_key(self) -> None:
         table = Base.metadata.tables["fetcher_run"]
@@ -160,21 +168,25 @@ class TestFetcherRunNotNullConstraints:
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
-    async def test_missing_started_at_rejected(
+    async def test_missing_started_at_is_accepted_for_queued_run(
         self,
         db_session: AsyncSession,
         fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
     ) -> None:
+        """`started_at` is nullable — a `queued` manual run has not yet
+        been adopted by a worker and therefore has no `started_at` (see
+        `docs/features/platform/fetcher-infrastructure.md`, Concurrency
+        Control)."""
         config = await fetcher_config_factory()
-        db_session.add(
-            FetcherRun(
-                fetcher_name=config.fetcher_name,
-                status="running",
-                triggered_by="schedule",
-            )
+        run = FetcherRun(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            triggered_by="manual",
         )
-        with pytest.raises(IntegrityError):
-            await db_session.flush()
+        db_session.add(run)
+        await db_session.flush()
+
+        assert run.started_at is None
 
     async def test_missing_status_rejected(
         self,
@@ -215,7 +227,7 @@ class TestFetcherRunStatusCheckConstraint:
         self,
         fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
     ) -> None:
-        for status in ("running", "success", "failure", "partial"):
+        for status in ("queued", "running", "success", "failure", "partial"):
             run = await fetcher_run_factory(status=status)
             assert run.status == status
 
@@ -386,13 +398,14 @@ class TestFetcherRunTimezoneAwareTimestamps:
     ) -> None:
         run = await fetcher_run_factory()
         await db_session.refresh(run)
+        assert run.started_at is not None
         assert run.started_at.tzinfo is not None
         assert run.created_at.tzinfo is not None
 
 
 @pytest.mark.integration
 class TestFetcherRunSchemaIndexes:
-    """Verifies the composite index declared on `fetcher_run`
+    """Verifies the composite indexes declared on `fetcher_run`
     (docs/features/platform/fetcher-infrastructure.md, Data Model —
     FetcherRun, Indexes)."""
 
@@ -408,6 +421,11 @@ class TestFetcherRunSchemaIndexes:
         assert index_map["ix_fetcher_run_fetcher_name_started_at"]["column_names"] == [
             "fetcher_name",
             "started_at",
+        ]
+        assert "ix_fetcher_run_fetcher_name_created_at" in index_map
+        assert index_map["ix_fetcher_run_fetcher_name_created_at"]["column_names"] == [
+            "fetcher_name",
+            "created_at",
         ]
 
 

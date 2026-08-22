@@ -371,6 +371,37 @@ class TestListFetchersEndpoint:
         assert response.status_code == 401
         assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
 
+    async def test_queued_last_run_has_null_started_at_and_created_at_present(
+        self,
+        client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """A `queued` manual run is represented with `created_at`
+        present and `started_at`/`finished_at`/`duration_seconds` all
+        `null` — see `docs/features/platform/fetcher-operations.md`
+        (List Fetchers, Fields)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(fetcher_name=_StubFetcher.name)
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            triggered_by="manual",
+        )
+
+        response = await client.get("/api/v1/fetchers")
+
+        assert response.status_code == 200
+        item = next(
+            i for i in response.json()["data"] if i["fetcher_name"] == _StubFetcher.name
+        )
+        assert item["last_run"]["status"] == "queued"
+        assert item["last_run"]["started_at"] is None
+        assert item["last_run"]["finished_at"] is None
+        assert item["last_run"]["duration_seconds"] is None
+        assert item["last_run"]["created_at"] is not None
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/fetchers/{fetcher_name}/runs
@@ -481,6 +512,29 @@ class TestListFetcherRunsEndpoint:
         assert response.json()["data"] == []
         assert response.json()["meta"]["total"] == 0
 
+    async def test_filters_by_queued_status(
+        self,
+        client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        await fetcher_run_factory(fetcher_name=config.fetcher_name, status="success")
+        queued = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name, status="queued", started_at=None
+        )
+
+        response = await client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs",
+            params={"status": "queued"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["meta"]["total"] == 1
+        assert body["data"][0]["id"] == str(queued.id)
+        assert body["data"][0]["started_at"] is None
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}
@@ -520,6 +574,32 @@ class TestGetFetcherRunEndpoint:
 
         assert response.status_code == 404
         assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_queued_run_has_null_started_at_and_present_created_at(
+        self,
+        client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
+            triggered_by="manual",
+        )
+
+        response = await client.get(
+            f"/api/v1/fetchers/{config.fetcher_name}/runs/{run.id}"
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["status"] == "queued"
+        assert data["started_at"] is None
+        assert data["finished_at"] is None
+        assert data["duration_seconds"] is None
+        assert data["created_at"] is not None
 
     async def test_anonymous_does_not_see_raw_diagnostics(
         self,
@@ -668,6 +748,30 @@ class TestGetFetcherTimelineEndpoint:
         data = response.json()["data"]
         assert "points" in data
         assert "disabled_periods" in data
+
+    async def test_queued_point_has_null_started_at_semantics(
+        self,
+        client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """A `queued` run appears in the timeline using `created_at` as
+        its `timestamp`, with `duration_seconds = null` — see
+        `docs/features/platform/fetcher-operations.md`
+        (Get Fetcher Run Timeline Data)."""
+        config = await fetcher_config_factory()
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name, status="queued", started_at=None
+        )
+
+        response = await client.get(f"/api/v1/fetchers/{config.fetcher_name}/timeline")
+
+        assert response.status_code == 200
+        points = response.json()["data"]["points"]
+        assert len(points) == 1
+        assert points[0]["status"] == "queued"
+        assert points[0]["duration_seconds"] is None
+        assert points[0]["timestamp"] is not None
 
     async def test_date_range_too_wide_returns_400(
         self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
@@ -987,6 +1091,32 @@ class TestUpdateFetcherConfigEndpoint:
             fetcher_name=config.fetcher_name,
             status="running",
             started_at=datetime.now(UTC),
+        )
+        response = await admin_client.patch(
+            f"/api/v1/fetchers/{config.fetcher_name}/config",
+            json={"run_timeout": 1800},
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "FETCHER_ALREADY_RUNNING"
+
+    async def test_run_timeout_change_while_active_queued_run_returns_409(
+        self,
+        admin_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """The Run Timeout Active Guard covers `queued` runs too, not
+        only `running` ones — see
+        `docs/features/platform/fetcher-operations.md`
+        (`update_fetcher_config`, Run Timeout Active Guard)."""
+        _register(_StubFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_StubFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="queued",
+            started_at=None,
         )
         response = await admin_client.patch(
             f"/api/v1/fetchers/{config.fetcher_name}/config",

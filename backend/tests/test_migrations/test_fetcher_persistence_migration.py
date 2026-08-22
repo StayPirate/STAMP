@@ -37,6 +37,7 @@ class _SchemaFacts(TypedDict):
     fetcher_run_checks: set[str]
     fetcher_run_indexes: dict[str, dict[str, Any]]
     fetcher_run_fks: list[dict[str, Any]]
+    fetcher_run_columns: dict[str, dict[str, Any]]
     fetcher_audit_event_indexes: dict[str, dict[str, Any]]
     fetcher_audit_event_fks: list[dict[str, Any]]
 
@@ -66,6 +67,11 @@ async def _inspect_schema(database_url: str) -> _SchemaFacts:
                     if "fetcher_run" in tables
                     else []
                 )
+                run_columns = (
+                    {col["name"]: col for col in insp.get_columns("fetcher_run")}
+                    if "fetcher_run" in tables
+                    else {}
+                )
                 audit_indexes = (
                     {
                         idx["name"]: idx
@@ -84,6 +90,7 @@ async def _inspect_schema(database_url: str) -> _SchemaFacts:
                     "fetcher_run_checks": run_checks,
                     "fetcher_run_indexes": run_indexes,
                     "fetcher_run_fks": run_fks,
+                    "fetcher_run_columns": run_columns,
                     "fetcher_audit_event_indexes": audit_indexes,
                     "fetcher_audit_event_fks": audit_fks,
                 }
@@ -130,6 +137,18 @@ class TestFetcherPersistenceMigration:
             "ix_fetcher_run_fetcher_name_started_at"
         ]
         assert composite_index["column_names"] == ["fetcher_name", "started_at"]
+
+        # Added by the later `queued` lifecycle migration
+        # (a4f22788de31): `started_at` is nullable and a second
+        # composite index supports created_at-based ordering — see
+        # `docs/features/platform/fetcher-infrastructure.md` (Data
+        # Model — FetcherRun, Indexes).
+        assert "ix_fetcher_run_fetcher_name_created_at" in after["fetcher_run_indexes"]
+        created_at_index = after["fetcher_run_indexes"][
+            "ix_fetcher_run_fetcher_name_created_at"
+        ]
+        assert created_at_index["column_names"] == ["fetcher_name", "created_at"]
+        assert after["fetcher_run_columns"]["started_at"]["nullable"] is True
 
         run_fk_tables = {fk["referred_table"] for fk in after["fetcher_run_fks"]}
         assert run_fk_tables == {"fetcher_config", "user"}

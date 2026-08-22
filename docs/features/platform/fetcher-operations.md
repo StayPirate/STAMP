@@ -65,8 +65,11 @@ Unless stated per-function, the following defaults apply:
 - **`trigger_fetcher`**: service-owned orchestration boundary. Does NOT
   accept a caller-supplied session. Creates its own short-lived sessions
   and manages two independent transactions (see Trigger Fetcher). The
-  API handler calls this function directly outside any request-scoped
-  database session.
+  first transaction creates the manual run as `queued` — never
+  `running` — per the lifecycle defined in
+  `docs/features/platform/fetcher-infrastructure.md` (Concurrency
+  Control). The API handler calls this function directly outside any
+  request-scoped database session.
 
 ### Module-Level Exception Default
 
@@ -85,7 +88,7 @@ All exceptions inherit from `FetcherOperationsServiceError(ServiceError)`.
 | `FetcherRunNotFoundError` | 404 | `FETCHER_NOT_FOUND` | The specified run does not exist or does not belong to the named fetcher |
 | `FetcherDeregisteredError` | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but is not present in the registry (code removed) |
 | `FetcherDisabledError` | 409 | `FETCHER_DISABLED` | Fetcher is disabled (`enabled = false`) |
-| `FetcherAlreadyRunningError` | 409 | `FETCHER_ALREADY_RUNNING` | A non-stale run is active for this fetcher |
+| `FetcherAlreadyRunningError` | 409 | `FETCHER_ALREADY_RUNNING` | An active (`queued` or `running`, non-stale) run exists for this fetcher |
 | `FetcherSettingUnknownError` | 422 | `FETCHER_SETTING_UNKNOWN` | Unknown key in `custom_settings` |
 | `FetcherSettingInvalidError` | 422 | `FETCHER_SETTING_INVALID` | The candidate merged state (current stored values plus submitted changes) fails the `Settings` model's type/range/choices validation — the invalid field may be a value the caller did not submit |
 | `FetcherBrokerUnavailableError` | 503 | `CELERY_UNAVAILABLE` | Task broker unavailable during manual trigger publication |
@@ -116,18 +119,28 @@ dedicated exception type.
    registry, return a deregistered fetcher entry with code-defined fields
    as `null`.
 4. For each fetcher, resolve `last_run`: the most recent `FetcherRun`
-   ordered by `started_at DESC, id DESC`. This includes runs with
-   `status = running`. If no `FetcherRun` exists, `last_run` is `null`.
+   ordered by `created_at DESC, id DESC`. Ordering by `created_at`
+   (rather than `started_at`) ensures a `queued` run — whose
+   `started_at` is `NULL` — is still correctly selected and positioned
+   chronologically. This includes runs with `status IN ('queued',
+   'running')`. If no `FetcherRun` exists, `last_run` is `null`.
 5. For each registered and enabled fetcher, attempt to read `next_run_at`
    from the RedBeat entry's `due_at` attribute. On any `RedisError`, set
    `next_run_at = null` for all fetchers and log WARNING (single attempt,
    no per-fetcher retry).
 6. Sort the merged list by `fetcher_name` ascending (alphabetical).
-7. For `last_run`, compute `stale: bool` — `true` when the run has
-   `status = running` and `now() - started_at > run_timeout + 60` (using
-   the fetcher's `FetcherConfig.run_timeout`, which always exists for any
-   fetcher that has runs — a `FetcherRun` requires a `FetcherConfig` row
-   via its foreign key).
+7. For `last_run`, compute `stale: bool` using the threshold that
+   matches the run's own status (see
+   `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+   Detection):
+   - `status = queued`: `true` when `now() - created_at > 600` seconds
+     (Queued Stale Threshold).
+   - `status = running`: `true` when `now() - started_at > run_timeout + 60`
+     seconds (Running Stale Threshold, using the fetcher's
+     `FetcherConfig.run_timeout`, which always exists for any fetcher
+     that has runs — a `FetcherRun` requires a `FetcherConfig` row via
+     its foreign key).
+   - Any terminal status: `false`.
 8. `custom_settings_count`: number of keys in
    `FetcherConfig.custom_settings` JSONB that exist in the current
    `Settings` schema (registered fetchers only). Orphaned keys are
@@ -154,10 +167,12 @@ neither in the registry nor in `FetcherConfig`.
 1. Validate fetcher existence (registry OR `FetcherConfig`).
 2. Query `FetcherRun` where `fetcher_name` matches, applying optional
    filters:
-   - `status`: exact match. Valid values: `success`, `failure`,
-     `partial`, `running`.
-   - `from_date` / `to_date`: filter on `started_at` (inclusive).
-3. Order: `started_at DESC, id DESC` (fixed, not client-controlled).
+   - `status`: exact match. Valid values: `queued`, `running`,
+     `success`, `failure`, `partial`.
+   - `from_date` / `to_date`: filter on `created_at` (inclusive) — not
+     `started_at`, so a `queued` run (whose `started_at` is `NULL`) is
+     still selected by a date range covering its acceptance time.
+3. Order: `created_at DESC, id DESC` (fixed, not client-controlled).
 4. Apply pagination.
 5. Exclude `error_detail` and `error_traceback` from all items.
 6. If `has_manage_fetchers` is `false`, set `triggered_by_user` to
@@ -179,9 +194,12 @@ neither in the registry nor in `FetcherConfig`.
 
 1. Validate fetcher existence.
 2. Query `FetcherRun` by `id` and `fetcher_name`.
-3. Return all fields. Include `error_detail` and `error_traceback` only
-   if `has_manage_fetchers` is `true`; otherwise these fields are absent
-   from the response.
+3. Return all fields, including `created_at` and the nullable
+   `started_at`/`finished_at`/`duration_seconds` (see
+   `docs/features/platform/fetcher-infrastructure.md`, Data Model —
+   FetcherRun, for their nullability by status). Include `error_detail`
+   and `error_traceback` only if `has_manage_fetchers` is `true`;
+   otherwise these fields are absent from the response.
 4. If `has_manage_fetchers` is `false`, set `triggered_by_user` to
    `null`.
 
@@ -201,9 +219,13 @@ neither in the registry nor in `FetcherConfig`.
 **Q3 (behavior)**:
 
 1. Validate fetcher existence.
-2. Query `FetcherRun` records where `started_at` is within
-   `[from_date, to_date]`, ordered by `started_at ASC, id ASC`.
-   Include runs with `status = running` (duration will be `null`).
+2. Query `FetcherRun` records where `created_at` is within
+   `[from_date, to_date]`, ordered by `created_at ASC, id ASC`.
+   Filtering and ordering on `created_at` (rather than `started_at`)
+   ensures `queued` runs — whose `started_at` is `NULL` — appear in the
+   timeline in correct chronological position. Include runs with
+   `status IN ('queued', 'running')` (duration will be `null` for
+   both).
 3. Derive disabled periods from `FetcherAuditEvent` records — see
    Disabled Period Derivation below.
 4. If `has_manage_fetchers` is `false`, omit `disabled_by` and
@@ -283,7 +305,8 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
 2. `FetcherDeregisteredError` — fetcher deregistered (in DB, not in
    registry).
 3. `FetcherAlreadyRunningError` — `run_timeout` is changing AND a
-   non-stale run is active (see Run Timeout Active Guard below).
+   non-stale active (`queued` or `running`) run exists (see Run Timeout
+   Active Guard below).
 4. `FetcherSettingUnknownError` — unknown key in `custom_settings`.
 5. `FetcherSettingInvalidError` — the candidate merged state (current
    stored values plus submitted changes) fails validation. The invalid
@@ -309,14 +332,30 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
    propagation occur.
 4. **Run Timeout Active Guard**: if `run_timeout` is present in the
    payload AND differs from the current value: query `FetcherRun` where
-   `fetcher_name` matches AND `status = 'running'`. If such a run
-   exists, evaluate staleness using the **current** (pre-PATCH)
-   `run_timeout`: stale if `now() - started_at > current_run_timeout + 60`.
+   `fetcher_name` matches AND `status IN ('queued', 'running')`. This
+   guard covers both active statuses — not `running` alone — because a
+   manual run's Celery task already has its `time_limit`/
+   `soft_time_limit` fixed at publication time (an earlier, separate
+   transaction), before adoption. If `run_timeout` were free to change
+   while that run is still `queued`, the *live* `FetcherConfig.run_timeout`
+   read by Stale Run Detection after adoption could diverge from the
+   value the already-published task is executing under, breaking the
+   invariant that the Running Stale Threshold is always set above the
+   task's actual hard time limit (see
+   `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+   Detection, "Relationship to hard time limit") — a lowered
+   `run_timeout` could then cause the still-executing process to be
+   declared stale and a second run started while the first is still
+   alive. Evaluate staleness using the row's own status and the
+   **current** (pre-PATCH) `run_timeout` where applicable: Queued Stale
+   Threshold (`created_at`, fixed 600 seconds) if `queued`; Running
+   Stale Threshold (`started_at`, `current_run_timeout + 60`) if
+   `running`.
    - If **not stale**: raise `FetcherAlreadyRunningError`. The entire
      PATCH fails atomically — no field is modified, no audit event is
      created, no RedBeat propagation occurs.
    - If **stale**: finalize the stale run under the same lock (same
-     semantics as `trigger_fetcher` step 4 — see
+     semantics as the Queued/Running Stale Threshold in
      `docs/features/platform/fetcher-infrastructure.md`, Stale Run
      Detection, for the finalization message and fields). Proceed with
      mutation.
@@ -405,9 +444,17 @@ After the API workflow commits the transaction containing
    - If `enabled` changed to `false`: delete the RedBeat entry. All
       other field changes in the same PATCH are moot for scheduling —
       skip remaining propagation. A disabled fetcher has no entry.
-      Disabling does not interrupt an in-flight run; the current run
-      completes normally and the disable takes effect from the next
-      scheduled cycle.
+      Disabling does not interrupt a run already adopted by a worker
+      (`running`) — it completes normally. A run still `queued` at the
+      moment of disable is NOT interrupted either, but does not
+      complete normally: when a worker eventually reaches it, the
+      Atomic Run Acquisition Protocol's disabled-fetcher branch
+      finalizes it as `failure` (`error_message = "Fetcher disabled
+      between trigger and execution"` — see
+      `docs/features/platform/fetcher-infrastructure.md`, Atomic Run
+      Acquisition Protocol, step 2, and "Note on trigger-then-disable
+      race condition" below). The disable takes effect for scheduled
+      triggers from the next scheduled cycle.
    - If `enabled` changed to `true`: create the RedBeat entry with the
      effective schedule and time limit options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH).
@@ -480,8 +527,8 @@ and transactions.
 2. `FetcherDeregisteredError` — `FetcherConfig` exists but name not in
    registry.
 3. `FetcherDisabledError` — `FetcherConfig.enabled = false`.
-4. `FetcherAlreadyRunningError` — a non-stale `FetcherRun` with
-   `status = running` exists.
+4. `FetcherAlreadyRunningError` — a non-stale active (`queued` or
+   `running`) `FetcherRun` exists.
 
 **Q3 (behavior)**:
 
@@ -494,25 +541,30 @@ and transactions.
    run), raise `FetcherNotFoundError` (config row is a prerequisite
    for triggering).
 3. Evaluate guards 2–4 in order.
-4. **Stale run handling**: if an active run exists and IS stale (using
-   current `run_timeout + 60`): finalize it per
+4. **Stale run handling**: if an active (`queued` or `running`) run
+   exists and IS stale — evaluated using the threshold matching its
+   own status: Queued Stale Threshold (`created_at`, 600 seconds) if
+   `queued`, Running Stale Threshold (`started_at`, `run_timeout + 60`)
+   if `running` — finalize it per
    `docs/features/platform/fetcher-infrastructure.md` (Stale Run
    Detection) — `status = failure`, specified error message, computed
-   fields. This finalization occurs under the same lock before creating
-   the new run.
+   fields (a stale `queued` run keeps `started_at` and
+   `duration_seconds` `NULL`). This finalization occurs under the same
+   lock before creating the new run.
 5. Create `FetcherRun`:
    - `fetcher_name`: from input
-   - `status`: `running`
+   - `status`: `queued`
    - `triggered_by`: `manual`
    - `triggered_by_user_id`: from input (`user_id`)
-   - `started_at`: `now()`
+   - `started_at`: `NULL` (set only when a worker later adopts the run)
    - All other fields: `null` / zero
 6. Create `FetcherAuditEvent`:
    - `event_type`: `triggered`
    - `fetcher_name`: from input
    - `user_id`: from input
    - `old_value`, `new_value`, `detail`: all `null`
-7. Flush, then commit. The `FetcherRun` and audit event are now durable.
+7. Flush, then commit. The `queued` `FetcherRun` and its `triggered`
+   audit event are now durable.
 8. Close session (releases lock).
 
 ##### Celery Publication (after commit, no lock held)
@@ -529,17 +581,20 @@ and transactions.
 
 ##### Success Path
 
-10. Return the committed `run_id` and confirmation message.
+10. Return the committed `run_id` (status `queued`) and confirmation
+    message.
 
 ##### Publication Failure Path (second transaction)
 
 11. If `apply_async` raises any exception:
     a. Open a new session from `session_factory`.
     b. Attempt a **conditional atomic UPDATE**: `UPDATE FetcherRun SET
-       status = 'failure', finished_at = now(), duration_seconds = ...,
+       status = 'failure', finished_at = now(),
        error_message = ..., error_detail = ..., error_traceback = ...
-       WHERE id = :run_id AND status = 'running'`. If zero rows are
-       affected (the worker already finalized the run — ambiguous
+       WHERE id = :run_id AND status = 'queued'`. `started_at` and
+       `duration_seconds` are not touched by this UPDATE — they remain
+       `NULL`, since the run was never adopted. If zero rows are
+       affected (a worker already adopted the run — ambiguous
        acknowledgement, outcome 2 below): log WARNING and skip to
        step 11g.
     c. The update uses:
@@ -565,22 +620,58 @@ and transactions.
 If the API process is killed (OOM, pod eviction, node failure) after
 step 7 commits but before step 9 executes, `apply_async` never runs and
 the Publication Failure Path never fires. The pre-created `FetcherRun`
-remains at `status = running` with no corresponding Celery task.
+remains at `status = queued` (never adopted) with no corresponding
+Celery task.
 
-This is covered by the same stale run detection mechanism that handles
-worker crashes: after `run_timeout + 60` seconds, the orphaned row is
-finalized by the next trigger attempt or scheduled acquisition. During
-the stale-detection window:
-- Scheduled triggers are silently discarded (non-stale active run).
-- Manual triggers return `409 FETCHER_ALREADY_RUNNING`.
-- `GET /api/v1/fetchers` shows `stale: true` once the threshold is
-  reached, alerting the operator.
+This is covered by the Queued Stale Threshold (600 seconds — see
+`docs/features/platform/fetcher-infrastructure.md`, Stale Run
+Detection): the orphaned row becomes *eligible* for finalization once
+it crosses that threshold, but finalization itself is lazy — it only
+happens when some subsequent acquisition attempt for the same fetcher
+actually runs: the next scheduled acquisition, a manual trigger attempt
+(guard 4, "Stale run handling"), or a `PATCH .../config` request that
+changes `run_timeout` (Run Timeout Active Guard, which evaluates the
+same threshold, and applies regardless of whether the fetcher is
+currently disabled — see below).
 
-This crash scenario is functionally equivalent to the
-"worker dies after accepting the task" case that stale detection is
-designed to cover. The recovery window is bounded by `run_timeout + 60`
-(default ~61 minutes). No additional mechanism (outbox, heartbeat, or
-lease) is introduced.
+**Before** the row crosses the 600-second threshold:
+- Scheduled triggers are silently discarded (active `queued` run) —
+  unless the fetcher is disabled, in which case no scheduled attempt
+  exists at all.
+- Manual triggers return `409 FETCHER_ALREADY_RUNNING` — unless the
+  fetcher is disabled or deregistered, in which case guards 2–3 reject
+  the request before stale handling is ever reached, leaving the
+  orphaned row untouched.
+
+**Once** the row crosses the threshold, the first of the three attempts
+above that actually reaches stale evaluation finalizes it and proceeds:
+a scheduled acquisition marks it `failure` and starts its own run (no
+caller to notify); a manual trigger marks it `failure` and returns
+**202 Accepted** for the new run; a `run_timeout` PATCH marks it
+`failure` under the same guard and applies the configuration change.
+Guards 2–3 still apply first: a **deregistered** fetcher rejects both
+the trigger and the PATCH before stale handling is reached, leaving the
+orphan untouched regardless of staleness. A **disabled** (but still
+registered) fetcher has no scheduled attempt and rejects a manual
+trigger, but a `run_timeout` PATCH is not blocked by the disabled state
+(no such guard exists in `update_fetcher_config`) — it still reaches
+the Run Timeout Active Guard and finalizes the orphan.
+
+Until one of those attempts occurs, `GET /api/v1/fetchers` shows
+`stale: true` once the threshold is reached, alerting the operator
+regardless of the fetcher's enabled/registered state.
+
+This crash scenario is functionally equivalent to the "worker dies
+before adopting the task" case that Queued Stale Detection is designed
+to cover. 600 seconds (10 minutes) is the eligibility threshold, not a
+guaranteed recovery latency: a **deregistered** fetcher has no
+acquisition attempt or PATCH that can trigger finalization (guard 2
+rejects both), so its orphaned `queued` row remains visible as
+active-and-stale (via `stale: true`) until the fetcher is
+re-registered. No additional mechanism (outbox, heartbeat, lease, or
+background reaper) is introduced to bound this further — the
+operator-visible `stale: true` signal is the intended recovery path for
+this residual case.
 
 ##### Ambiguous Broker Acknowledgement
 
@@ -589,31 +680,54 @@ the task (network error after broker acknowledgement), the following
 race can occur:
 
 - The worker receives the task and attempts to adopt the `FetcherRun`
-  via the Atomic Run Acquisition Protocol.
-- Concurrently, step 11 attempts to finalize the same run.
+  via the Atomic Run Acquisition Protocol's conditional UPDATE
+  (`queued -> running`, step 6 of that protocol).
+- Concurrently, step 11 above attempts its own conditional UPDATE
+  (`queued -> failure`).
+
+Both are conditional atomic UPDATEs against the same precondition
+(`WHERE id = :run_id AND status = 'queued'`) on the same `FetcherRun`
+row. PostgreSQL's ordinary row-level locking on `UPDATE` makes this
+race safe without any additional coordination: whichever transaction's
+`UPDATE` commits first changes `status` away from `queued`; the other
+transaction's `UPDATE`, evaluated against the row's now-committed
+state, matches zero rows and is a no-op. No `FetcherConfig` lock is
+needed for this specific race — the row-level lock implicitly acquired
+by each `UPDATE` on the single contended row is the entire
+serialization mechanism. Because the transition is `queued -> running`
+(not a no-op on an already-`running` row, as in the pre-`queued`
+model), this holds regardless of how long the worker has been
+executing by the time step 11 runs — the compensation can only ever
+race the moment of adoption itself, never a moment during or after
+execution.
 
 Two outcomes are possible:
 
-1. **Step 11 wins** (common case): the conditional UPDATE succeeds
-   (run was still `running`). The run is finalized as `failure`. The
-   worker later finds `status != running` during adoption (step 6 of
-   the acquisition protocol) and skips execution — see
+1. **Compensation wins**: the conditional UPDATE in step 11 succeeds
+   (the run was still `queued`). The run is finalized as `failure`.
+   The worker's later adoption attempt finds `status != queued` and
+   skips execution without error — see
    `docs/features/platform/fetcher-infrastructure.md` (Atomic Run
-   Acquisition Protocol, step 6, manual trigger predicate failure).
-2. **Worker wins** (narrow window): the worker completes execution and
-   finalizes the run before step 11's UPDATE executes. The conditional
-   UPDATE affects zero rows (status is already `success`/`failure`/
-   `partial`). Step 11b skips finalization. The API still returns 503
-   because the publication error already occurred — a benign
-   false-negative: the operator sees a 503 but the run executed
+   Acquisition Protocol, step 6, duplicate/already-finalized
+   handling). `BaseFetcher.run()` is never invoked for this run.
+2. **Worker wins**: the worker's adoption UPDATE (`queued -> running`)
+   commits first. Step 11's UPDATE then matches zero rows and is a
+   no-op; the run continues executing and is finalized normally by
+   `BaseFetcher.run()`. The API still returns 503 because the
+   publication error already occurred — a benign false-negative: the
+   operator sees a 503 but the run executes (and may complete)
    successfully. The operator can verify via the run list.
 
-No new database column, status value, or distributed lock is introduced
-to eliminate this race. The residual ambiguity is accepted because:
-- The race window is extremely narrow (network error timing).
-- Both outcomes leave the system in a consistent state.
-- The single-instance invariant is preserved: in outcome 1 the worker
-  skips; in outcome 2 only one execution occurs.
+No new database column, additional status value, or distributed lock
+is introduced to eliminate this race — the `queued` status itself,
+combined with ordinary conditional-UPDATE row locking, is sufficient.
+The residual ambiguity in outcome 2 (a 503 response paired with a run
+that still executes) is accepted because:
+- The race window is extremely narrow (network error timing between
+  broker acknowledgement and the worker's adoption).
+- Both outcomes leave the system in a consistent state — exactly one
+  execution occurs, or none.
+- The single-instance invariant is preserved in both outcomes.
 - The audit trail accurately records what happened.
 - The operator can verify via the run list whether execution occurred.
 
@@ -676,6 +790,7 @@ distinction.
       "custom_settings_count": 0,
       "last_run": {
         "id": "uuid",
+        "created_at": "2025-04-20T11:59:58Z",
         "started_at": "2025-04-20T12:00:00Z",
         "finished_at": "2025-04-20T12:03:45Z",
         "duration_seconds": 225.0,
@@ -702,6 +817,7 @@ distinction.
       "custom_settings_count": 1,
       "last_run": {
         "id": "uuid",
+        "created_at": "2026-01-15T07:59:59Z",
         "started_at": "2026-01-15T08:00:00Z",
         "finished_at": "2026-01-15T08:00:45Z",
         "duration_seconds": 45.0,
@@ -746,12 +862,20 @@ distinction.
 - `custom_settings_count`: number of persisted custom setting keys
   recognized by the current schema (registered) or total JSONB key count
   (deregistered). See service function for counting logic.
-- `last_run`: the most recent `FetcherRun` record (by `started_at DESC,
+- `last_run`: the most recent `FetcherRun` record (by `created_at DESC,
   id DESC`), or `null` if never run. Includes runs with
-  `status = running`.
-  - For active runs: `finished_at = null`, `duration_seconds = null`.
-  - `stale`: `true` when `status = running` and elapsed time exceeds
-    `run_timeout + 60`.
+  `status IN ('queued', 'running')`.
+  - `created_at`: when the run was accepted (manual) or created
+    (scheduled). Always non-`null`.
+  - `started_at`: when a worker adopted the run. `null` while
+    `status = queued`.
+  - For a `queued` or `running` run: `finished_at = null`,
+    `duration_seconds = null`.
+  - `stale`: `true` when the run's elapsed time exceeds the threshold
+    for its own status — `now() - created_at > 600` for `queued`,
+    `now() - started_at > run_timeout + 60` for `running` (see
+    `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+    Detection). Always `false` for a terminal status.
   - `triggered_by_user`: User Reference Object when `triggered_by` is
     `manual` AND the caller has `manage_fetchers`. Otherwise `null`.
   - `error_message`: sanitized public message (never contains raw
@@ -782,14 +906,17 @@ Returns paginated run history for a specific fetcher.
 |---|---|---|---|
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max 100) |
-| `status` | string | — | Filter by status (`success`, `failure`, `partial`, `running`) |
-| `from_date` | datetime | — | Filter runs started on or after this datetime |
-| `to_date` | datetime | — | Filter runs started on or before this datetime |
+| `status` | string | — | Filter by status (`queued`, `running`, `success`, `failure`, `partial`) |
+| `from_date` | datetime | — | Filter runs accepted/created on or after this datetime |
+| `to_date` | datetime | — | Filter runs accepted/created on or before this datetime |
 
-**Sorting**: fixed `started_at DESC, id DESC` (most recent first).
+**Sorting**: fixed `created_at DESC, id DESC` (most recent first).
 Client-controlled sorting is not supported — run history has a single
 natural chronological ordering, and the deterministic `id` tiebreaker
-ensures stable pagination.
+ensures stable pagination. Ordering (and the `from_date`/`to_date`
+filters above) uses `created_at` rather than `started_at` so that a
+`queued` run — whose `started_at` is `null` until worker adoption —
+still appears in its correct chronological position.
 
 **Response** (200 OK):
 
@@ -799,6 +926,7 @@ ensures stable pagination.
     {
       "id": "uuid",
       "fetcher_name": "sync_nvd_cves",
+      "created_at": "2025-04-20T11:59:58Z",
       "started_at": "2025-04-20T12:00:00Z",
       "finished_at": "2025-04-20T12:03:45Z",
       "duration_seconds": 225.0,
@@ -826,11 +954,15 @@ ensures stable pagination.
   (`{"id": "uuid", "username": "...", "full_name": "...", "active": bool}`)
   when `triggered_by` is `manual` AND the caller has `manage_fetchers`.
   Otherwise `null`
-- For runs with `status = running`: `finished_at = null`,
+- For a run with `status = queued`: `started_at = null`,
+  `finished_at = null`, `duration_seconds = null`
+- For a run with `status = running`: `finished_at = null`,
   `duration_seconds = null`
-- `stale`: `true` when `status = running` and elapsed time exceeds the
-  fetcher's `run_timeout + 60` (from `FetcherConfig.run_timeout`, which
-  always exists for any fetcher that has runs)
+- `stale`: `true` when the run's elapsed time exceeds the threshold for
+  its own status — `now() - created_at > 600` for `queued`,
+  `now() - started_at > run_timeout + 60` for `running` (from
+  `FetcherConfig.run_timeout`, which always exists for any fetcher that
+  has runs). Always `false` for a terminal status
 
 **Error responses**:
 
@@ -856,6 +988,7 @@ Returns full detail for a single run.
   "data": {
     "id": "uuid",
     "fetcher_name": "sync_nvd_cves",
+    "created_at": "2025-04-20T11:59:58Z",
     "started_at": "2025-04-20T12:00:00Z",
     "finished_at": "2025-04-20T12:03:45Z",
     "duration_seconds": 225.0,
@@ -885,7 +1018,10 @@ defined in the fetcher registry response), the run detail view can link
 to `GET /api/v1/cve-sources?source={cve_source_type}&status=failure&from_date={started_at}&to_date={finished_at}`
 to show individual CVEs that failed during the run. For runs still in
 `running` status, omit `to_date` for a live view of accumulated
-failures. See `docs/features/tickets/cve-service.md` (Global CVE Source
+failures. If `started_at` is `null` (a `queued` run finalized as
+`failure` before any worker adopted it, or a run still `queued`), omit
+this drill-down entirely — no execution window exists to query. See
+`docs/features/tickets/cve-service.md` (Global CVE Source
 Listing).
 
 **Error responses**:
@@ -950,6 +1086,15 @@ endpoint.
         "items_updated": 20,
         "items_failed": 0,
         "status": "running"
+      },
+      {
+        "run_id": "uuid",
+        "timestamp": "2025-04-20T12:05:00Z",
+        "duration_seconds": null,
+        "items_created": 0,
+        "items_updated": 0,
+        "items_failed": 0,
+        "status": "queued"
       }
     ],
     "disabled_periods": [
@@ -966,21 +1111,25 @@ endpoint.
 
 **Fields**:
 - `points[].run_id`: UUID of the `FetcherRun` record
-- `points[].timestamp`: `started_at` of the `FetcherRun`. Named
-  `timestamp` (not `started_at`) as a deliberate chart-axis alias — the
+- `points[].timestamp`: `created_at` of the `FetcherRun` — not
+  `started_at`, so a `queued` point (whose `started_at` is `null`) is
+  still placed at its correct chronological position. Named
+  `timestamp` (not `created_at`) as a deliberate chart-axis alias — the
   chart consumer interprets this as "the x-axis value" without needing to
   know the underlying column name
-- `points[].status`: `success`, `failure`, `partial`, or `running`
-- `points[].duration_seconds`: actual duration. `null` for runs with
-  `status = running`
+- `points[].status`: `queued`, `running`, `success`, `failure`, or
+  `partial`
+- `points[].duration_seconds`: actual execution duration. `null` for
+  runs with `status IN ('queued', 'running')`, and for any run whose
+  `started_at` is `null`
 - `points[].items_created/updated/failed`: actual counts
 - `disabled_periods`: derived from `FetcherAuditEvent` records (see
   Disabled Period Derivation). `disabled_by` / `enabled_by` are `null`
   without `manage_fetchers`, User Reference Objects with it
 
-**Sorting**: fixed chronological order (`timestamp ASC, run_id ASC`).
-Client-controlled sorting is not supported — chart data must be in
-chronological order.
+**Sorting**: fixed chronological order (`timestamp ASC, run_id ASC`,
+i.e. `created_at ASC, id ASC`). Client-controlled sorting is not
+supported — chart data must be in chronological order.
 
 **Error responses**:
 
@@ -1013,6 +1162,11 @@ Enqueues a manual run of the specified fetcher. Delegates to
 }
 ```
 
+The returned `run_id` identifies a `FetcherRun` already committed with
+`status = queued`. It transitions to `running` once a worker adopts it
+— see `docs/features/platform/fetcher-infrastructure.md` (Concurrency
+Control).
+
 **Progress tracking**: poll run status via
 `GET /api/v1/fetchers/{fetcher_name}/runs/{run_id}` using the returned
 `run_id`.
@@ -1024,21 +1178,28 @@ Enqueues a manual run of the specified fetcher. Delegates to
 | 404 | `FETCHER_NOT_FOUND` | No fetcher with this name exists |
 | 409 | `FETCHER_DEREGISTERED` | Fetcher exists in DB but code removed |
 | 409 | `FETCHER_DISABLED` | Fetcher is disabled |
-| 409 | `FETCHER_ALREADY_RUNNING` | A non-stale run is active. If the active run is stale, it is finalized and the new run proceeds (returns 202) |
-| 503 | `CELERY_UNAVAILABLE` | Task broker unavailable — run record marked as failed |
+| 409 | `FETCHER_ALREADY_RUNNING` | A non-stale active (`queued` or `running`) run exists. If the active run is stale, it is finalized and the new run proceeds (returns 202) |
+| 503 | `CELERY_UNAVAILABLE` | Task broker unavailable — run record marked as failed only if it had not already been adopted by a worker (see "Ambiguous Broker Acknowledgement" under `trigger_fetcher`) |
 
-**503 response body**: uses a fixed sanitized detail message. Raw broker
-exception details are stored only in the `FetcherRun.error_detail` and
-`error_traceback` fields (visible only with `manage_fetchers` via run
-detail endpoint). The 503 response MUST NOT contain hostname, IP, port,
-Redis URL, socket path, or traceback information.
+**503 response body**: uses a fixed sanitized detail message
+(`"Manual run could not be dispatched to the task broker"`). The
+`FetcherRun.error_detail` field (visible only with `manage_fetchers` via
+the run detail endpoint) stores only the broker exception's class name
+(e.g., `"OperationalError"`) — never the exception's string
+representation, which routinely contains hostname, IP, port, a Redis
+URI, or credentials. `error_traceback` is always `NULL` for this failure
+path — a traceback's final line reproduces the same unsafe exception
+string. The 503 response itself carries none of this: it MUST NOT
+contain hostname, IP, port, Redis URL, socket path, or traceback
+information under any caller capability.
 
 **Note on trigger-then-disable race condition**: if an admin triggers a
 fetcher (passing the enabled check) and another admin disables the
 fetcher before the Celery worker picks up the task, the `run_fetcher`
 task wrapper detects the disabled state during the acquisition protocol
-(step 2) and finalizes the pre-created `FetcherRun` as `failure`. See
-`fetcher-infrastructure.md`, "Atomic Run Acquisition Protocol" step 2.
+(step 2) and attempts a conditional `queued -> failure` transition on
+the pre-created `FetcherRun`. See `fetcher-infrastructure.md`, "Atomic
+Run Acquisition Protocol" step 2.
 
 **Note on on-demand CVE fetch**: when Sentinel encounters an unknown
 CVE-ID during ticket creation or CVE association, it triggers on-demand
@@ -1340,6 +1501,7 @@ sync_nvd_cves              yes       2026-04-27 12:00 UTC  running (1m 30s elaps
 sync_smelt_products        yes       2026-04-26 06:00 UTC  success (45s)                —
 detect_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
 sync_ibs_requests          yes       2026-04-27 02:30 UTC  success (2m 15s)             2 custom
+sync_redhat_cves           yes       2026-04-27 12:10 UTC  queued (5s elapsed)          —
 
 Deregistered (historical data only):
 Name                       Last Run              Status
@@ -1363,29 +1525,40 @@ exist. If there are none, the section is omitted.
 
 **Status column** (applies to both registered and deregistered):
 
-1. If a `FetcherRun` with `status = running` exists:
-   - Show `running ({elapsed} elapsed)` where elapsed is calculated
-     from `started_at` relative to now.
+1. If a `FetcherRun` with `status = queued` exists:
+   - Show `queued ({elapsed} elapsed)` where elapsed is calculated
+     from `created_at` relative to now.
    - Elapsed formatting: `Xs` for <60s, `Xm Ys` for <60m,
      `Xh Ym` for >=60m. Always rounded down to the nearest whole unit.
-   - If elapsed exceeds `run_timeout + 60` (the stale threshold),
-     append `, stale?` — e.g., `running (1h 2m elapsed, stale?)`.
+   - If elapsed exceeds 600 seconds (the Queued Stale Threshold —
+     see `docs/features/platform/fetcher-infrastructure.md`, Stale Run
+     Detection), append `, stale?` — e.g., `queued (11m 2s elapsed, stale?)`.
+2. Else if a `FetcherRun` with `status = running` exists:
+   - Show `running ({elapsed} elapsed)` where elapsed is calculated
+     from `started_at` relative to now.
+   - Elapsed formatting: same rules as above.
+   - If elapsed exceeds `run_timeout + 60` (the Running Stale
+     Threshold), append `, stale?` — e.g., `running (1h 2m elapsed, stale?)`.
      Uses `FetcherConfig.run_timeout` (which always exists for any
      fetcher that has runs).
-2. If no running record exists but completed runs exist: show the
-   status of the most recent `FetcherRun` (by `started_at DESC,
-   id DESC`) with its duration:
+3. Else if any `FetcherRun` records exist: show the status of the most
+   recent `FetcherRun` (by `created_at DESC, id DESC` — not
+   `started_at`, so a `queued -> failure` pre-adoption run, whose
+   `started_at` is `NULL`, is still correctly ordered) with its
+   duration:
    - `success (Xm Ys)`, `failure (Xm Ys)`, `partial (Xm Ys)`
    - Duration formatting uses the same rules as elapsed.
-   - For `failure` without `duration_seconds`: show `failure` alone.
-3. If no `FetcherRun` records exist: show `never run`.
+   - For `failure` without `duration_seconds` (including a
+     `queued -> failure` pre-adoption failure): show `failure` alone.
+4. If no `FetcherRun` records exist: show `never run`.
 
 **Enabled column** (registered fetchers only): reads from
 `FetcherConfig.enabled`. If no `FetcherConfig` record exists, defaults
 to `yes`.
 
-**Last Run column**: `started_at` in `YYYY-MM-DD HH:MM UTC` format.
-`—` if no runs exist.
+**Last Run column**: `created_at` in `YYYY-MM-DD HH:MM UTC` format —
+not `started_at`, so a `queued` run (whose `started_at` is `NULL`) is
+still displayed. `—` if no runs exist.
 
 **Idempotency**: Idempotent. Read-only command; safe to re-run.
 

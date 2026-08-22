@@ -1462,16 +1462,18 @@ Beat, and API server).
 Records every execution of a fetcher. Primary data source for the fetcher
 dashboard charts. Records are retained indefinitely (no retention policy).
 Growth rate is approximately 20,000 rows per year. See
-`docs/features/platform/fetcher-infrastructure.md` for full specification.
+`docs/features/platform/fetcher-infrastructure.md` for full specification,
+including the full lifecycle state machine and the timestamp semantics
+summarized below.
 
 | Column               | Type        | Constraints              | Description                        |
 |----------------------|-------------|--------------------------|-------------------------------------|
 | id                   | UUID        | PK                       | Internal identifier                |
 | fetcher_name         | VARCHAR(100) | FK(fetcher_config.fetcher_name) ON DELETE RESTRICT, NOT NULL | Fetcher identifier (matches `BaseFetcher.name`) |
-| started_at           | TIMESTAMPTZ   | NOT NULL                 | When the run started               |
-| finished_at          | TIMESTAMPTZ   | nullable                 | When the run ended (NULL while running) |
-| duration_seconds     | FLOAT       | nullable                 | `finished_at - started_at` in seconds |
-| status               | VARCHAR(20) | NOT NULL                 | FetcherRunStatus: `running`, `success`, `failure`, `partial` |
+| started_at           | TIMESTAMPTZ   | nullable                 | When a worker adopted the run and began executing it. `NULL` while `status = queued`, and remains `NULL` if the run is finalized as `failure` without ever being adopted |
+| finished_at          | TIMESTAMPTZ   | nullable                 | When the run reached a terminal status (`success`, `failure`, `partial`). `NULL` while `status` is `queued` or `running` |
+| duration_seconds     | FLOAT       | nullable                 | Execution duration: `finished_at - started_at`. `NULL` whenever `started_at` is `NULL` (queued, or failed before adoption) — never queue wait time |
+| status               | VARCHAR(20) | NOT NULL                 | FetcherRunStatus: `queued`, `running`, `success`, `failure`, `partial` |
 | items_created        | INTEGER     | NOT NULL, DEFAULT 0      | New records created                |
 | items_updated        | INTEGER     | NOT NULL, DEFAULT 0      | Existing records updated           |
 | items_failed         | INTEGER     | NOT NULL, DEFAULT 0      | Items that failed processing       |
@@ -1481,12 +1483,34 @@ Growth rate is approximately 20,000 rows per year. See
 | triggered_by         | VARCHAR(20) | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written when the final run status is `success` or `partial`; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
-| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp          |
+| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp — for a manual run, this is also the moment the trigger was accepted and the run entered `queued` |
 
 **Indexes**:
 
-- (fetcher_name, started_at) — composite index supporting timeline
-  queries at any date range.
+- (fetcher_name, started_at) — composite index supporting execution-time
+  queries: cursor lookup (last `success`/`partial` run) and any query
+  that requires a populated `started_at`.
+- (fetcher_name, created_at) — composite index supporting history,
+  filtering, and timeline queries that must include `queued` runs
+  (whose `started_at` is `NULL`) in chronological order. See
+  `docs/features/platform/fetcher-infrastructure.md` (Data Model —
+  FetcherRun) for which query uses which index.
+
+**Lifecycle state machine** (full detail in
+`docs/features/platform/fetcher-infrastructure.md`, Concurrency
+Control):
+
+```text
+manual creation   -> queued
+queued            -> running   (worker adoption)
+queued            -> failure   (stale, disabled, deregistered, or publication failure)
+scheduled creation -> running
+running           -> success | partial | failure
+```
+
+No transition originates from a terminal status (`success`, `failure`,
+`partial`). `queued` is manual-only — scheduled runs are always created
+directly as `running`.
 
 #### FetcherRunStatus Enum
 
@@ -1496,7 +1520,8 @@ requires an Alembic migration.
 
 | Value | Description |
 |-------|-------------|
-| `running` | Fetcher is currently executing |
+| `queued` | Manual run accepted and persisted; not yet adopted by a worker |
+| `running` | A worker has atomically adopted the run and is currently executing it |
 | `success` | Fetcher completed with no errors |
 | `failure` | Fetcher failed (unrecoverable error) |
 | `partial` | Fetcher completed but some items failed processing |
