@@ -1254,10 +1254,15 @@ present in the schema output.
 ### Runtime Configuration Snapshot
 
 The `run_fetcher` task wrapper creates an immutable runtime
-configuration snapshot from the locked `FetcherConfig` row during the
-acquisition transaction (see "Concurrency Control", step 3). This
-snapshot is passed to `BaseFetcher.run()` as the `config` parameter
-and is available to `execute()` via `self.config`.
+configuration snapshot during the acquisition transaction (see
+"Concurrency Control", step 3). Most fields are read from the locked
+`FetcherConfig` row; `run_timeout` is populated with the effective
+hard time limit extracted from the Celery request headers (see
+"Per-Run Hard Time Limit" in "Stale Run Detection") so that all
+downstream consumers — error sanitization, internal timeout budgets —
+use the limit of the specific delivery, not the live configuration.
+This snapshot is passed to `BaseFetcher.run()` as the `config`
+parameter and is available to `execute()` via `self.config`.
 
 The snapshot is a plain Python object (not an ORM model) that contains:
 
@@ -1265,7 +1270,7 @@ The snapshot is a plain Python object (not an ORM model) that contains:
 |---|---|---|
 | `fetcher_name` | `str` | `FetcherConfig.fetcher_name` |
 | `enabled` | `bool` | `FetcherConfig.enabled` |
-| `run_timeout` | `int` | `FetcherConfig.run_timeout` |
+| `run_timeout` | `int` | Effective hard time limit from Celery request (persisted as `FetcherRun.hard_time_limit_seconds`) |
 | `request_delay` | `float` | `FetcherConfig.request_delay` |
 | `custom_settings` | `dict` | `FetcherConfig.custom_settings` (JSONB) |
 | `schedule_override` | `str | None` | `FetcherConfig.schedule_override` |
@@ -1816,6 +1821,26 @@ point through which every current and future fetcher's `execute()`
 (and any `fetch_single()` call made from within it) runs, so disposal
 here automatically protects all of them; individual fetchers MUST NOT
 dispose the engine themselves.
+
+**Hard time limit extraction**: before invoking the async workflow, the
+synchronous task wrapper extracts the effective hard time limit from
+`self.request.timelimit`. Celery 5.x transmits per-message time limits
+in the message headers as a two-element sequence `[hard, soft]`; the
+worker populates `request.timelimit` from this header. The task reads
+the first element as the hard limit. Validation rules:
+
+- The value must be present and not `None`.
+- It must be a positive number coercible to `int` (Celery transmits
+  limits set via `apply_async(time_limit=...)` as-is; they are
+  typically `int` but may arrive as `float`).
+- After coercion it must be in the range [60, 604800].
+
+If validation fails, the task logs ERROR and raises `ValueError`
+before any database or registry operation — no `FetcherRun` is
+created, adopted, or finalized, and no fetcher code executes. The
+validated integer value is passed to the async workflow as an explicit
+parameter (`hard_time_limit`), alongside the existing `fetcher_name`,
+`triggered_by`, `user_id`, and `run_id` arguments.
 
 **No top-level retry**: `run_fetcher` does not configure
 `max_retries` or call `self.retry()`. Failures result in a permanent
@@ -3011,9 +3036,12 @@ transaction owned by the `run_fetcher` task wrapper):
    `request_delay`, `custom_settings`, and `schedule_override` from
    the locked `FetcherConfig` row. Construct an immutable, detached
    runtime configuration object (see "Runtime Configuration Snapshot"
-   below). This snapshot is used by `BaseFetcher.run()` for the
-   remainder of the execution — no further database reads of
-   `FetcherConfig` occur.
+   below). The snapshot's `run_timeout` field is populated with the
+   effective hard time limit extracted from the Celery request (see
+   "Per-Run Hard Time Limit" in "Stale Run Detection") — not from the
+   `FetcherConfig.run_timeout` column. This snapshot is used by
+   `BaseFetcher.run()` for the remainder of the execution — no further
+   database reads of `FetcherConfig` occur.
 
 4. **Query active runs**: query `FetcherRun` where
    `fetcher_name = <name>` AND `status IN ('queued', 'running')`.
@@ -3029,8 +3057,10 @@ transaction owned by the `run_fetcher` task wrapper):
 
 5. **Evaluate active runs** (staleness is evaluated per the active
    row's own status — Queued Stale Threshold from `created_at` if
-   `queued`, Running Stale Threshold from `started_at` if `running`;
-   see "Stale Run Detection"):
+   `queued`, Running Stale Threshold from `started_at` using the row's
+   own `hard_time_limit_seconds` if `running` — falling back to the
+   locked `FetcherConfig.run_timeout` when the column is `NULL` for
+   historical rows; see "Stale Run Detection"):
    - **No active run**: continue to step 6.
    - **Active run exists and is NOT stale**:
      - Scheduled trigger: discard silently (log INFO, no `FetcherRun`
@@ -3056,14 +3086,16 @@ transaction owned by the `run_fetcher` task wrapper):
 6. **Acquire or adopt the run record**:
    - **Scheduled trigger** (`run_id` is `None`): INSERT a new
      `FetcherRun` with `status = running`, `triggered_by = schedule`,
-     `started_at = now()`. The new row is visible to subsequent
-     lock-holders after commit.
+     `started_at = now()`, `hard_time_limit_seconds = <effective_limit>`
+     (the validated hard time limit from the Celery request). The new
+     row is visible to subsequent lock-holders after commit.
    - **Manual trigger** (`run_id` is provided): attempt a
      **conditional atomic UPDATE**:
 
      ```sql
      UPDATE fetcher_run
-     SET status = 'running', started_at = :now
+     SET status = 'running', started_at = :now,
+         hard_time_limit_seconds = :effective_limit
      WHERE id = :run_id
        AND fetcher_name = :fetcher_name
        AND status = 'queued'
@@ -3135,21 +3167,24 @@ The distinction is:
 
 Two distinct stale conditions exist — one for each active status — using
 different time bases and thresholds. Both are always active for every
-fetcher; neither is configurable per fetcher beyond `run_timeout` itself
-(which only affects the `running` threshold).
+fetcher; neither is configurable per fetcher beyond the per-run effective
+hard time limit (which only affects the `running` threshold).
 
 ### Running Stale Threshold
 
 A run is considered stale in `running` status when it has been running
-(elapsed from `started_at`) for longer than `run_timeout + 60` seconds
-(the **Running Stale Threshold**). The 60-second margin is a hardcoded
-constant (not configurable). It ensures that the hard time limit
-(`time_limit = run_timeout`) has had time to terminate the process
-before a new run is started — guaranteeing the single-instance
-invariant even if the soft time limit was not honored. The default
-`run_timeout` is 3600 (1 hour), yielding a threshold of 3660 seconds.
-The minimum allowed `run_timeout` is 60 seconds (threshold: 120s); the
-maximum is 604800 seconds (7 days, threshold: 604860s).
+(elapsed from `started_at`) for longer than
+`hard_time_limit_seconds + 60` seconds (the **Running Stale
+Threshold**), where `hard_time_limit_seconds` is the effective Celery
+hard time limit persisted on the `FetcherRun` row at adoption time (see
+"Per-Run Hard Time Limit" below). The 60-second margin is a hardcoded
+constant (not configurable). It ensures that the hard time limit has had
+time to terminate the process before a new run is started — guaranteeing
+the single-instance invariant even if the soft time limit was not
+honored. The default `run_timeout` is 3600 (1 hour), yielding a typical
+threshold of 3660 seconds. The minimum allowed `run_timeout` is 60
+seconds (threshold: 120s); the maximum is 604800 seconds (7 days,
+threshold: 604860s).
 
 When a `running` run is detected as stale (by the Celery task, the API
 trigger endpoint, or the PATCH config endpoint's Run Timeout Active
@@ -3157,7 +3192,8 @@ Guard), it is resolved by updating the stale `FetcherRun` record:
 
 - `status` → `failure`
 - `error_message` → `"Marked as stale (running for {elapsed}s, timeout
-  {timeout}s)"`
+  {timeout}s)"` (where `{timeout}` is the run's own
+  `hard_time_limit_seconds`)
 - `finished_at` → `now()`
 - `duration_seconds` → calculated from `started_at`
 
@@ -3165,7 +3201,7 @@ An application-level log message is emitted:
 
 ```
 logger.warning("Marking stale run %s for '%s' as failure (running since %s, timeout %ds)",
-               run_id, fetcher_name, started_at, run_timeout)
+               run_id, fetcher_name, started_at, hard_time_limit_seconds)
 ```
 
 Stale run detection in `running` status is a recovery mechanism for
@@ -3176,40 +3212,83 @@ when a worker shuts down gracefully, active tasks are revoked and their
 handler.
 
 **Relationship to hard time limit**: the Running Stale Threshold is
-intentionally set ABOVE the hard time limit (`run_timeout + 60 > run_timeout`).
-This ensures that when stale detection triggers, the process is
-already dead (killed by the hard limit at `run_timeout`). The stale
-detection mechanism therefore never needs to kill or revoke a task —
-it only cleans up the orphaned database record left behind by a
-force-killed process.
+intentionally set ABOVE the hard time limit
+(`hard_time_limit_seconds + 60 > hard_time_limit_seconds`). This ensures
+that when stale detection triggers, the process is already dead (killed
+by the hard limit). The stale detection mechanism therefore never needs
+to kill or revoke a task — it only cleans up the orphaned database
+record left behind by a force-killed process.
 
-This invariant requires the effective `run_timeout` to never decrease
-while an **active** run (`queued` or `running`) exists for the fetcher —
-not `running` alone. A manual run's Celery task has its `time_limit`
-fixed at publication time, while it is still `queued`; if `run_timeout`
-could be lowered during that window, the Running Stale Threshold
-evaluated after adoption would use the new, smaller value against a
-process still executing under the old, larger hard limit, potentially
-declaring it stale — and starting a second execution — while it is
-still alive. The `update_fetcher_config()` Run Timeout Active Guard
-(`docs/features/platform/fetcher-operations.md`) enforces this for the
-manual path by rejecting a `run_timeout` change while any non-stale
-active (`queued` or `running`) `FetcherRun` row exists.
+This invariant is guaranteed by persisting the effective hard time limit
+on the `FetcherRun` row itself (see "Per-Run Hard Time Limit" below).
+Stale evaluation always reads the per-run value when available. For
+historical `running` rows where `hard_time_limit_seconds` is `NULL`
+(predating the column), stale evaluation falls back to the fetcher's
+current `FetcherConfig.run_timeout` — an approximation that may be
+inexact if the config was changed since the run started, but is the
+best available signal and preferable to treating the row as
+permanently non-stale (which would block the fetcher's single-instance
+slot indefinitely). Subsequent configuration changes cannot produce a
+divergence for newly adopted runs because their persisted value is
+immutable.
 
-**Known limitation — scheduled dispatch window**: a scheduled trigger
-has no `FetcherRun` row between the moment Celery Beat publishes the
-task and the moment a worker adopts it (see "Atomic Run Acquisition
-Protocol", step 6 — a scheduled trigger only INSERTs a row at
-adoption). During that window the guard's query finds no active row
-and does not block a `run_timeout` decrease; the RedBeat entry keeps
-dispatching under the old `time_limit` fixed at the previous PATCH (or
-the last successful propagation) until the change is picked up. A
-`run_timeout` decrease accepted during this window can reproduce the
-same divergence described above once the task is later adopted and
-runs long enough to cross the new, smaller Running Stale Threshold
-while still executing under the old, larger hard limit. This residual
-risk is currently not covered by the Run Timeout Active Guard, which
-protects the manual/`queued` path only.
+**Manual path protection (Active Guard)**: the
+`update_fetcher_config()` Run Timeout Active Guard
+(`docs/features/platform/fetcher-operations.md`) remains as defense-in-
+depth for the manual path: it rejects a `run_timeout` change while any
+non-stale active (`queued` or `running`) `FetcherRun` row exists. A
+`queued` manual run has no persisted hard limit yet (the column is
+`NULL` until adoption), so the guard prevents the live value from
+changing before the run is adopted and the limit is captured.
+
+**Scheduled path protection (per-run persistence)**: a scheduled
+trigger has no `FetcherRun` row between the moment Celery Beat
+publishes the task and the moment a worker adopts it (see "Atomic Run
+Acquisition Protocol", step 6). During that window the Active Guard's
+query finds no active row and does not block a `run_timeout` decrease.
+However, the single-instance invariant is preserved because the worker
+persists the effective hard limit received from the Celery request
+headers at the moment of adoption — not the live
+`FetcherConfig.run_timeout`. A `run_timeout` decrease accepted during
+this window only affects future publications; the already-dispatched
+task's stale threshold is evaluated against its own persisted limit.
+
+### Per-Run Hard Time Limit
+
+Every `FetcherRun` adopted by a worker carries a
+`hard_time_limit_seconds` value — the effective Celery hard time limit
+under which the worker process executes. This value is:
+
+- **Extracted** from `self.request.timelimit` in the bound `run_fetcher`
+  task (see "Celery Integration" above). Celery 5.x transmits the per-
+  message time limit as a two-element list in the message headers:
+  `[hard_limit, soft_limit]`. The task reads `self.request.timelimit`
+  which is set to this value by the worker request machinery.
+- **Validated**: must be a positive integer (or integer-coercible
+  numeric) in the range [60, 604800]. A missing, `None`, non-numeric,
+  zero, or negative value indicates a configuration or infrastructure
+  error and causes an immediate task failure (log ERROR, raise
+  `ValueError`) before any database operation — no `FetcherRun` is
+  created or adopted.
+- **Persisted atomically** on the `FetcherRun` row at the same moment
+  the row is created (scheduled trigger, step 6) or adopted (manual
+  trigger, step 6). The value is immutable after persistence — it is
+  never updated by subsequent configuration changes.
+- **Used** for:
+  - Running Stale Threshold evaluation (`hard_time_limit_seconds + 60`)
+  - Stale-run finalization message (`"timeout {timeout}s"`)
+  - `SoftTimeLimitExceeded` error sanitization message
+  - The `stale` field in API responses for `running` runs
+- **NULL** for runs that are never adopted (`queued` rows finalized as
+  `failure` without execution) and for historical rows that predate
+  this column. Historical rows with a NULL value use the runtime
+  fallback defined in the Running Stale Threshold section.
+
+The runtime configuration snapshot (`FetcherRunConfig`) passed to
+`BaseFetcher.run()` carries the per-run `hard_time_limit_seconds` as
+its `run_timeout` field, so all downstream consumers (error
+sanitization, internal timeout budgets) use the effective limit of the
+specific delivery.
 
 ### Queued Stale Threshold
 
@@ -3279,6 +3358,7 @@ the dashboard charts.
 | error_traceback | TEXT | nullable | Full Python traceback (`manage_fetchers` capability required for visibility) |
 | triggered_by | VARCHAR(20) | NOT NULL | `schedule`, `manual` |
 | triggered_by_user_id | UUID | FK(user.id), nullable | User who triggered the run (only for `manual`) |
+| hard_time_limit_seconds | INTEGER | nullable | The effective Celery hard time limit (in seconds) under which the worker executes this run. Persisted atomically at adoption (scheduled INSERT or manual `queued -> running` UPDATE). `NULL` while `status = queued` (not yet adopted), for runs finalized as `failure` without adoption, and for historical rows that predate this column. Used for Running Stale Threshold evaluation, stale finalization message, and `SoftTimeLimitExceeded` diagnostics. Not exposed via the API |
 | cursor | JSONB | nullable | Fetcher-defined checkpoint for the next run. Generic: may contain a commit SHA, timestamp, offset, page token, or any structured cursor. Written when the final run status is `success` or `partial`; read by the next run to determine the starting point. See `docs/features/platform/git-fetcher-infrastructure.md` (Cursor Persistence) for the git-specific usage pattern |
 | created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp — for a manual run, this is also the moment the trigger was accepted and the run entered `queued` |
 
@@ -3408,25 +3488,35 @@ The bootstrap routine:
   (see "Celery Beat Schedule Synchronization — Runtime Propagation"
   above).
 - `run_timeout` serves three purposes:
-  1. **Celery hard time limit** (`time_limit`): the Celery task's
-     `time_limit` is set to `max(5, run_timeout)`. If the task exceeds
-     this duration, the worker forcibly terminates the process (SIGKILL).
-     This is the absolute ceiling — the task is guaranteed dead at
-     this point. The `max(5, ...)` is a safety net: Celery treats
-     `time_limit=0` as "disabled" (Python truthiness), so a direct-DB
-     bypass with `run_timeout=0` would otherwise lose the hard-kill
-     backstop. With the minimum valid `run_timeout` of 60, the safety
-     net never activates in practice.
+   1. **Celery hard time limit** (`time_limit`): the Celery task's
+      `time_limit` is set to `max(5, run_timeout)`. If the task exceeds
+      this duration, the worker forcibly terminates the process (SIGKILL).
+      This is the absolute ceiling — the task is guaranteed dead at
+      this point. The `max(5, ...)` is a safety net for direct-DB
+      bypasses: Celery treats `time_limit=0` as "disabled" (Python
+      truthiness). With the minimum valid `run_timeout` of 60 (enforced
+      by API validation), the safety net never activates in normal
+      operation. Note: if a direct-DB bypass sets `run_timeout` below
+      60, the dispatched `time_limit` will be below the worker-side
+      validation range ([60, 604800]) enforced by the hard time limit
+      extraction (see "Per-Run Hard Time Limit" in "Stale Run
+      Detection") — the worker will reject the task with an immediate
+      `ValueError` rather than executing it. This is intentional: a
+      fail-fast rejection is preferable to silently executing under an
+      invalid timeout.
   2. **Celery soft time limit** (`soft_time_limit`): set to
      `max(1, floor(run_timeout × 0.95))`. When reached, Celery raises
      `SoftTimeLimitExceeded` in the task context. This gives the task
      a grace window (5% of `run_timeout`) to finalize the `FetcherRun`
      record cleanly before the hard kill.
-  3. **Stale run detection threshold**: a `FetcherRun` record is
-     considered stale if it has been in `running` status for longer
-     than `run_timeout + 60` seconds. The 60-second margin accounts
-     for clock skew in multi-node deployments (the process is
-     guaranteed dead at `run_timeout` by the hard limit).
+   3. **Stale run detection basis**: `run_timeout` determines the
+      Celery hard time limit dispatched with each task. The actual
+      stale-detection threshold for a `running` row is evaluated
+      against the per-run `FetcherRun.hard_time_limit_seconds` column
+      (the effective limit persisted at adoption — see "Stale Run
+      Detection", "Per-Run Hard Time Limit"). `FetcherConfig.run_timeout`
+      is the *source* of the dispatched value, not the value read at
+      stale-evaluation time.
   All three mechanisms are always active (API validation guarantees
   `run_timeout >= 60`). The default of 3600 seconds (1 hour) applies
   when a `FetcherConfig` record is auto-created for a newly registered

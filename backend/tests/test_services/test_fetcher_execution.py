@@ -34,6 +34,8 @@ from app.services.fetcher_execution import (
     FetcherConfigMissingError,
     acquire_fetcher_run,
     finalize_manual_run_as_failure,
+    is_run_stale,
+    resolve_effective_hard_limit,
 )
 
 
@@ -43,6 +45,183 @@ def _service_log_text(caplog: pytest.LogCaptureFixture) -> str:
         for record in caplog.records
         if record.name == "app.services.fetcher_execution"
     )
+
+
+# ---------------------------------------------------------------------------
+# Pure calculation unit tests: resolve_effective_hard_limit / is_run_stale
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestResolveEffectiveHardLimit:
+    def test_prefers_persisted_value(self) -> None:
+        assert resolve_effective_hard_limit(1800, 3600) == 1800
+
+    def test_falls_back_when_none(self) -> None:
+        assert resolve_effective_hard_limit(None, 3600) == 3600
+
+
+@pytest.mark.unit
+class TestIsRunStale:
+    def test_terminal_status_is_never_stale(self) -> None:
+        now = datetime.now(UTC)
+        assert (
+            is_run_stale(
+                status="success",
+                created_at=now - timedelta(hours=10),
+                started_at=now - timedelta(hours=10),
+                hard_time_limit_seconds=3600,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is False
+        )
+
+    def test_running_under_threshold_is_not_stale(self) -> None:
+        now = datetime.now(UTC)
+        started_at = now - timedelta(seconds=3600 + 59)
+        assert (
+            is_run_stale(
+                status="running",
+                created_at=started_at,
+                started_at=started_at,
+                hard_time_limit_seconds=3600,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is False
+        )
+
+    def test_running_at_exact_threshold_is_not_stale(self) -> None:
+        """Boundary: `elapsed == effective_limit + 60` is NOT stale —
+        the contract requires strictly greater than the threshold."""
+        now = datetime.now(UTC)
+        started_at = now - timedelta(seconds=3660)
+        assert (
+            is_run_stale(
+                status="running",
+                created_at=started_at,
+                started_at=started_at,
+                hard_time_limit_seconds=3600,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is False
+        )
+
+    def test_running_over_threshold_is_stale(self) -> None:
+        now = datetime.now(UTC)
+        started_at = now - timedelta(seconds=3661)
+        assert (
+            is_run_stale(
+                status="running",
+                created_at=started_at,
+                started_at=started_at,
+                hard_time_limit_seconds=3600,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is True
+        )
+
+    def test_running_uses_fallback_when_hard_limit_is_none(self) -> None:
+        """A `NULL` `hard_time_limit_seconds` (a historical row
+        predating the column) falls back to the live
+        `FetcherConfig.run_timeout` for threshold evaluation."""
+        now = datetime.now(UTC)
+        started_at = now - timedelta(seconds=121)
+        assert (
+            is_run_stale(
+                status="running",
+                created_at=started_at,
+                started_at=started_at,
+                hard_time_limit_seconds=None,
+                fallback_run_timeout=60,
+                now=now,
+            )
+            is True
+        )
+
+    def test_running_ignores_fallback_when_hard_limit_present(self) -> None:
+        """The persisted `hard_time_limit_seconds` always wins over the
+        fallback, even when the two diverge."""
+        now = datetime.now(UTC)
+        started_at = now - timedelta(seconds=61)
+        assert (
+            is_run_stale(
+                status="running",
+                created_at=started_at,
+                started_at=started_at,
+                hard_time_limit_seconds=3600,
+                fallback_run_timeout=60,
+                now=now,
+            )
+            is False
+        )
+
+    def test_queued_under_threshold_is_not_stale(self) -> None:
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=599)
+        assert (
+            is_run_stale(
+                status="queued",
+                created_at=created_at,
+                started_at=None,
+                hard_time_limit_seconds=None,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is False
+        )
+
+    def test_queued_at_exact_threshold_is_not_stale(self) -> None:
+        """Boundary: `elapsed == 600` is NOT stale — strictly greater
+        than the fixed Queued Stale Threshold."""
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=600)
+        assert (
+            is_run_stale(
+                status="queued",
+                created_at=created_at,
+                started_at=None,
+                hard_time_limit_seconds=None,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is False
+        )
+
+    def test_queued_over_threshold_is_stale(self) -> None:
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=601)
+        assert (
+            is_run_stale(
+                status="queued",
+                created_at=created_at,
+                started_at=None,
+                hard_time_limit_seconds=None,
+                fallback_run_timeout=3600,
+                now=now,
+            )
+            is True
+        )
+
+    def test_queued_staleness_is_independent_of_run_timeout(self) -> None:
+        """The Queued Stale Threshold is a fixed 600 seconds — an
+        unusually large fallback `run_timeout` does not extend it."""
+        now = datetime.now(UTC)
+        created_at = now - timedelta(seconds=601)
+        assert (
+            is_run_stale(
+                status="queued",
+                created_at=created_at,
+                started_at=None,
+                hard_time_limit_seconds=None,
+                fallback_run_timeout=604800,
+                now=now,
+            )
+            is True
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +239,7 @@ class TestAcquireFetcherRunConfigMissing:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
 
@@ -85,6 +265,7 @@ class TestAcquireFetcherRunDisabled:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -123,6 +304,7 @@ class TestAcquireFetcherRunDisabled:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
+            hard_time_limit=3600,
         )
 
         assert result is None
@@ -146,6 +328,12 @@ class TestAcquireFetcherRunScheduledCreate:
         db_session: AsyncSession,
         fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
     ) -> None:
+        """`hard_time_limit` (the effective Celery hard limit for this
+        delivery) — not `FetcherConfig.run_timeout` — is persisted on
+        the new row and populates the runtime snapshot's `run_timeout`
+        field. The two are deliberately different values here (2400 vs.
+        1800) to prove the snapshot reflects the delivered limit, never
+        the live config column."""
         config = await fetcher_config_factory(
             run_timeout=1800,
             request_delay=2.5,
@@ -160,11 +348,12 @@ class TestAcquireFetcherRunScheduledCreate:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
+            hard_time_limit=2400,
         )
 
         assert isinstance(result, FetcherAcquisition)
         assert result.config.fetcher_name == config.fetcher_name
-        assert result.config.run_timeout == 1800
+        assert result.config.run_timeout == 2400
         assert result.config.request_delay == 2.5
         assert result.config.custom_settings == {"page_size": 50}
         assert result.config.schedule_override == "0 */6 * * *"
@@ -174,6 +363,7 @@ class TestAcquireFetcherRunScheduledCreate:
         assert created.status == "running"
         assert created.triggered_by == "schedule"
         assert created.started_at == now
+        assert created.hard_time_limit_seconds == 2400
 
 
 @pytest.mark.integration
@@ -201,6 +391,7 @@ class TestAcquireFetcherRunScheduledDuplicate:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -228,6 +419,13 @@ class TestAcquireFetcherRunScheduledDuplicate:
 
 @pytest.mark.integration
 class TestAcquireFetcherRunStaleBoundary:
+    """The active `running` rows created via `fetcher_run_factory` below
+    do not set `hard_time_limit_seconds` (defaults to `NULL`), so these
+    tests exercise the NULL-fallback path of `is_run_stale()` /
+    `resolve_effective_hard_limit()`: staleness is evaluated against
+    the locked `FetcherConfig.run_timeout`, since the row predates (or
+    never received) its own persisted hard limit."""
+
     async def test_elapsed_equal_to_threshold_is_not_stale(
         self,
         db_session: AsyncSession,
@@ -241,6 +439,7 @@ class TestAcquireFetcherRunStaleBoundary:
             status="running",
             started_at=started_at,
         )
+        assert active.hard_time_limit_seconds is None
         # Exactly run_timeout + 60 == 120: NOT stale (strict `>`).
         now = started_at + timedelta(seconds=120)
 
@@ -250,6 +449,7 @@ class TestAcquireFetcherRunStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
+            hard_time_limit=3600,
         )
 
         assert result is None
@@ -281,6 +481,7 @@ class TestAcquireFetcherRunStaleBoundary:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
+                hard_time_limit=3600,
             )
 
         # Scheduled acquisition proceeds after stale finalization.
@@ -303,6 +504,112 @@ class TestAcquireFetcherRunStaleBoundary:
         assert "fetcher_run_marked_stale" in log_text
         assert config.fetcher_name in log_text
         assert "60" in log_text
+
+
+# ---------------------------------------------------------------------------
+# Persisted hard limit takes precedence over the live FetcherConfig value
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestAcquireFetcherRunPersistedHardLimitPrecedence:
+    """Regression coverage for the core per-run hard time limit fix
+    (`docs/features/platform/fetcher-infrastructure.md`, Per-Run Hard
+    Time Limit): a `running` row's OWN persisted `hard_time_limit_seconds`
+    is always authoritative for stale evaluation — never the fetcher's
+    *current* `FetcherConfig.run_timeout`, which may have changed after
+    the row was created/adopted (e.g., an admin's `run_timeout` PATCH
+    landing after Celery Beat already dispatched the task with the old
+    hard limit)."""
+
+    async def test_config_decreased_after_dispatch_does_not_shrink_threshold(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        """Dispatch carried a hard limit of 3600; the fetcher's
+        `run_timeout` is later decreased to 300 (e.g. via PATCH) before
+        the worker adopts the delivery. A second acquisition attempt at
+        an elapsed time beyond the new-but-irrelevant 300+60=360s
+        threshold — but still within the row's own 3600+60=3660s
+        threshold — must find the active run NOT stale and discard
+        silently, exactly as if the config had never changed."""
+        config = await fetcher_config_factory(run_timeout=3600)
+        started_at = datetime.now(UTC)
+        active = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=started_at,
+            hard_time_limit_seconds=3600,
+        )
+
+        # Simulate the admin's PATCH lowering run_timeout after dispatch.
+        config.run_timeout = 300
+        await db_session.flush()
+
+        # 400s elapsed: beyond 300+60=360, but well within 3600+60=3660.
+        now = started_at + timedelta(seconds=400)
+
+        result = await acquire_fetcher_run(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            triggered_by=FetcherRunTriggeredBy.SCHEDULE,
+            run_id=None,
+            now=now,
+            hard_time_limit=3600,
+        )
+
+        assert result is None
+        await db_session.refresh(active)
+        assert active.status == "running"
+
+    async def test_config_increased_after_dispatch_does_not_grow_threshold(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Inverse scenario: dispatch carried a hard limit of 300; the
+        fetcher's `run_timeout` is later increased to 3600. The row's
+        own persisted 300+60=360s threshold still applies — an elapsed
+        time beyond it is stale, even though the live config would
+        suggest otherwise."""
+        config = await fetcher_config_factory(run_timeout=300)
+        started_at = datetime.now(UTC)
+        stale_run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            triggered_by="schedule",
+            started_at=started_at,
+            hard_time_limit_seconds=300,
+        )
+
+        # Simulate the admin's PATCH raising run_timeout after dispatch.
+        config.run_timeout = 3600
+        await db_session.flush()
+
+        # 361s elapsed: beyond the row's own 300+60=360 threshold.
+        now = started_at + timedelta(seconds=361)
+
+        with caplog.at_level("WARNING"):
+            result = await acquire_fetcher_run(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                triggered_by=FetcherRunTriggeredBy.SCHEDULE,
+                run_id=None,
+                now=now,
+                hard_time_limit=3600,
+            )
+
+        assert isinstance(result, FetcherAcquisition)
+        assert result.run_id != stale_run.id
+        await db_session.refresh(stale_run)
+        assert stale_run.status == "failure"
+        assert stale_run.error_message == (
+            "Marked as stale (running for 361s, timeout 300s)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +640,7 @@ class TestAcquireFetcherRunManualAdoption:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
+            hard_time_limit=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -341,6 +649,7 @@ class TestAcquireFetcherRunManualAdoption:
         await db_session.refresh(run)
         assert run.status == "running"
         assert run.started_at == now
+        assert run.hard_time_limit_seconds == 3600
 
         rows = (
             (
@@ -370,6 +679,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=missing_run_id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
     async def test_run_fetcher_name_mismatch_raises_value_error(
@@ -394,6 +704,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
     async def test_already_finalized_run_returns_none_without_error(
@@ -418,6 +729,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -450,6 +762,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -479,6 +792,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -518,6 +832,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=manual_run.id,
                 now=now,
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -584,6 +899,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
+            hard_time_limit=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -615,6 +931,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=now,
+                hard_time_limit=3600,
             )
 
         assert result is None
@@ -653,6 +970,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
+            hard_time_limit=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -698,6 +1016,7 @@ class TestAcquireFetcherRunMultipleActiveRowsAnomaly:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
 
 
@@ -852,6 +1171,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
+            hard_time_limit=3600,
         )
         assert acquisition_a is not None
 
@@ -867,6 +1187,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
+                hard_time_limit=3600,
             )
         )
         with pytest.raises(TimeoutError):
@@ -928,6 +1249,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=manual_run.id,
             now=now,
+            hard_time_limit=3600,
         )
         assert acquisition_a is not None
         assert acquisition_a.run_id == manual_run.id
@@ -940,6 +1262,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
+                hard_time_limit=3600,
             )
         )
         with pytest.raises(TimeoutError):
@@ -1010,6 +1333,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=manual_run.id,
             now=now,
+            hard_time_limit=3600,
         )
         assert acquisition_a is not None
 
@@ -1098,6 +1422,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=manual_run.id,
                 now=datetime.now(UTC),
+                hard_time_limit=3600,
             )
         )
         with pytest.raises(TimeoutError):

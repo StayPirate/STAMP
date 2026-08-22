@@ -34,6 +34,46 @@ def _is_valid_uuid(value: str) -> bool:
     return True
 
 
+def _extract_hard_time_limit(timelimit: tuple[Any, ...] | list[Any] | None) -> int:
+    """Validate and extract the effective hard time limit from Celery's
+    per-message time limit header (`self.request.timelimit`).
+
+    See `docs/features/platform/fetcher-infrastructure.md` (Celery
+    Integration — Hard time limit extraction) for the full contract.
+    Celery 5.x transmits the per-message time limit as a two-element
+    sequence `[hard, soft]` (or `None` if no limit was set); this
+    function reads the first element.
+
+    Raises:
+        ValueError: the hard limit is missing, `None`, not coercible to
+            a positive `int`, or outside the range [60, 604800].
+    """
+    if not timelimit:
+        logger.error("run_fetcher_missing_time_limit")
+        raise ValueError("Missing Celery hard time limit")
+
+    hard_limit = timelimit[0]
+    if hard_limit is None:
+        logger.error("run_fetcher_missing_time_limit")
+        raise ValueError("Missing Celery hard time limit")
+
+    try:
+        hard_limit_int = int(hard_limit)
+    except TypeError, ValueError:
+        logger.error("run_fetcher_invalid_time_limit", value=repr(hard_limit))
+        raise ValueError(f"Invalid Celery hard time limit: {hard_limit!r}") from None
+
+    if not (60 <= hard_limit_int <= 604800):
+        logger.error(
+            "run_fetcher_time_limit_out_of_range", hard_time_limit=hard_limit_int
+        )
+        raise ValueError(
+            f"Celery hard time limit {hard_limit_int} out of range [60, 604800]"
+        )
+
+    return hard_limit_int
+
+
 def _validate_arguments(
     fetcher_name: str,
     triggered_by: str,
@@ -116,6 +156,8 @@ async def run_fetcher_async(
     triggered_by: str = "schedule",
     user_id: str | None = None,
     run_id: str | None = None,
+    *,
+    hard_time_limit: int,
 ) -> None:
     """Validate arguments, acquire/adopt a `FetcherRun`, and execute it.
 
@@ -124,6 +166,10 @@ async def run_fetcher_async(
     returns `None`; exceptions from argument validation, acquisition,
     or `BaseFetcher.run()` propagate uncaught (no retry — Celery
     result backend is disabled).
+
+    `hard_time_limit` is the already-validated effective Celery hard
+    time limit (see `_extract_hard_time_limit`), extracted by the
+    synchronous task wrapper before this function is invoked.
 
     This function is repeatedly invoked within the same long-lived
     Celery worker child. `engine.dispose()` is awaited in a `finally`
@@ -152,6 +198,7 @@ async def run_fetcher_async(
                     triggered_by=trigger,
                     run_id=parsed_run_id,
                     now=now,
+                    hard_time_limit=hard_time_limit,
                 )
                 await session.commit()
             except Exception:
@@ -170,8 +217,9 @@ async def run_fetcher_async(
 
 def _run_fetcher_sync(
     # `self` is the bound Celery Task instance (celery ships no stubs —
-    # see the mypy override in pyproject.toml). Unused: no
-    # `self.retry()` call — see "No top-level retry".
+    # see the mypy override in pyproject.toml). Unused beyond time
+    # limit extraction: no `self.retry()` call — see "No top-level
+    # retry".
     self: Any,
     fetcher_name: str,
     triggered_by: str = "schedule",
@@ -181,6 +229,12 @@ def _run_fetcher_sync(
     """Thin synchronous Celery wrapper — calls `asyncio.run()` exactly
     once per invocation to execute `run_fetcher_async()`.
 
+    Extracts and validates the effective hard time limit from
+    `self.request.timelimit` before invoking the async workflow (see
+    `_extract_hard_time_limit`). If extraction fails, the `ValueError`
+    propagates immediately — no database or registry operation, and no
+    `asyncio.run()` call, occurs.
+
     Registered as a Celery task via an explicit function call below
     (rather than `@celery_app.task(...)` decorator syntax) so this
     function itself remains fully typed — Celery's task decorator has
@@ -189,7 +243,16 @@ def _run_fetcher_sync(
     `app/tasks/session_cleanup.py` and the explicit `.connect(...)`
     signal handlers in `app/celery_app.py`.
     """
-    asyncio.run(run_fetcher_async(fetcher_name, triggered_by, user_id, run_id))
+    hard_time_limit = _extract_hard_time_limit(self.request.timelimit)
+    asyncio.run(
+        run_fetcher_async(
+            fetcher_name,
+            triggered_by,
+            user_id,
+            run_id,
+            hard_time_limit=hard_time_limit,
+        )
+    )
 
 
 run_fetcher = celery_app.task(bind=True, name="run_fetcher")(_run_fetcher_sync)

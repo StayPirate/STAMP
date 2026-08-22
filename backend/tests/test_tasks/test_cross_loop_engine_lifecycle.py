@@ -111,6 +111,16 @@ def test_run_fetcher_wrapper_survives_two_consecutive_event_loops(
     """
     fetcher_name = "test_cross_loop_probe_fetcher"
 
+    class _FakeRequest:
+        timelimit = (3600, 3420)
+
+    class _FakeTask:
+        """Minimal stand-in for the bound Celery Task instance (`self`),
+        carrying only the `request.timelimit` attribute
+        `_run_fetcher_sync` reads."""
+
+        request = _FakeRequest()
+
     class _ProbeFetcher(BaseFetcher):
         name = fetcher_name
         description = "Cross-loop lifecycle regression probe (no-op execute)"
@@ -157,13 +167,13 @@ def test_run_fetcher_wrapper_survives_two_consecutive_event_loops(
         # First invocation: opens its own event loop, acquires and
         # executes the run, and — per the fix — disposes the pool
         # before this loop closes.
-        fetchers_module._run_fetcher_sync(object(), fetcher_name)
+        fetchers_module._run_fetcher_sync(_FakeTask(), fetcher_name)
 
         # Second invocation: a brand-new event loop. Before the fix,
         # the pool would still hold a connection bound to the first
         # (now-closed) loop, and checking it out here would raise
         # `RuntimeError: ... attached to a different loop`.
-        fetchers_module._run_fetcher_sync(object(), fetcher_name)
+        fetchers_module._run_fetcher_sync(_FakeTask(), fetcher_name)
     finally:
         FETCHER_REGISTRY.pop(fetcher_name, None)
         asyncio.run(_cleanup())

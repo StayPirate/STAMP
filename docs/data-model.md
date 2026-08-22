@@ -351,6 +351,7 @@ erDiagram
         VARCHAR_20 status "NOT NULL"
         VARCHAR_20 triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
+        INTEGER hard_time_limit_seconds "nullable"
         JSONB cursor "nullable"
     }
     FetcherAuditEvent {
@@ -1452,7 +1453,7 @@ Beat, and API server).
 | fetcher_name      | VARCHAR(100) | PK                 | Fetcher identifier (matches `BaseFetcher.name`) |
 | enabled           | BOOLEAN     | NOT NULL, DEFAULT true | Whether the fetcher is active   |
 | schedule_override | VARCHAR(50)  | nullable           | Cron expression to override the default schedule |
-| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds (hard ceiling). Also used to derive the soft time limit (×0.95) and stale detection threshold (+60s). Valid range: 60–604800 (enforced by API validation). |
+| run_timeout   | INTEGER     | NOT NULL, DEFAULT 3600 | Max execution time in seconds (hard ceiling) dispatched as the Celery `time_limit`. Also used to derive the soft time limit (×0.95). The actual stale-detection threshold for a `running` row is evaluated against `FetcherRun.hard_time_limit_seconds` (the per-run effective limit persisted at adoption). Valid range: 60–604800 (enforced by API validation). |
 | request_delay     | FLOAT       | NOT NULL, DEFAULT 0  | Minimum inter-request delay in seconds. 0 = no delay. Valid range: 0–300 (enforced by API validation). |
 | custom_settings   | JSONB       | NOT NULL, DEFAULT `'{}'` | Per-fetcher operational parameters. Structure defined and validated by each fetcher's `Settings` Pydantic model (see `docs/features/platform/fetcher-infrastructure.md`, "Custom Settings Schema") |
 | updated_at        | TIMESTAMPTZ   | NOT NULL, DEFAULT  | Last modification timestamp        |
@@ -1482,6 +1483,7 @@ summarized below.
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | VARCHAR(20) | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
+| hard_time_limit_seconds | INTEGER | nullable                 | Effective Celery hard time limit (seconds) under which the worker executes this run. Persisted atomically at adoption. `NULL` while `status = queued`, for runs finalized without adoption, and for historical rows predating this column. Used for Running Stale Threshold evaluation and `SoftTimeLimitExceeded` diagnostics. Not exposed via the API |
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written when the final run status is `success` or `partial`; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp — for a manual run, this is also the moment the trigger was accepted and the run entered `queued` |
 

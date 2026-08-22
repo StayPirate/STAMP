@@ -22,6 +22,16 @@ whichever of these two functions matches the active row's own status
 (see `docs/features/platform/fetcher-operations.md`,
 `update_fetcher_config`, Run Timeout Active Guard).
 
+`resolve_effective_hard_limit()` and `is_run_stale()` are the single
+source of truth for staleness evaluation, shared by this module's own
+`acquire_fetcher_run()` (step 5 of the Atomic Run Acquisition
+Protocol) and by `app.services.fetcher_operations` — both the
+`update_fetcher_config()` Run Timeout Active Guard and every read
+function that surfaces the `stale` field (`list_fetchers`,
+`list_fetcher_runs`, `get_fetcher_run`). A single implementation
+prevents the acquisition protocol, the Active Guard, and the API-facing
+`stale` field from silently drifting apart on the threshold formula.
+
 Registry lookup (`FETCHER_REGISTRY` membership) is the caller's
 responsibility: the task wrapper determines whether `fetcher_name` is
 a known, registered fetcher before calling `acquire_fetcher_run()`.
@@ -71,6 +81,66 @@ class FetcherConfigMissingError(RuntimeError):
     """
 
 
+def resolve_effective_hard_limit(
+    hard_time_limit_seconds: int | None, fallback_run_timeout: int
+) -> int:
+    """Resolve the effective per-run hard time limit for stale
+    evaluation and stale-finalization messages.
+
+    Prefers the run's own persisted `hard_time_limit_seconds`. Falls
+    back to `fallback_run_timeout` (the fetcher's current
+    `FetcherConfig.run_timeout`) only when the column is `NULL` —
+    historical rows that predate it. See
+    `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+    Detection, Running Stale Threshold).
+    """
+    return (
+        hard_time_limit_seconds
+        if hard_time_limit_seconds is not None
+        else fallback_run_timeout
+    )
+
+
+def is_run_stale(
+    *,
+    status: str,
+    created_at: datetime,
+    started_at: datetime | None,
+    hard_time_limit_seconds: int | None,
+    fallback_run_timeout: int,
+    now: datetime,
+) -> bool:
+    """`True` when the run's elapsed time exceeds the threshold that
+    matches its own status.
+
+    Queued Stale Threshold (`created_at`, fixed 600 seconds) for
+    `queued`; Running Stale Threshold (`started_at`,
+    `effective_limit + _STALE_MARGIN_SECONDS`) for `running`, where
+    `effective_limit` is resolved via `resolve_effective_hard_limit()`.
+    `False` for any terminal status. See
+    `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+    Detection).
+
+    Single source of truth shared by `acquire_fetcher_run()` (below),
+    `fetcher_operations.update_fetcher_config()`'s Run Timeout Active
+    Guard, and every `fetcher_operations` read function that surfaces
+    the `stale` field.
+    """
+    if status == FetcherRunStatus.QUEUED.value:
+        elapsed = (now - created_at).total_seconds()
+        return elapsed > _QUEUED_STALE_SECONDS
+    if status == FetcherRunStatus.RUNNING.value:
+        assert started_at is not None, (
+            "a 'running' FetcherRun always has a non-NULL started_at"
+        )
+        elapsed = (now - started_at).total_seconds()
+        effective_limit = resolve_effective_hard_limit(
+            hard_time_limit_seconds, fallback_run_timeout
+        )
+        return elapsed > effective_limit + _STALE_MARGIN_SECONDS
+    return False
+
+
 @dataclass(frozen=True)
 class FetcherAcquisition:
     """A successfully acquired (or adopted) `FetcherRun`, ready for
@@ -93,6 +163,7 @@ async def acquire_fetcher_run(
     triggered_by: FetcherRunTriggeredBy,
     run_id: UUID | None,
     now: datetime,
+    hard_time_limit: int,
 ) -> FetcherAcquisition | None:
     """Lock `FetcherConfig`, evaluate active/stale run state, and
     acquire (schedule) or adopt (manual) the `FetcherRun` for
@@ -103,6 +174,13 @@ async def acquire_fetcher_run(
     (the `run_fetcher` task wrapper) owns the transaction: it commits
     after this function returns (including a `None` return) and rolls
     back only if an exception propagates from this function.
+
+    `hard_time_limit` is the already-validated effective Celery hard
+    time limit for this delivery (extracted by the task wrapper from
+    `self.request.timelimit` — see "Per-Run Hard Time Limit"). It is
+    persisted on the acquired/adopted `FetcherRun` row and used to
+    populate the runtime configuration snapshot's `run_timeout` field —
+    never the live `FetcherConfig.run_timeout` column.
 
     Assumes `fetcher_name` is present in `FETCHER_REGISTRY` — the
     caller checks registry membership before invoking this function.
@@ -165,7 +243,7 @@ async def acquire_fetcher_run(
     run_config = FetcherRunConfig(
         fetcher_name=fetcher_name,
         enabled=config.enabled,
-        run_timeout=config.run_timeout,
+        run_timeout=hard_time_limit,
         request_delay=config.request_delay,
         custom_settings=config.custom_settings,
         schedule_override=config.schedule_override,
@@ -189,15 +267,14 @@ async def acquire_fetcher_run(
     active_run = active_runs[0] if active_runs else None
 
     if active_run is not None:
-        if active_run.status == FetcherRunStatus.QUEUED.value:
-            elapsed = (now - active_run.created_at).total_seconds()
-            is_stale = elapsed > _QUEUED_STALE_SECONDS
-        else:
-            assert active_run.started_at is not None, (
-                "a 'running' FetcherRun always has a non-NULL started_at"
-            )
-            elapsed = (now - active_run.started_at).total_seconds()
-            is_stale = elapsed > config.run_timeout + _STALE_MARGIN_SECONDS
+        is_stale = is_run_stale(
+            status=active_run.status,
+            created_at=active_run.created_at,
+            started_at=active_run.started_at,
+            hard_time_limit_seconds=active_run.hard_time_limit_seconds,
+            fallback_run_timeout=config.run_timeout,
+            now=now,
+        )
 
         if is_stale:
             if active_run.status == FetcherRunStatus.QUEUED.value:
@@ -206,7 +283,9 @@ async def acquire_fetcher_run(
                 mark_run_stale(
                     active_run,
                     now=now,
-                    run_timeout=config.run_timeout,
+                    run_timeout=resolve_effective_hard_limit(
+                        active_run.hard_time_limit_seconds, config.run_timeout
+                    ),
                     fetcher_name=fetcher_name,
                 )
         elif run_id is None:
@@ -225,6 +304,7 @@ async def acquire_fetcher_run(
             status=FetcherRunStatus.RUNNING.value,
             triggered_by=FetcherRunTriggeredBy.SCHEDULE.value,
             started_at=now,
+            hard_time_limit_seconds=hard_time_limit,
         )
         db.add(new_run)
         await db.flush()
@@ -237,7 +317,11 @@ async def acquire_fetcher_run(
             FetcherRun.fetcher_name == fetcher_name,
             FetcherRun.status == FetcherRunStatus.QUEUED.value,
         )
-        .values(status=FetcherRunStatus.RUNNING.value, started_at=now)
+        .values(
+            status=FetcherRunStatus.RUNNING.value,
+            started_at=now,
+            hard_time_limit_seconds=hard_time_limit,
+        )
         .returning(FetcherRun.id)
     )
     adopted_id = adopted_result.scalar_one_or_none()
@@ -355,6 +439,13 @@ def mark_run_stale(
 ) -> None:
     """Finalize a stale `running` `FetcherRun` in place (caller
     flushes/commits).
+
+    `run_timeout` is the effective hard time limit to report in the
+    error message and log event — the caller resolves it via
+    `resolve_effective_hard_limit()` before calling this function (the
+    run's own `hard_time_limit_seconds` when present, otherwise the
+    fallback `FetcherConfig.run_timeout`). This function does not
+    re-resolve it.
 
     See `docs/features/platform/fetcher-infrastructure.md` (Stale Run
     Detection, Running Stale Threshold) for the exact field values. The

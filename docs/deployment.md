@@ -1141,13 +1141,14 @@ workers, database unavailability, or any other cause of stalled
 processing. Runs still in progress (`status` is `queued` or `running`)
 have `last_run.finished_at = null` and are covered by the
 `last_run.stale` condition once the respective threshold is reached —
-600 seconds for a `queued` run awaiting worker adoption, `run_timeout +
-60` seconds for a `running` run (see
-`docs/features/platform/fetcher-infrastructure.md`, Stale Run
-Detection). A manual run normally resolves from `queued` to `running`
-within seconds of a healthy worker fleet, so a `queued` run tripping
-its much shorter threshold is itself a useful early signal of broker or
-worker unavailability, independent of any individual fetcher's
+600 seconds for a `queued` run awaiting worker adoption,
+`hard_time_limit_seconds + 60` seconds for a `running` run (where
+`hard_time_limit_seconds` is the per-run effective hard limit persisted
+at adoption — see `docs/features/platform/fetcher-infrastructure.md`,
+Stale Run Detection). A manual run normally resolves from `queued` to
+`running` within seconds of a healthy worker fleet, so a `queued` run
+tripping its much shorter threshold is itself a useful early signal of
+broker or worker unavailability, independent of any individual fetcher's
 schedule.
 
 **Why not `/health` or `/ready`**: these endpoints report API server
