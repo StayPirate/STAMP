@@ -17,5 +17,9 @@ echo "Running pre-push checks..."
 
 echo "  full test suite..."
 # Exit code 5 = "no tests collected". Treat as success for the same
-# reason as pre-commit (see pre-commit script comments).
-(cd backend && uv run --locked pytest --no-header -q) || [ $? -eq 5 ]
+# reason as pre-commit (see pre-commit script comments). -x stops at
+# the first failure so its location is always the last thing printed,
+# instead of being pushed out of view by the remaining tests in the
+# run (or truncated by an external time limit on a long-running full
+# suite before the run reaches its own completion summary).
+(cd backend && uv run --locked pytest --no-header -q -x) || [ $? -eq 5 ]
