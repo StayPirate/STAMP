@@ -1873,6 +1873,14 @@ class TestUpdateFetcherConfigGuards:
         assert stale_queued_run.duration_seconds is None
         assert stale_queued_run.error_message is not None
         assert "stale" in stale_queued_run.error_message.lower()
+        # The stale-run finalization itself is silent (no audit event) —
+        # exactly one audit event exists, for the actual `run_timeout`
+        # config mutation.
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.event_type == "config_changed"
+        assert event.old_value == "3600"
+        assert event.new_value == "1800"
+        assert event.detail == {"field": "run_timeout"}
 
     async def test_run_timeout_change_with_stale_run_finalizes_and_proceeds(
         self,
@@ -1881,6 +1889,16 @@ class TestUpdateFetcherConfigGuards:
         fetcher_run_factory: FetcherRunFactory,
         user_factory: UserFactory,
     ) -> None:
+        """Staleness MUST be evaluated using the current (pre-PATCH)
+        `run_timeout`, never the submitted new value — see
+        `docs/features/platform/fetcher-operations.md`
+        (`update_fetcher_config`, Run Timeout Active Guard). The
+        numbers are chosen so the two thresholds disagree: under the
+        old value (60 -> threshold 120) `elapsed=150` is stale; under
+        the new value (300 -> threshold 360) it would NOT be stale. A
+        regression that read the wrong field would raise
+        `FetcherAlreadyRunningError` here instead of finalizing and
+        proceeding."""
         _register(_NoSettingsFetcher)
         config = await fetcher_config_factory(
             fetcher_name=_NoSettingsFetcher.name, run_timeout=60
@@ -1888,7 +1906,7 @@ class TestUpdateFetcherConfigGuards:
         stale_run = await fetcher_run_factory(
             fetcher_name=config.fetcher_name,
             status="running",
-            started_at=datetime.now(UTC) - timedelta(seconds=200),
+            started_at=datetime.now(UTC) - timedelta(seconds=150),
         )
         admin = await user_factory()
 
@@ -1896,14 +1914,22 @@ class TestUpdateFetcherConfigGuards:
             db_session,
             fetcher_name=config.fetcher_name,
             user_id=admin.id,
-            payload=UpdateConfigPayload(run_timeout=120),
+            payload=UpdateConfigPayload(run_timeout=300),
         )
 
-        assert result.config.run_timeout == 120
+        assert result.config.run_timeout == 300
         await db_session.refresh(stale_run)
         assert stale_run.status == "failure"
         assert stale_run.error_message is not None
         assert "stale" in stale_run.error_message.lower()
+        # The stale-run finalization itself is silent (no audit event) —
+        # exactly one audit event exists, for the actual `run_timeout`
+        # config mutation.
+        event = (await db_session.execute(select(FetcherAuditEvent))).scalars().one()
+        assert event.event_type == "config_changed"
+        assert event.old_value == "60"
+        assert event.new_value == "300"
+        assert event.detail == {"field": "run_timeout"}
 
     async def test_run_timeout_unchanged_value_skips_active_run_guard(
         self,

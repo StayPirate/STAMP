@@ -357,9 +357,8 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
    - If **stale**: finalize the stale run under the same lock (same
      semantics as the Queued/Running Stale Threshold in
      `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-     Detection, for the finalization message and fields, using
-     `mark_queued_run_stale()` for a `queued` row and `mark_run_stale()`
-     for a `running` row). Proceed with mutation.
+     Detection, for the finalization message and fields). Proceed with
+     mutation.
    - If `run_timeout` is present but equal to the current value: no-op
      for this field, guard does not apply.
 5. **Compute diff**: for each field in the payload, compare with current
@@ -445,9 +444,17 @@ After the API workflow commits the transaction containing
    - If `enabled` changed to `false`: delete the RedBeat entry. All
       other field changes in the same PATCH are moot for scheduling —
       skip remaining propagation. A disabled fetcher has no entry.
-      Disabling does not interrupt an in-flight run; the current run
-      completes normally and the disable takes effect from the next
-      scheduled cycle.
+      Disabling does not interrupt a run already adopted by a worker
+      (`running`) — it completes normally. A run still `queued` at the
+      moment of disable is NOT interrupted either, but does not
+      complete normally: when a worker eventually reaches it, the
+      Atomic Run Acquisition Protocol's disabled-fetcher branch
+      finalizes it as `failure` (`error_message = "Fetcher disabled
+      between trigger and execution"` — see
+      `docs/features/platform/fetcher-infrastructure.md`, Atomic Run
+      Acquisition Protocol, step 2, and "Note on trigger-then-disable
+      race condition" below). The disable takes effect for scheduled
+      triggers from the next scheduled cycle.
    - If `enabled` changed to `true`: create the RedBeat entry with the
      effective schedule and time limit options (incorporating any
      `schedule_override` or `run_timeout` changes from the same PATCH).
@@ -624,8 +631,10 @@ happens when some subsequent acquisition attempt for the same fetcher
 actually runs: the next scheduled acquisition, a manual trigger attempt
 (guard 4, "Stale run handling"), or a `PATCH .../config` request that
 changes `run_timeout` (Run Timeout Active Guard, which evaluates the
-same threshold). During the stale-eligible window, and for as long as
-none of those three attempts occurs:
+same threshold, and applies regardless of whether the fetcher is
+currently disabled — see below).
+
+**Before** the row crosses the 600-second threshold:
 - Scheduled triggers are silently discarded (active `queued` run) —
   unless the fetcher is disabled, in which case no scheduled attempt
   exists at all.
@@ -633,21 +642,36 @@ none of those three attempts occurs:
   fetcher is disabled or deregistered, in which case guards 2–3 reject
   the request before stale handling is ever reached, leaving the
   orphaned row untouched.
-- `GET /api/v1/fetchers` shows `stale: true` once the threshold is
-  reached, alerting the operator regardless of the fetcher's
-  enabled/registered state.
+
+**Once** the row crosses the threshold, the first of the three attempts
+above that actually reaches stale evaluation finalizes it and proceeds:
+a scheduled acquisition marks it `failure` and starts its own run (no
+caller to notify); a manual trigger marks it `failure` and returns
+**202 Accepted** for the new run; a `run_timeout` PATCH marks it
+`failure` under the same guard and applies the configuration change.
+Guards 2–3 still apply first: a **deregistered** fetcher rejects both
+the trigger and the PATCH before stale handling is reached, leaving the
+orphan untouched regardless of staleness. A **disabled** (but still
+registered) fetcher has no scheduled attempt and rejects a manual
+trigger, but a `run_timeout` PATCH is not blocked by the disabled state
+(no such guard exists in `update_fetcher_config`) — it still reaches
+the Run Timeout Active Guard and finalizes the orphan.
+
+Until one of those attempts occurs, `GET /api/v1/fetchers` shows
+`stale: true` once the threshold is reached, alerting the operator
+regardless of the fetcher's enabled/registered state.
 
 This crash scenario is functionally equivalent to the "worker dies
 before adopting the task" case that Queued Stale Detection is designed
 to cover. 600 seconds (10 minutes) is the eligibility threshold, not a
-guaranteed recovery latency: a fetcher that is disabled or deregistered
-has no acquisition attempt to trigger finalization, so its orphaned
-`queued` row remains visible as active-and-stale (via `stale: true`)
-until the fetcher is re-enabled/re-registered and its next attempt
-runs. No additional mechanism (outbox, heartbeat, lease, or background
-reaper) is introduced to bound this further — the operator-visible
-`stale: true` signal is the intended recovery path for this residual
-case.
+guaranteed recovery latency: a **deregistered** fetcher has no
+acquisition attempt or PATCH that can trigger finalization (guard 2
+rejects both), so its orphaned `queued` row remains visible as
+active-and-stale (via `stale: true`) until the fetcher is
+re-registered. No additional mechanism (outbox, heartbeat, lease, or
+background reaper) is introduced to bound this further — the
+operator-visible `stale: true` signal is the intended recovery path for
+this residual case.
 
 ##### Ambiguous Broker Acknowledgement
 

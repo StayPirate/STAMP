@@ -3147,7 +3147,7 @@ trigger endpoint, or the PATCH config endpoint's Run Timeout Active
 Guard), it is resolved by updating the stale `FetcherRun` record:
 
 - `status` → `failure`
-- `error_message` → `"Marked as stale (running for {elapsed}, timeout
+- `error_message` → `"Marked as stale (running for {elapsed}s, timeout
   {timeout}s)"`
 - `finished_at` → `now()`
 - `duration_seconds` → calculated from `started_at`
@@ -3183,9 +3183,24 @@ evaluated after adoption would use the new, smaller value against a
 process still executing under the old, larger hard limit, potentially
 declaring it stale — and starting a second execution — while it is
 still alive. The `update_fetcher_config()` Run Timeout Active Guard
-(`docs/features/platform/fetcher-operations.md`) enforces this by
-rejecting a `run_timeout` change while any non-stale active run exists,
-for both statuses.
+(`docs/features/platform/fetcher-operations.md`) enforces this for the
+manual path by rejecting a `run_timeout` change while any non-stale
+active (`queued` or `running`) `FetcherRun` row exists.
+
+**Known limitation — scheduled dispatch window**: a scheduled trigger
+has no `FetcherRun` row between the moment Celery Beat publishes the
+task and the moment a worker adopts it (see "Atomic Run Acquisition
+Protocol", step 6 — a scheduled trigger only INSERTs a row at
+adoption). During that window the guard's query finds no active row
+and does not block a `run_timeout` decrease; the RedBeat entry keeps
+dispatching under the old `time_limit` fixed at the previous PATCH (or
+the last successful propagation) until the change is picked up. A
+`run_timeout` decrease accepted during this window can reproduce the
+same divergence described above once the task is later adopted and
+runs long enough to cross the new, smaller Running Stale Threshold
+while still executing under the old, larger hard limit. This residual
+risk is currently not covered by the Run Timeout Active Guard, which
+protects the manual/`queued` path only.
 
 ### Queued Stale Threshold
 
@@ -3493,8 +3508,12 @@ executions per day, the table grows by approximately 20,000 rows per
 year — negligible for PostgreSQL. No cleanup task or retention policy is
 necessary. Orphaned runs (stuck in `queued` or `running` status due to
 an unpublished trigger or an unclean process termination) are resolved
-automatically by the existing Stale Run Detection mechanism at the next
-trigger attempt or config PATCH.
+by the existing Stale Run Detection mechanism at the next scheduled
+acquisition, manual trigger attempt, or `run_timeout` PATCH — see
+`docs/features/platform/fetcher-operations.md` ("Process Crash Between
+Commit and Enqueue") for the one case where none of these occurs: a
+**deregistered** fetcher, whose orphaned row remains visible as
+`stale: true` until the fetcher is re-registered.
 
 **Manual purge**: if an operator needs to reduce table size for
 operational reasons (disaster recovery, database refresh), a simple

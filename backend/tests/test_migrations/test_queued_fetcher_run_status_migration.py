@@ -258,9 +258,10 @@ class TestQueuedFetcherRunStatusMigration:
         # are left untouched; the two pre-existing rows (already
         # non-NULL `started_at`) are untouched.
         command.downgrade(cfg, _PREVIOUS_HEAD)
-        _downgraded_checks, downgraded_indexes, downgraded_nullable = _inspect(
+        downgraded_checks, downgraded_indexes, downgraded_nullable = _inspect(
             alembic_test_database_url
         )
+        assert "chk_fetcher_run_status_valid" in downgraded_checks
         assert "ix_fetcher_run_fetcher_name_created_at" not in downgraded_indexes
         assert downgraded_nullable is False
 
@@ -307,8 +308,9 @@ class TestQueuedFetcherRunStatusMigration:
         # 4. Re-upgrade to head — idempotent: no errors, schema facts
         # match step 2 again.
         command.upgrade(cfg, "head")
-        _reupgraded_checks, reupgraded_indexes, reupgraded_nullable = _inspect(
+        reupgraded_checks, reupgraded_indexes, reupgraded_nullable = _inspect(
             alembic_test_database_url
         )
+        assert "chk_fetcher_run_status_valid" in reupgraded_checks
         assert "ix_fetcher_run_fetcher_name_created_at" in reupgraded_indexes
         assert reupgraded_nullable is True
