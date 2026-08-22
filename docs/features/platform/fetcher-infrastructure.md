@@ -117,12 +117,14 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       `Settings` model with the `custom_settings` from the config
       snapshot merged over the defaults. If validation fails (Pydantic
       `ValidationError`), the run terminates with `failure` status:
-      finalize the `FetcherRun` with `error_message` identifying the
-      fetcher name, invalid field(s), stored value(s), and constraint
-      violated (see `FetcherConfigError` below). The `FetcherConfigError`
-      exception is then re-raised after successful finalization so the
-      Celery task reports a task failure — see "Exception Propagation"
-      below. No silent fallback to the default is performed.
+      finalize the `FetcherRun` according to the `FetcherConfigError`
+      contract below. The `FetcherConfigError` exception is then
+      re-raised after successful finalization so the Celery task reports
+      a task failure — see "Exception Propagation" below. No silent
+      fallback to the default is performed. If any other exception is
+      raised while constructing the settings instance, it is captured
+      for the same failure finalization path and re-raised after
+      finalization.
 
    4. **Previous cursor load**: query the last `FetcherRun` with
       `status IN ('success', 'partial')` for the same `fetcher_name`,
@@ -130,7 +132,10 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
       column. The result is available to `execute()` via
       `self.previous_cursor` (see "Previous Cursor Access" below).
       If no prior successful run exists, `self.previous_cursor` is
-      `None`. This is a separate short-lived session (read-only).
+      `None`. This is a separate short-lived session (read-only). If
+      loading the previous cursor raises an exception, it is captured for
+      failure finalization and re-raised after finalization. The cursor-load
+      failure path does not call `execute()`.
 
    5. **Execution**: open an execution session, call
       `self.execute(session)`. If `execute()` raises, capture the
@@ -179,18 +184,19 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    ### Finalization
 
    Finalization updates the `FetcherRun` record in a separate
-   short-lived session. It runs regardless of whether `execute()`
-   succeeded or raised.
+   short-lived session. It runs regardless of whether settings
+   construction, previous-cursor loading, or `execute()` succeeded or
+   raised.
 
    **Status determination precedence** (evaluated in order):
 
-   1. If `execute()` raised an exception: `failure`. Metric counters are
-      preserved for diagnostics but do not influence the status.
-      This includes `SoftTimeLimitExceeded` — when the soft time limit
-      is reached, the exception propagates to `run()`, resulting in
-      `failure` status with an enriched error message (see the generic
-      fallback table entry for `SoftTimeLimitExceeded` in "Error Message
-      Sanitization" below).
+   1. If settings construction, previous-cursor loading, or `execute()`
+      raised an exception: `failure`. Metric counters are preserved for
+      diagnostics but do not influence the status. This includes
+      `SoftTimeLimitExceeded` — when the soft time limit is reached, the
+      exception propagates to `run()`, resulting in `failure` status with
+      an enriched error message (see the generic fallback table entry for
+      `SoftTimeLimitExceeded` in "Error Message Sanitization" below).
       The hard time limit (`time_limit`) terminates the process if the
       soft limit fails to stop execution within the grace window (5% of
       `run_timeout`).
@@ -237,9 +243,9 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    - Log CRITICAL:
      `"Fetcher '%s' run '%s' finalization failed — FetcherRun record may remain in 'running' status: %s"`.
    - The exception propagated to the Celery task is the finalization
-     failure. If `execute()` also raised, the original execution
-     exception is chained as `__cause__` (i.e.,
-     `raise finalize_exc from execution_exc`).
+     failure. If settings construction, previous-cursor loading, or
+     `execute()` also raised, the original exception is chained as
+     `__cause__` (i.e., `raise finalize_exc from execution_exc`).
    - No retry — the stale run detection mechanism recovers the
      orphaned record at the next trigger attempt.
 
@@ -249,15 +255,17 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
    Celery task reports a task failure for observability (worker logs,
    Celery flower). The specific behavior:
 
-   | Execution outcome | Finalization outcome | Exception propagated |
+   | Lifecycle outcome | Finalization outcome | Exception propagated |
    |---|---|---|
    | `execute()` succeeded | Finalization succeeded | None — `run()` returns normally |
    | `execute()` succeeded, all-items-failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`, not as a task exception) |
    | `execute()` raised | Finalization succeeded | Original execution exception re-raised |
    | Settings validation failed | Finalization succeeded | `FetcherConfigError` re-raised |
+   | Settings construction raised a non-`ValidationError` | Finalization succeeded | Original settings exception re-raised |
+   | Previous cursor load raised | Finalization succeeded | Original cursor-load exception re-raised |
    | Cursor serialization failed | Finalization succeeded | None — `run()` returns normally (failure is recorded in the `FetcherRun`) |
    | `execute()` succeeded | Finalization failed | Finalization exception raised |
-   | `execute()` raised | Finalization failed | Finalization exception raised (with original as `__cause__`) |
+   | Settings construction, previous cursor load, or `execute()` raised | Finalization failed | Finalization exception raised (with original as `__cause__`) |
 
    Because `run_fetcher` has no top-level retry, propagated exceptions
    result in a permanent Celery task failure. Recovery happens at the
@@ -866,9 +874,10 @@ nature and are correct without chaining.
 
 ### BaseFetcher fallback
 
-When `execute()` raises an exception that is NOT a `FetcherError` (i.e.,
-an unhandled exception), `BaseFetcher.run()` applies a **generic category
-fallback** — it maps the exception type to a safe, generic message:
+When settings construction, previous-cursor loading, or `execute()` raises
+an exception that is NOT a `FetcherError` (i.e., an unhandled exception),
+`BaseFetcher.run()` applies a **generic category fallback** — it maps the
+exception type to a safe, generic message:
 
 | Exception category | `error_message` |
 |--------------------|-----------------|
@@ -3314,7 +3323,7 @@ the dashboard charts.
 | `queued` | Manual run accepted and persisted; not yet adopted by a worker. Manual-only — a scheduled run is never `queued` |
 | `running` | A worker has atomically adopted the run and is currently executing it |
 | `success` | Completed without errors |
-| `failure` | Terminated without executing (never adopted — stale, disabled, deregistered, or publication failure — see "Concurrency Control") or execution failed: (a) `execute()` raised an unhandled exception, or (b) `execute()` returned normally but all items failed (`items_failed > 0` and `items_created + items_updated == 0`) — see "Status determination precedence" |
+| `failure` | Terminated without executing (never adopted — stale, disabled, deregistered, or publication failure — see "Concurrency Control") or execution failed: (a) settings construction, previous-cursor loading, or `execute()` raised an unhandled exception, or (b) `execute()` returned normally but all items failed (`items_failed > 0` and `items_created + items_updated == 0`) — see "Status determination precedence" |
 | `partial` | Completed but some items failed (`items_failed > 0`) and at least one item succeeded (`items_created + items_updated > 0`). Implies `execute()` returned normally (no exception raised) |
 
 ### FetcherRunTriggeredBy Enum
