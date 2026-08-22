@@ -37,6 +37,7 @@ For architectural decisions and design constraints, see
 - [Process Architecture](#process-architecture)
   - [Container Images](#container-images)
   - [Singleton Processes](#singleton-processes)
+  - [Celery Worker Pool Requirement](#celery-worker-pool-requirement)
   - [Startup Ordering](#startup-ordering)
   - [Git Worker Volume](#git-worker-volume)
   - [Timezone and Locale Requirements](#timezone-and-locale-requirements)
@@ -156,7 +157,10 @@ cd backend && uv run alembic upgrade head
 cd backend && uv run uvicorn app.main:app --reload --port 8000
 
 # Start Celery worker (separate terminal)
-cd backend && uv run celery -A app.celery_app worker
+# --pool=prefork is explicit here for clarity — it is also Celery's own
+# default. See "Celery Worker Pool Requirement" below: no other pool is
+# supported.
+cd backend && uv run celery -A app.celery_app worker --pool=prefork
 
 # Start Celery Beat scheduler (separate terminal)
 cd backend && uv run celery -A app.celery_app beat
@@ -712,6 +716,45 @@ volume affinity (ReadWriteOnce), not by a logical singleton requirement.
 Local environments run one instance of each. Kubernetes deployments must
 enforce singleton constraints unless a future design introduces
 distributed locking or leader election.
+
+### Celery Worker Pool Requirement
+
+Every Sentinel worker process (Celery worker and Git worker — see
+[Container Images](#container-images)) MUST run with the `prefork`
+execution pool. No other pool implementation (`solo`, `threads`,
+`gevent`, `eventlet`, or a custom pool) is supported.
+
+**Why**: the fetcher framework's Running Stale Threshold (see
+`docs/features/platform/fetcher-infrastructure.md`, Stale Run
+Detection) depends on the Celery hard time limit reliably terminating
+the worker process that executes a fetcher run. This guarantee only
+holds under `prefork`:
+
+- `solo`, `threads`, and `eventlet` do not enforce the hard time limit
+  at all — a task exceeding it continues running indefinitely.
+- `gevent` enforces a cooperative timeout that does not terminate a
+  blocking task, so it cannot provide the same guarantee either.
+
+Under any of these pools, a fetcher run that never terminates could be
+declared stale and finalized while still executing, allowing a second
+concurrent instance of the same fetcher to start — violating the
+single-instance invariant (see
+`docs/features/platform/fetcher-infrastructure.md`, Concurrency
+Control).
+
+**Enforcement**: every Celery worker process validates its own
+resolved pool implementation at startup, before the fetcher config
+bootstrap runs and before the consumer starts accepting tasks. A
+worker started with an incompatible pool fails fast with a critical
+log identifying the offending pool and exits with a non-zero status —
+see `docs/features/platform/fetcher-infrastructure.md` (Worker
+Startup Handler) for the exact mechanism.
+
+Operator-facing worker commands MUST pass `--pool=prefork` explicitly
+(or omit `--pool`, since `prefork` is Celery's own default) — see the
+Quick Start command in [Local Development](#local-development) and the
+active `worker` service and the currently-commented-out `git-worker`
+service definition in `docker-compose.smoke.yml`.
 
 ### Startup Ordering
 

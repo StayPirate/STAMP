@@ -1994,7 +1994,7 @@ redbeat entry. Therefore:
   to `apply_async()`, and the worker enforces them.
 - If the fetcher class defines `queue` (non-None): the Options also
   include `"queue": "<queue>"`. Beat passes this to `apply_async()`,
-  routing the task to the correct worker pool.
+  routing the task to the correct worker.
 
 This means that a PATCH to `run_timeout` requires a redbeat entry update
 (see "Which Changes Require Redbeat Propagation" below). The change takes
@@ -2920,6 +2920,15 @@ Reconciliation" above) implicitly validates:
   at process startup — see "Fetcher Discovery (Module Import)" in the
   Registry section)
 
+**Worker pool validation is a separate, per-worker check**: unlike the
+timezone and lock-sentinel validations above, the execution pool
+(`--pool`) is not part of the shared `Celery()` application object —
+it is resolved by each individual worker process from its own CLI
+invocation, and Beat and the IBS consumer have no pool to validate. For
+this reason, pool validation cannot live in the app factory; it is
+performed by the Worker Startup Handler below, which runs once per
+worker process before that worker's consumer starts accepting tasks.
+
 #### Worker Startup Handler
 
 **Location**: `backend/app/tasks/worker_startup.py`
@@ -2930,14 +2939,41 @@ handler module.
 
 **Why `celeryd_after_setup`**: emitted after worker logging and queue
 setup but before the consumer starts accepting tasks. The handler can
-log and abort before any task runs. `worker_process_init` is
-unsuitable (runs in every pool child, 4-second blocking limit).
-`worker_ready` is unsuitable (fires after the consumer starts —
-tasks could already be executing).
+log and abort before any task runs. `worker_init` is unsuitable for the
+pool validation below because `--pool` has not yet been resolved to a
+concrete class at that point (`WorkController.setup_instance()` sends
+`worker_init` before resolving `pool_cls` — it is still the raw string
+or alias). `worker_process_init` is unsuitable for either check (runs
+in every pool child, 4-second blocking limit, and does not run at all
+under the `solo` pool's process model). `worker_ready` is unsuitable
+(fires after the consumer starts — tasks could already be executing).
+By the time `celeryd_after_setup` fires, `instance.pool_cls` already
+holds the resolved concrete pool class.
 
 **Sequence**:
 
-1. Call `asyncio.run(worker_async_bootstrap())` where the async
+1. **Validate the worker pool** (see `docs/deployment.md`, Celery
+   Worker Pool Requirement, and "Stale Run Detection" — Relationship to
+   hard time limit, for why this is required): read `instance.pool_cls`
+   from the signal's `instance` keyword argument (the `WorkController`
+   the signal was sent from) and compare it for identity against the
+   class Celery's own public alias resolution returns for `"prefork"`
+   (`celery.concurrency.get_implementation("prefork")`) — not a
+   hardcoded internal module path, so the check remains correct if a
+   future Celery version reorganizes `celery.concurrency`'s internal
+   layout while preserving the `--pool=prefork` alias (Celery's
+   documented compatibility surface). Any other value — `solo`,
+   `threads`, `gevent`, `eventlet`, a custom pool, or a missing/
+   unresolved value — fails validation. This entire determination,
+   including any exception raised while reading or resolving
+   `instance.pool_cls` itself (not only an explicit class mismatch), is
+   treated as a validation failure.
+   - If validation fails: log CRITICAL `worker_startup_failed` with
+     `stage="worker_pool_validation"` and `pool_class` set to the
+     resolved class's qualified name (or `"unknown"` if it cannot be
+     determined); call `sys.exit(1)`. The fetcher config bootstrap
+     (step 2) is NOT attempted.
+2. Call `asyncio.run(worker_async_bootstrap())` where the async
    function performs:
    - `await bootstrap_fetcher_configs()`
    - `await engine.dispose()` (closes the parent's pooled connections
@@ -2946,13 +2982,13 @@ tasks could already be executing).
    - If raises: log CRITICAL `worker_startup_failed` with
      `stage="fetcher_config_bootstrap"`, `error_type`, and
      `error=str(exc)`; call `sys.exit(1)`.
-2. If the bootstrap succeeds: log INFO `worker_startup_completed`;
+3. If the bootstrap succeeds: log INFO `worker_startup_completed`;
    return.
 
 **Catch-all**: the entire sequence is wrapped in a
 `try/except Exception` that catches any exception not already handled
-by the bootstrap-specific handling above, logs CRITICAL
-`worker_startup_failed` with `stage="fetcher_config_bootstrap"`,
+by the pool-validation- or bootstrap-specific handling above, logs
+CRITICAL `worker_startup_failed` with `stage="fetcher_config_bootstrap"`,
 `error_type=type(exc).__name__`, and `error=str(exc)`, then calls
 `sys.exit(1)`. This ensures that unexpected bootstrap exceptions (for
 example, a database connectivity failure) still abort the worker instead
@@ -2967,14 +3003,17 @@ This is required because Celery's signal dispatcher catches ordinary
 `Exception` from receivers; only `SystemExit` (a `BaseException`)
 propagates through it to abort the process.
 
-**Single-owner rule**: this handler owns generic fetcher bootstrap for
-Celery workers. There MUST NOT be separate generic bootstrap handlers,
-because Celery does not guarantee ordering between independent receivers
-of the same signal. Domain consumers do not add work to this generic
-handler.
+**Single-owner rule**: this handler owns generic fetcher bootstrap and
+the worker pool validation for Celery workers. There MUST NOT be
+separate generic bootstrap or pool-validation handlers, because Celery
+does not guarantee ordering between independent receivers of the same
+signal. Domain consumers do not add work to this generic handler.
 
-**Worker-role scope**: runs for both general workers and Git workers.
-Beat and the IBS consumer do not emit `celeryd_after_setup`.
+**Worker-role scope**: runs for both general workers and Git workers —
+the pool validation therefore applies to both roles identically, per
+`docs/deployment.md` (Celery Worker Pool Requirement). Beat and the IBS
+consumer do not emit `celeryd_after_setup`; they have no execution pool
+to validate.
 
 ## Concurrency Control
 
@@ -3205,19 +3244,34 @@ logger.warning("Marking stale run %s for '%s' as failure (running since %s, time
 ```
 
 Stale run detection in `running` status is a recovery mechanism for
-unclean process terminations (OOM-kill, node crash, `kill -9`). Celery
-workers handle `SIGTERM` via the Celery runtime's own signal handling —
-when a worker shuts down gracefully, active tasks are revoked and their
-`FetcherRun` records are finalized by the `run()` method's exception
-handler.
+unclean process terminations (OOM-kill, node crash, `kill -9`). A
+graceful shutdown (`SIGTERM` to the worker) does not require this
+mechanism: Celery's warm shutdown lets the currently executing task run
+to completion, so `run()` finalizes the `FetcherRun` record normally
+(`success`, `partial`, or `failure`) before the worker process exits —
+no orphaned `running` row is left behind. Stale detection only
+recovers rows orphaned by a termination that kills the process before
+`run()`'s finalization step completes.
 
 **Relationship to hard time limit**: the Running Stale Threshold is
 intentionally set ABOVE the hard time limit
 (`hard_time_limit_seconds + 60 > hard_time_limit_seconds`). This ensures
-that when stale detection triggers, the process is already dead (killed
-by the hard limit). The stale detection mechanism therefore never needs
-to kill or revoke a task — it only cleans up the orphaned database
-record left behind by a force-killed process.
+that when stale detection triggers, the process is already dead —
+force-terminated by the hard limit (Celery/Billiard send `SIGTERM` to
+the pool child first, then `SIGKILL` as a backstop if it has not exited
+after a short grace period). The stale detection mechanism therefore
+never needs to kill or revoke a task — it only cleans up the orphaned
+database record left behind by a force-killed process.
+
+**Pool precondition**: this guarantee holds only under Celery's
+`prefork` execution pool, which is the only pool that reliably
+terminates the process running an over-limit task. `solo`, `threads`,
+and `eventlet` do not enforce the hard time limit at all; `gevent`
+enforces it cooperatively but not for a blocking task. Every Sentinel
+worker MUST run with `prefork` — see `docs/deployment.md` (Celery
+Worker Pool Requirement) for the deployment-wide requirement and
+"Worker Startup Handler" above for the startup validation that enforces
+it.
 
 This invariant is guaranteed by persisting the effective hard time limit
 on the `FetcherRun` row itself (see "Per-Run Hard Time Limit" below).
@@ -3490,9 +3544,13 @@ The bootstrap routine:
 - `run_timeout` serves three purposes:
    1. **Celery hard time limit** (`time_limit`): the Celery task's
       `time_limit` is set to `max(5, run_timeout)`. If the task exceeds
-      this duration, the worker forcibly terminates the process (SIGKILL).
-      This is the absolute ceiling — the task is guaranteed dead at
-      this point. The `max(5, ...)` is a safety net for direct-DB
+      this duration, the worker forcibly terminates the process
+      (`SIGTERM` followed by a `SIGKILL` backstop — see "Relationship
+      to hard time limit" in "Stale Run Detection"). This requires the
+      `prefork` pool (see `docs/deployment.md`, Celery Worker Pool
+      Requirement) — this is the absolute ceiling under that pool, and
+      the task is guaranteed dead at this point. The `max(5, ...)` is a
+      safety net for direct-DB
       bypasses: Celery treats `time_limit=0` as "disabled" (Python
       truthiness). With the minimum valid `run_timeout` of 60 (enforced
       by API validation), the safety net never activates in normal

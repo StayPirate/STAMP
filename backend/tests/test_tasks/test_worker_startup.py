@@ -2,8 +2,10 @@
 (backend/app/tasks/worker_startup.py).
 
 See `docs/features/platform/fetcher-infrastructure.md` (Worker Startup
-Handler) for the contract under test: `celeryd_after_setup` signal
-wiring, bootstrap-then-commit-or-rollback ordering, post-commit engine
+Handler) and `docs/deployment.md` (Celery Worker Pool Requirement) for
+the contract under test: `celeryd_after_setup` signal wiring, the pool
+validation gate (step 1) that runs before the fetcher config bootstrap
+(step 2), bootstrap-then-commit-or-rollback ordering, post-commit engine
 disposal before forking, and fail-fast `SystemExit(1)` on any failure.
 
 `worker_async_bootstrap()` is exercised directly with a mocked session
@@ -22,6 +24,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from celery.concurrency import get_implementation
+from celery.concurrency.solo import TaskPool as SoloTaskPool
 from celery.signals import celeryd_after_setup
 
 from app.tasks import worker_startup
@@ -53,6 +57,22 @@ class _FakeEngine:
         self.dispose = dispose or AsyncMock()
 
 
+class _FakeWorkerInstance:
+    """Minimal stand-in for the `celeryd_after_setup` signal's `instance`
+    keyword argument (a Celery `WorkController`), exposing only the
+    `pool_cls` attribute that `_validate_worker_pool()` reads."""
+
+    def __init__(self, pool_cls: object) -> None:
+        self.pool_cls = pool_cls
+
+
+def _prefork_instance() -> _FakeWorkerInstance:
+    """A fake worker instance resolved to Celery's real `prefork` pool
+    class — the valid case shared by every test that needs to get past
+    the pool validation gate to exercise the bootstrap step."""
+    return _FakeWorkerInstance(get_implementation("prefork"))
+
+
 def _log_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [
         record.getMessage()
@@ -77,6 +97,67 @@ class TestWorkerStartupSignalRegistration:
         after = [key for key, _ in celeryd_after_setup.receivers if key[0] == uid]
         assert len(before) == 1
         assert len(after) == 1
+
+
+@pytest.mark.unit
+class TestValidateWorkerPool:
+    """`_validate_worker_pool()` — direct unit coverage of the pool
+    identity check (see docs/features/platform/fetcher-infrastructure.md,
+    Worker Startup Handler, step 1, and docs/deployment.md, Celery
+    Worker Pool Requirement)."""
+
+    def test_prefork_pool_passes(self) -> None:
+        worker_startup._validate_worker_pool(_prefork_instance())
+
+    def test_processes_alias_resolves_to_same_class_and_passes(self) -> None:
+        """`"processes"` is Celery's compat alias for `prefork` — it
+        resolves to the identical concrete class, so it must also pass."""
+        instance = _FakeWorkerInstance(get_implementation("processes"))
+        worker_startup._validate_worker_pool(instance)
+
+    def test_solo_pool_rejected(self) -> None:
+        instance = _FakeWorkerInstance(SoloTaskPool)
+        with pytest.raises(worker_startup._WorkerPoolValidationError) as exc_info:
+            worker_startup._validate_worker_pool(instance)
+        assert exc_info.value.pool_class == "celery.concurrency.solo.TaskPool"
+
+    def test_threads_pool_rejected(self) -> None:
+        instance = _FakeWorkerInstance(get_implementation("threads"))
+        with pytest.raises(worker_startup._WorkerPoolValidationError):
+            worker_startup._validate_worker_pool(instance)
+
+    def test_custom_class_rejected(self) -> None:
+        class _CustomPool:
+            pass
+
+        instance = _FakeWorkerInstance(_CustomPool)
+        with pytest.raises(worker_startup._WorkerPoolValidationError) as exc_info:
+            worker_startup._validate_worker_pool(instance)
+        assert "_CustomPool" in exc_info.value.pool_class
+
+    def test_missing_pool_cls_attribute_rejected_as_unknown(self) -> None:
+        """A bare `object()` has no `pool_cls` attribute at all —
+        exercises the `AttributeError`-during-read path, not just an
+        explicit class mismatch."""
+        with pytest.raises(worker_startup._WorkerPoolValidationError) as exc_info:
+            worker_startup._validate_worker_pool(object())
+        assert exc_info.value.pool_class == "unknown"
+
+    def test_pool_cls_without_module_or_name_reports_unknown(self) -> None:
+        """Covers `_qualified_name()`'s fallback branch: a `pool_cls`
+        value that is not a class at all (e.g. a bare string, which a
+        badly behaved third-party pool implementation could
+        theoretically set) has neither `__module__` nor
+        `__qualname__`/`__name__`."""
+        instance = _FakeWorkerInstance("not-a-class")
+        with pytest.raises(worker_startup._WorkerPoolValidationError) as exc_info:
+            worker_startup._validate_worker_pool(instance)
+        assert exc_info.value.pool_class == "unknown"
+
+    def test_none_instance_rejected_as_unknown(self) -> None:
+        with pytest.raises(worker_startup._WorkerPoolValidationError) as exc_info:
+            worker_startup._validate_worker_pool(None)
+        assert exc_info.value.pool_class == "unknown"
 
 
 @pytest.mark.unit
@@ -160,7 +241,7 @@ class TestWorkerStartupHandler:
         monkeypatch.setattr(worker_startup, "worker_async_bootstrap", run_spy)
 
         with caplog.at_level("INFO"):
-            worker_startup._worker_startup_handler()
+            worker_startup._worker_startup_handler(instance=_prefork_instance())
 
         run_spy.assert_awaited_once()
         assert any("worker_startup_completed" in m for m in _log_messages(caplog))
@@ -177,7 +258,7 @@ class TestWorkerStartupHandler:
             caplog.at_level("CRITICAL"),
             pytest.raises(SystemExit) as exc_info,
         ):
-            worker_startup._worker_startup_handler()
+            worker_startup._worker_startup_handler(instance=_prefork_instance())
 
         assert exc_info.value.code == 1
         messages = _log_messages(caplog)
@@ -198,6 +279,72 @@ class TestWorkerStartupHandler:
         monkeypatch.setattr(worker_startup, "worker_async_bootstrap", _boom)
 
         with caplog.at_level("INFO"), pytest.raises(SystemExit):
-            worker_startup._worker_startup_handler()
+            worker_startup._worker_startup_handler(instance=_prefork_instance())
 
         assert not any("worker_startup_completed" in m for m in _log_messages(caplog))
+
+
+@pytest.mark.unit
+class TestWorkerStartupHandlerPoolValidation:
+    """The pool validation gate (step 1) runs before the fetcher config
+    bootstrap (step 2) and short-circuits it on failure — see
+    docs/features/platform/fetcher-infrastructure.md (Worker Startup
+    Handler)."""
+
+    def test_invalid_pool_exits_before_bootstrap(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        run_spy = AsyncMock()
+        monkeypatch.setattr(worker_startup, "worker_async_bootstrap", run_spy)
+
+        with (
+            caplog.at_level("CRITICAL"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            worker_startup._worker_startup_handler(
+                instance=_FakeWorkerInstance(SoloTaskPool)
+            )
+
+        assert exc_info.value.code == 1
+        run_spy.assert_not_awaited()
+        messages = _log_messages(caplog)
+        assert any(
+            "worker_startup_failed" in m
+            and "'stage': 'worker_pool_validation'" in m
+            and "celery.concurrency.solo.TaskPool" in m
+            for m in messages
+        )
+
+    def test_invalid_pool_does_not_log_completed(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setattr(worker_startup, "worker_async_bootstrap", AsyncMock())
+
+        with caplog.at_level("INFO"), pytest.raises(SystemExit):
+            worker_startup._worker_startup_handler(
+                instance=_FakeWorkerInstance(SoloTaskPool)
+            )
+
+        assert not any("worker_startup_completed" in m for m in _log_messages(caplog))
+
+    def test_missing_instance_exits_with_unknown_pool_class(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        run_spy = AsyncMock()
+        monkeypatch.setattr(worker_startup, "worker_async_bootstrap", run_spy)
+
+        with (
+            caplog.at_level("CRITICAL"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            worker_startup._worker_startup_handler()  # no `instance` kwarg
+
+        assert exc_info.value.code == 1
+        run_spy.assert_not_awaited()
+        messages = _log_messages(caplog)
+        assert any(
+            "worker_startup_failed" in m
+            and "'stage': 'worker_pool_validation'" in m
+            and "'pool_class': 'unknown'" in m
+            for m in messages
+        )

@@ -125,11 +125,21 @@ services:
 
   # Background task execution (Celery). Depends on `migrate` reaching
   # successful completion, not just on infrastructure health — see
-  # docs/deployment.md (Container Images, Startup Ordering). The `api`
-  # service declares the same dependency above.
+  # docs/deployment.md (Container Images, Startup Ordering). `--pool=prefork`
+  # is explicit here (also Celery's own default) — see docs/deployment.md
+  # (Celery Worker Pool Requirement): no other pool is supported. The `api`
+  # service declares the same `depends_on` dependency above.
   worker:
     <<: *app-common
-    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app",
+        "worker",
+        "--pool=prefork",
+        "--loglevel=info",
+      ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -165,4 +175,4 @@ services:
   # --- Uncomment in Phase 5 (git-based CVE fetchers) ---
   # git-worker:
   #   <<: *app-common
-  #   command: ["celery", "-A", "app.celery_app", "worker", "-Q", "git", "--loglevel=info"]
+  #   command: ["celery", "-A", "app.celery_app", "worker", "-Q", "git", "--pool=prefork", "--loglevel=info"]
