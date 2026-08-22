@@ -239,7 +239,7 @@ class TestAcquireFetcherRunConfigMissing:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
 
@@ -265,7 +265,7 @@ class TestAcquireFetcherRunDisabled:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -304,7 +304,7 @@ class TestAcquireFetcherRunDisabled:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert result is None
@@ -328,12 +328,12 @@ class TestAcquireFetcherRunScheduledCreate:
         db_session: AsyncSession,
         fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
     ) -> None:
-        """`hard_time_limit` (the effective Celery hard limit for this
-        delivery) — not `FetcherConfig.run_timeout` — is persisted on
-        the new row and populates the runtime snapshot's `run_timeout`
-        field. The two are deliberately different values here (2400 vs.
-        1800) to prove the snapshot reflects the delivered limit, never
-        the live config column."""
+        """`hard_time_limit_seconds` (the effective Celery hard limit
+        for this delivery) — not `FetcherConfig.run_timeout` — is
+        persisted on the new row and populates the runtime snapshot's
+        own `hard_time_limit_seconds` field. The two are deliberately
+        different values here (2400 vs. 1800) to prove the snapshot
+        reflects the delivered limit, never the live config column."""
         config = await fetcher_config_factory(
             run_timeout=1800,
             request_delay=2.5,
@@ -348,15 +348,13 @@ class TestAcquireFetcherRunScheduledCreate:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
-            hard_time_limit=2400,
+            hard_time_limit_seconds=2400,
         )
 
         assert isinstance(result, FetcherAcquisition)
-        assert result.config.fetcher_name == config.fetcher_name
-        assert result.config.run_timeout == 2400
+        assert result.config.hard_time_limit_seconds == 2400
         assert result.config.request_delay == 2.5
         assert result.config.custom_settings == {"page_size": 50}
-        assert result.config.schedule_override == "0 */6 * * *"
 
         created = await db_session.get(FetcherRun, result.run_id)
         assert created is not None
@@ -391,7 +389,7 @@ class TestAcquireFetcherRunScheduledDuplicate:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -449,7 +447,7 @@ class TestAcquireFetcherRunStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert result is None
@@ -481,7 +479,7 @@ class TestAcquireFetcherRunStaleBoundary:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         # Scheduled acquisition proceeds after stale finalization.
@@ -557,7 +555,7 @@ class TestAcquireFetcherRunPersistedHardLimitPrecedence:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert result is None
@@ -600,7 +598,7 @@ class TestAcquireFetcherRunPersistedHardLimitPrecedence:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert isinstance(result, FetcherAcquisition)
@@ -640,7 +638,7 @@ class TestAcquireFetcherRunManualAdoption:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -679,7 +677,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=missing_run_id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
     async def test_run_fetcher_name_mismatch_raises_value_error(
@@ -704,7 +702,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
     async def test_already_finalized_run_returns_none_without_error(
@@ -729,7 +727,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -762,7 +760,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -792,7 +790,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -832,7 +830,7 @@ class TestAcquireFetcherRunManualAdoption:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=manual_run.id,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -899,7 +897,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=run.id,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -931,7 +929,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=run.id,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
         assert result is None
@@ -970,7 +968,7 @@ class TestAcquireFetcherRunQueuedStaleBoundary:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         assert isinstance(result, FetcherAcquisition)
@@ -1016,7 +1014,7 @@ class TestAcquireFetcherRunMultipleActiveRowsAnomaly:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
 
 
@@ -1171,7 +1169,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.SCHEDULE,
             run_id=None,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
         assert acquisition_a is not None
 
@@ -1187,7 +1185,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
         )
         with pytest.raises(TimeoutError):
@@ -1249,7 +1247,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=manual_run.id,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
         assert acquisition_a is not None
         assert acquisition_a.run_id == manual_run.id
@@ -1262,7 +1260,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.SCHEDULE,
                 run_id=None,
                 now=now,
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
         )
         with pytest.raises(TimeoutError):
@@ -1333,7 +1331,7 @@ class TestAcquireFetcherRunConcurrency:
             triggered_by=FetcherRunTriggeredBy.MANUAL,
             run_id=manual_run.id,
             now=now,
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
         assert acquisition_a is not None
 
@@ -1422,7 +1420,7 @@ class TestAcquireFetcherRunConcurrency:
                 triggered_by=FetcherRunTriggeredBy.MANUAL,
                 run_id=manual_run.id,
                 now=datetime.now(UTC),
-                hard_time_limit=3600,
+                hard_time_limit_seconds=3600,
             )
         )
         with pytest.raises(TimeoutError):

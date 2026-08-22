@@ -82,10 +82,11 @@ All fetchers MUST inherit from `BaseFetcher`, an abstract base class in
      `status = running` and a non-`NULL` `started_at` at this point —
      `run()` never receives a `queued` run.
    - `config`: an immutable, detached runtime configuration snapshot
-     built from the locked `FetcherConfig` row during the acquisition
-     transaction. Contains `run_timeout`, `request_delay`,
-     `custom_settings`, `schedule_override`, `fetcher_name`, and
-     `enabled`. See "Runtime Configuration Snapshot" below.
+     built during the acquisition transaction. Contains
+     `hard_time_limit_seconds`, `request_delay`, and `custom_settings`
+     — the only fields `execute()` needs. Fetcher identity is available
+     via `self.name` (not duplicated on the snapshot). See "Runtime
+     Configuration Snapshot" below.
 
    `run()` manages its own database sessions internally — callers do
    not pass a session. Each database operation (settings validation,
@@ -884,7 +885,7 @@ exception type to a safe, generic message:
 | `httpx.NetworkError`, `httpx.TimeoutException` | `"External service unreachable"` |
 | `httpx.HTTPStatusError` (4xx) | `"External service rejected request"` |
 | `httpx.HTTPStatusError` (5xx) | `"External service returned server error"` |
-| `SoftTimeLimitExceeded` | `f"Execution timed out after {self.config.run_timeout}s ({processed} items processed before timeout). Consider increasing run_timeout via FetcherConfig for fetcher '{self.name}'."` (where `processed = self._created + self._updated + self._failed`) |
+| `SoftTimeLimitExceeded` | `f"Execution reached the soft time limit (hard limit for this run: {self.config.hard_time_limit_seconds}s; {processed} items processed). Review FetcherConfig.run_timeout for future runs of fetcher '{self.name}'."` (where `processed = self._created + self._updated + self._failed`) |
 | Any other exception | `"Unexpected error"` |
 
 In all cases, `error_detail` receives `str(exception)` and
@@ -1255,25 +1256,28 @@ present in the schema output.
 
 The `run_fetcher` task wrapper creates an immutable runtime
 configuration snapshot during the acquisition transaction (see
-"Concurrency Control", step 3). Most fields are read from the locked
-`FetcherConfig` row; `run_timeout` is populated with the effective
-hard time limit extracted from the Celery request headers (see
-"Per-Run Hard Time Limit" in "Stale Run Detection") so that all
-downstream consumers — error sanitization, internal timeout budgets —
-use the limit of the specific delivery, not the live configuration.
-This snapshot is passed to `BaseFetcher.run()` as the `config`
-parameter and is available to `execute()` via `self.config`.
+"Concurrency Control", step 3). It carries only the fields `execute()`
+actually consumes — the fetcher's identity is available separately via
+`self.name`, and its enabled state and schedule are already resolved
+before the snapshot is built (a disabled fetcher never reaches this
+point — see "Atomic Run Acquisition Protocol", step 2 — and scheduling
+is a Beat/dispatch concern, not an execution-time one).
+`hard_time_limit_seconds` is populated with the effective hard time
+limit extracted from the Celery request headers (see "Per-Run Hard
+Time Limit" in "Stale Run Detection"), not from the live
+`FetcherConfig.run_timeout` column, so that all downstream consumers —
+error sanitization, any future per-run timeout budget — use the limit
+of the specific delivery, never the live configuration. This snapshot
+is passed to `BaseFetcher.run()` as the `config` parameter and is
+available to `execute()` via `self.config`.
 
 The snapshot is a plain Python object (not an ORM model) that contains:
 
 | Field | Type | Source |
 |---|---|---|
-| `fetcher_name` | `str` | `FetcherConfig.fetcher_name` |
-| `enabled` | `bool` | `FetcherConfig.enabled` |
-| `run_timeout` | `int` | Effective hard time limit from Celery request (persisted as `FetcherRun.hard_time_limit_seconds`) |
+| `hard_time_limit_seconds` | `int` | Effective hard time limit from the Celery request (persisted as `FetcherRun.hard_time_limit_seconds`) |
 | `request_delay` | `float` | `FetcherConfig.request_delay` |
 | `custom_settings` | `dict` | `FetcherConfig.custom_settings` (JSONB) |
-| `schedule_override` | `str | None` | `FetcherConfig.schedule_override` |
 
 The snapshot is constructed once and never refreshed — mid-run
 configuration changes by an admin do not take effect until the next
@@ -1839,8 +1843,8 @@ If validation fails, the task logs ERROR and raises `ValueError`
 before any database or registry operation — no `FetcherRun` is
 created, adopted, or finalized, and no fetcher code executes. The
 validated integer value is passed to the async workflow as an explicit
-parameter (`hard_time_limit`), alongside the existing `fetcher_name`,
-`triggered_by`, `user_id`, and `run_id` arguments.
+parameter (`hard_time_limit_seconds`), alongside the existing
+`fetcher_name`, `triggered_by`, `user_id`, and `run_id` arguments.
 
 **No top-level retry**: `run_fetcher` does not configure
 `max_retries` or call `self.retry()`. Failures result in a permanent
@@ -3071,13 +3075,13 @@ transaction owned by the `run_fetcher` task wrapper):
      `"Fetcher '%s' is disabled — skipping run"` and return without
      creating any record.
 
-3. **Snapshot the runtime configuration**: read `run_timeout`,
-   `request_delay`, `custom_settings`, and `schedule_override` from
-   the locked `FetcherConfig` row. Construct an immutable, detached
-   runtime configuration object (see "Runtime Configuration Snapshot"
-   below). The snapshot's `run_timeout` field is populated with the
-   effective hard time limit extracted from the Celery request (see
-   "Per-Run Hard Time Limit" in "Stale Run Detection") — not from the
+3. **Snapshot the runtime configuration**: read `request_delay` and
+   `custom_settings` from the locked `FetcherConfig` row. Construct an
+   immutable, detached runtime configuration object (see "Runtime
+   Configuration Snapshot" below). The snapshot's
+   `hard_time_limit_seconds` field is populated with the effective
+   hard time limit extracted from the Celery request (see "Per-Run
+   Hard Time Limit" in "Stale Run Detection") — not from the
    `FetcherConfig.run_timeout` column. This snapshot is used by
    `BaseFetcher.run()` for the remainder of the execution — no further
    database reads of `FetcherConfig` occur.
@@ -3339,10 +3343,10 @@ under which the worker process executes. This value is:
   fallback defined in the Running Stale Threshold section.
 
 The runtime configuration snapshot (`FetcherRunConfig`) passed to
-`BaseFetcher.run()` carries the per-run `hard_time_limit_seconds` as
-its `run_timeout` field, so all downstream consumers (error
-sanitization, internal timeout budgets) use the effective limit of the
-specific delivery.
+`BaseFetcher.run()` carries the per-run value as its own
+`hard_time_limit_seconds` field, so all downstream consumers (error
+sanitization, any future per-run timeout budget) use the effective
+limit of the specific delivery.
 
 ### Queued Stale Threshold
 

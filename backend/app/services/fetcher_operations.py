@@ -1087,7 +1087,7 @@ async def update_fetcher_config(
                     mark_run_stale(
                         active_run,
                         now=now,
-                        run_timeout=resolve_effective_hard_limit(
+                        hard_time_limit_seconds=resolve_effective_hard_limit(
                             active_run.hard_time_limit_seconds, config.run_timeout
                         ),
                         fetcher_name=fetcher_name,

@@ -20,6 +20,7 @@ rollback — teardown deletes them explicitly.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
@@ -73,21 +74,15 @@ def _isolated_registry() -> Generator[None]:
 
 
 def _make_config(
-    fetcher_name: str,
     *,
-    enabled: bool = True,
-    run_timeout: int = 3600,
+    hard_time_limit_seconds: int = 3600,
     request_delay: float = 0,
     custom_settings: dict[str, Any] | None = None,
-    schedule_override: str | None = None,
 ) -> FetcherRunConfig:
     return FetcherRunConfig(
-        fetcher_name=fetcher_name,
-        enabled=enabled,
-        run_timeout=run_timeout,
+        hard_time_limit_seconds=hard_time_limit_seconds,
         request_delay=request_delay,
         custom_settings=custom_settings or {},
-        schedule_override=schedule_override,
     )
 
 
@@ -234,14 +229,27 @@ async def _execute_stub(self: BaseFetcher, session: AsyncSession) -> None:
 
 @pytest.mark.unit
 class TestFetcherRunConfig:
+    def test_snapshot_contains_only_the_three_consumed_fields(self) -> None:
+        """`FetcherRunConfig` carries only the fields `execute()` consumes
+        (see `fetcher-infrastructure.md`, "Runtime Configuration
+        Snapshot"). `enabled`, `schedule_override`, and `fetcher_name`
+        must never reappear on this snapshot — identity is available via
+        `BaseFetcher.name` instead."""
+        field_names = {f.name for f in dataclasses.fields(FetcherRunConfig)}
+        assert field_names == {
+            "hard_time_limit_seconds",
+            "request_delay",
+            "custom_settings",
+        }
+
     def test_fields_are_readonly(self) -> None:
-        config = _make_config("sync_example")
+        config = _make_config()
         with pytest.raises(AttributeError):
-            config.enabled = False  # type: ignore[misc]
+            config.hard_time_limit_seconds = 1800  # type: ignore[misc]
 
     def test_custom_settings_is_defensively_copied(self) -> None:
         source = {"a": 1}
-        config = _make_config("sync_example", custom_settings=source)
+        config = _make_config(custom_settings=source)
         source["a"] = 999
         assert config.custom_settings == {"a": 1}
 
@@ -1220,7 +1228,7 @@ class TestRunLifecycleStatus:
             pass
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "success"
@@ -1241,7 +1249,7 @@ class TestRunLifecycleStatus:
             self.record_updated(count=2)
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "success"
@@ -1260,7 +1268,7 @@ class TestRunLifecycleStatus:
             self.record_failed(count=1)
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "partial"
@@ -1280,7 +1288,7 @@ class TestRunLifecycleStatus:
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         # Must not raise: failure is recorded on the FetcherRun, not as
         # a propagated exception.
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1300,7 +1308,7 @@ class TestRunLifecycleStatus:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(FetcherError, match="Failed to reach upstream"):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1311,8 +1319,22 @@ class TestRunLifecycleStatus:
         fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
         real_session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        fetcher_name_1, run_id_1 = await fetcher_lifecycle()
-        fetcher_name_2, run_id_2 = await fetcher_lifecycle()
+        fetcher_name, run_id_1 = await fetcher_lifecycle()
+
+        # A second run for the SAME fetcher — mirrors the real
+        # invariant that `self.name` always matches the fetcher_name of
+        # the run being executed (the task wrapper always selects the
+        # class registered under the run's own fetcher_name).
+        async with real_session_factory() as session:
+            run_2 = FetcherRun(
+                fetcher_name=fetcher_name,
+                started_at=datetime.now(UTC),
+                status="running",
+                triggered_by="schedule",
+            )
+            session.add(run_2)
+            await session.commit()
+            run_id_2 = run_2.id
 
         call_count = 0
 
@@ -1322,12 +1344,11 @@ class TestRunLifecycleStatus:
             if call_count == 1:
                 self.record_created(count=5)
 
-        # Same underlying instance reused for both runs (name attribute
-        # is irrelevant to run() itself — only the config/run_id matter).
-        fetcher_cls = _fetcher_class(fetcher_name_1, _execute)
+        # Same underlying instance reused for both runs.
+        fetcher_cls = _fetcher_class(fetcher_name, _execute)
         instance = fetcher_cls()
-        await instance.run(run_id=run_id_1, config=_make_config(fetcher_name_1))
-        await instance.run(run_id=run_id_2, config=_make_config(fetcher_name_2))
+        await instance.run(run_id=run_id_1, config=_make_config())
+        await instance.run(run_id=run_id_2, config=_make_config())
 
         run_2 = await _get_run(real_session_factory, run_id_2)
         assert run_2.items_created == 0
@@ -1346,7 +1367,7 @@ class TestRunLifecycleCursor:
             captured["previous_cursor"] = self.previous_cursor
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["previous_cursor"] is None
 
@@ -1378,7 +1399,7 @@ class TestRunLifecycleCursor:
             captured["previous_cursor"] = self.previous_cursor
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["previous_cursor"] == {"checkpoint": "new"}
 
@@ -1403,7 +1424,7 @@ class TestRunLifecycleCursor:
             captured["previous_cursor"] = self.previous_cursor
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["previous_cursor"] == {"checkpoint": "partial-value"}
 
@@ -1435,7 +1456,7 @@ class TestRunLifecycleCursor:
             captured["previous_cursor"] = self.previous_cursor
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["previous_cursor"] == {"checkpoint": "real"}
 
@@ -1450,7 +1471,7 @@ class TestRunLifecycleCursor:
             self._cursor = {"page": 3}
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.cursor == {"page": 3}
@@ -1468,7 +1489,7 @@ class TestRunLifecycleCursor:
             self._cursor = {"page": 7}
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "partial"
@@ -1487,7 +1508,7 @@ class TestRunLifecycleCursor:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(FetcherError):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.cursor is None
@@ -1504,7 +1525,7 @@ class TestRunLifecycleCursor:
             self.record_failed(count=1)
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1525,7 +1546,7 @@ class TestRunLifecycleCursor:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         # Must not raise.
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1549,7 +1570,7 @@ class TestRunLifecycleTiming:
             pass
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.duration_seconds is not None
@@ -1575,7 +1596,7 @@ class TestRunLifecycleSettings:
             page_size: int = Field(default=100, ge=1, le=1000)
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute, Settings=Settings)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["page_size"] == 100
 
@@ -1599,7 +1620,7 @@ class TestRunLifecycleSettings:
         fetcher_cls = _fetcher_class(fetcher_name, _execute, Settings=Settings)
         await fetcher_cls().run(
             run_id=run_id,
-            config=_make_config(fetcher_name, custom_settings={"page_size": 50}),
+            config=_make_config(custom_settings={"page_size": 50}),
         )
 
         assert captured["page_size"] == 50
@@ -1621,9 +1642,7 @@ class TestRunLifecycleSettings:
         fetcher_cls = _fetcher_class(fetcher_name, _execute, Settings=Settings)
         await fetcher_cls().run(
             run_id=run_id,
-            config=_make_config(
-                fetcher_name, custom_settings={"removed_field": "orphan"}
-            ),
+            config=_make_config(custom_settings={"removed_field": "orphan"}),
         )
 
         run = await _get_run(real_session_factory, run_id)
@@ -1649,7 +1668,7 @@ class TestRunLifecycleSettings:
         with pytest.raises(FetcherConfigError) as exc_info:
             await fetcher_cls().run(
                 run_id=run_id,
-                config=_make_config(fetcher_name, custom_settings={"page_size": -5}),
+                config=_make_config(custom_settings={"page_size": -5}),
             )
         assert fetcher_name in str(exc_info.value)
         assert "page_size" not in str(exc_info.value)
@@ -1686,7 +1705,7 @@ class TestRunLifecyclePreExecutionFailure:
             _load_previous_cursor=_load_previous_cursor,
         )
         with pytest.raises(ValueError, match="previous cursor query failed"):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1718,7 +1737,7 @@ class TestRunLifecyclePreExecutionFailure:
             _build_settings_instance=_build_settings_instance,
         )
         with pytest.raises(RuntimeError, match="settings construction failed"):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         run = await _get_run(real_session_factory, run_id)
         assert run.status == "failure"
@@ -1746,7 +1765,7 @@ class TestRunLifecycleExecutionSessionContract:
             await session.commit()
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         config = await _get_config(real_session_factory, fetcher_name)
         assert config.enabled is False
@@ -1765,7 +1784,7 @@ class TestRunLifecycleExecutionSessionContract:
             # Deliberately no commit.
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         config = await _get_config(real_session_factory, fetcher_name)
         assert config.enabled is True
@@ -1786,7 +1805,7 @@ class TestRunLifecycleExecutionSessionContract:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(FetcherError):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         config = await _get_config(real_session_factory, fetcher_name)
         assert config.enabled is True
@@ -1806,9 +1825,7 @@ class TestRunLifecycleFinalizationFailure:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(RuntimeError, match="not found during finalization"):
-            await fetcher_cls().run(
-                run_id=bogus_run_id, config=_make_config(fetcher_name)
-            )
+            await fetcher_cls().run(run_id=bogus_run_id, config=_make_config())
 
     async def test_missing_run_row_chains_original_execution_exception(
         self,
@@ -1822,9 +1839,7 @@ class TestRunLifecycleFinalizationFailure:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(RuntimeError) as exc_info:
-            await fetcher_cls().run(
-                run_id=bogus_run_id, config=_make_config(fetcher_name)
-            )
+            await fetcher_cls().run(run_id=bogus_run_id, config=_make_config())
         assert isinstance(exc_info.value.__cause__, FetcherError)
         assert "original execution failure" in str(exc_info.value.__cause__)
 
@@ -1844,9 +1859,7 @@ class TestRunLifecycleFinalizationFailure:
             caplog.at_level("CRITICAL"),
             pytest.raises(RuntimeError, match="not found during finalization"),
         ):
-            await fetcher_cls().run(
-                run_id=bogus_run_id, config=_make_config(fetcher_name)
-            )
+            await fetcher_cls().run(run_id=bogus_run_id, config=_make_config())
 
         assert "fetcher_finalization_failed" in caplog.text
         assert fetcher_name in caplog.text
@@ -1876,7 +1889,7 @@ class TestRunLifecycleFinalizationFailure:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(RuntimeError, match="has no started_at during"):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
 
 @pytest.mark.integration
@@ -1892,7 +1905,7 @@ class TestRunLifecycleAuditTrail:
             self.record_created(count=1)
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         async with real_session_factory() as session:
             result = await session.execute(
@@ -1921,7 +1934,7 @@ class TestSanitizeErrorHelper:
         exc = httpx.HTTPStatusError("Unusual", request=request, response=response)
 
         message, detail = base_fetcher_module._sanitize_error(
-            exc, run_timeout=3600, fetcher_name="sync_example", processed=0
+            exc, hard_time_limit_seconds=3600, fetcher_name="sync_example", processed=0
         )
 
         assert message == "Unexpected error"
@@ -1943,7 +1956,7 @@ class TestErrorSanitization:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(type(exc)):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
         return await _get_run(real_session_factory, run_id)
 
     async def test_fetcher_error_with_cause_exposes_cause_in_detail_only(
@@ -2038,8 +2051,12 @@ class TestErrorSanitization:
     ) -> None:
         """Matches the exact template mandated by `fetcher-infrastructure.md`
         (Error Message Sanitization, BaseFetcher fallback), including the
-        items-processed count and fetcher name."""
-        fetcher_name, run_id = await fetcher_lifecycle()
+        items-processed count and fetcher name. Uses a live
+        `FetcherConfig.run_timeout` (1800) deliberately different from
+        the snapshot's `hard_time_limit_seconds` (2400) to prove the
+        message reports the per-delivery limit, never the live config
+        value."""
+        fetcher_name, run_id = await fetcher_lifecycle(run_timeout=1800)
 
         async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
             self.record_created(2)
@@ -2049,14 +2066,15 @@ class TestErrorSanitization:
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(SoftTimeLimitExceeded):
             await fetcher_cls().run(
-                run_id=run_id, config=_make_config(fetcher_name, run_timeout=3600)
+                run_id=run_id,
+                config=_make_config(hard_time_limit_seconds=2400),
             )
         run = await _get_run(real_session_factory, run_id)
 
         assert run.error_message == (
-            "Execution timed out after 3600s (3 items processed before "
-            "timeout). Consider increasing run_timeout via FetcherConfig "
-            f"for fetcher '{fetcher_name}'."
+            "Execution reached the soft time limit (hard limit for this "
+            "run: 2400s; 3 items processed). Review FetcherConfig.run_timeout "
+            f"for future runs of fetcher '{fetcher_name}'."
         )
         assert run.items_created == 2
         assert run.items_failed == 1
@@ -2103,7 +2121,7 @@ class TestLoggingContext:
             captured["context"] = ctxvars.get_contextvars()
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert captured["context"].get("fetcher_run_id") == str(run_id)
 
@@ -2118,7 +2136,7 @@ class TestLoggingContext:
             pass
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
-        await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+        await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert "fetcher_run_id" not in ctxvars.get_contextvars()
 
@@ -2134,7 +2152,7 @@ class TestLoggingContext:
 
         fetcher_cls = _fetcher_class(fetcher_name, _execute)
         with pytest.raises(FetcherError):
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
 
         assert "fetcher_run_id" not in ctxvars.get_contextvars()
 
@@ -2151,7 +2169,7 @@ class TestLoggingContext:
 
         try:
             fetcher_cls = _fetcher_class(fetcher_name, _execute)
-            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+            await fetcher_cls().run(run_id=run_id, config=_make_config())
             assert ctxvars.get_contextvars().get("fetcher_run_id") == (
                 "pre-existing-value"
             )
