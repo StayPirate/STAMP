@@ -752,6 +752,50 @@ class TestFinalizeManualRunAsFailure:
                 now=datetime.now(UTC),
             )
 
+    async def test_fetcher_name_mismatch_raises_value_error(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: Callable[..., Awaitable[FetcherConfig]],
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The conditional UPDATE's `fetcher_name` predicate means a
+        `run_id` that exists but belongs to a different fetcher matches
+        zero rows — the same outcome as a wholly missing `run_id`.
+        Unlike `acquire_fetcher_run`'s equivalent guard (which raises a
+        distinct message and log event per cause), this function does
+        NOT distinguish the two: both collapse into the same "not
+        found" `ValueError` message and the same
+        `manual_run_finalization_target_missing` log event, per
+        `docs/features/platform/fetcher-infrastructure.md` (Celery
+        Integration — Unknown and deregistered fetcher handling, which
+        specifies a single combined case). The row is left untouched
+        in both cases."""
+        other_config = await fetcher_config_factory()
+        run = await fetcher_run_factory(
+            fetcher_name=other_config.fetcher_name,
+            status="queued",
+            started_at=None,
+            triggered_by="manual",
+        )
+
+        with (
+            caplog.at_level("ERROR"),
+            pytest.raises(ValueError, match=str(run.id)),
+        ):
+            await finalize_manual_run_as_failure(
+                db_session,
+                run_id=run.id,
+                fetcher_name="a_different_fetcher",
+                error_message="Fetcher deregistered between trigger and execution",
+                now=datetime.now(UTC),
+            )
+
+        await db_session.refresh(run)
+        assert run.status == "queued"
+        assert run.error_message is None
+        assert run.finished_at is None
+
     async def test_already_transitioned_run_is_a_silent_no_op(
         self,
         db_session: AsyncSession,

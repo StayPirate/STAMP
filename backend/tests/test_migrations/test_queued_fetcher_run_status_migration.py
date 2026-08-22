@@ -20,6 +20,7 @@ from typing import Any, TypedDict
 
 import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import command
@@ -115,6 +116,32 @@ async def _seed_pre_adoption_failure_row(database_url: str) -> None:
                     "VALUES ('migration_test_fetcher', 'failure', "
                     "now() - interval '5 minutes', "
                     "'Fetcher disabled between trigger and execution', "
+                    "0, 0, 0, 'manual')"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _attempt_insert_queued_row(database_url: str) -> None:
+    """Attempt to insert a `FetcherRun` row with `status = 'queued'`
+    and a non-NULL `started_at`, isolating the CHECK constraint on
+    `status` from the (unrelated) `started_at` NOT NULL constraint.
+    Used to prove the downgraded schema's
+    `chk_fetcher_run_status_valid` constraint actually rejects the
+    `queued` value at the database level — not merely that a
+    constraint with that name still exists (which would remain true
+    even if `downgrade()` regressed to recreate it with the wrong
+    value list)."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO fetcher_run "
+                    "(fetcher_name, started_at, status, items_created, "
+                    "items_updated, items_failed, triggered_by) "
+                    "VALUES ('migration_test_fetcher', now(), 'queued', "
                     "0, 0, 0, 'manual')"
                 )
             )
@@ -304,6 +331,13 @@ class TestQueuedFetcherRunStatusMigration:
             normalized_pre_adoption_failure_row["finished_at"]
             != normalized_pre_adoption_failure_row["started_at"]
         )
+
+        # The downgraded CHECK constraint does not merely exist under
+        # the same name — it actually rejects `queued` again at the
+        # database level. `started_at` is non-NULL here, so the NOT
+        # NULL constraint cannot be the cause of the rejection.
+        with pytest.raises(IntegrityError, match="chk_fetcher_run_status_valid"):
+            run_sync(_attempt_insert_queued_row(alembic_test_database_url))
 
         # 4. Re-upgrade to head — idempotent: no errors, schema facts
         # match step 2 again.
