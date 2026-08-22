@@ -65,22 +65,24 @@ _MAX_REQUEST_DELAY = 300
 class FetcherRunConfig:
     """Immutable, detached runtime configuration snapshot.
 
-    Built from the locked `FetcherConfig` row during the acquisition
-    transaction (owned by the `run_fetcher` task wrapper — not part of
-    this module) and passed to `BaseFetcher.run()`. Holds no ORM
-    reference — safe to read after the acquisition transaction commits.
+    Built during the acquisition transaction (owned by the
+    `run_fetcher` task wrapper — not part of this module) and passed to
+    `BaseFetcher.run()`. Holds no ORM reference — safe to read after
+    the acquisition transaction commits.
+
+    Carries only the fields `execute()` actually consumes. Fetcher
+    identity is available via `self.name` (not duplicated here);
+    enabled state and scheduling are already resolved before the
+    snapshot is built and have no bearing on an in-progress execution.
 
     `custom_settings` is defensively shallow-copied at construction so
     that later mutation of the source `FetcherConfig.custom_settings`
     dict cannot retroactively change an already-dispatched snapshot.
     """
 
-    fetcher_name: str
-    enabled: bool
-    run_timeout: int
+    hard_time_limit_seconds: int
     request_delay: float
     custom_settings: dict[str, Any]
-    schedule_override: str | None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "custom_settings", dict(self.custom_settings))
@@ -289,7 +291,7 @@ def _warn_catch_up_flag_mismatch(cls: type[BaseFetcher]) -> None:
 
 
 def _sanitize_error(
-    exc: BaseException, run_timeout: int, fetcher_name: str, processed: int
+    exc: BaseException, hard_time_limit_seconds: int, fetcher_name: str, processed: int
 ) -> tuple[str, str | None]:
     """Map an execution exception to a sanitized public/restricted pair.
 
@@ -311,9 +313,10 @@ def _sanitize_error(
         return "External service unreachable", str(exc)
     if isinstance(exc, SoftTimeLimitExceeded):
         return (
-            f"Execution timed out after {run_timeout}s ({processed} items "
-            "processed before timeout). Consider increasing run_timeout via "
-            f"FetcherConfig for fetcher '{fetcher_name}'.",
+            "Execution reached the soft time limit (hard limit for this "
+            f"run: {hard_time_limit_seconds}s; {processed} items processed). "
+            f"Review FetcherConfig.run_timeout for future runs of fetcher "
+            f"'{fetcher_name}'.",
             str(exc),
         )
     return "Unexpected error", str(exc)
@@ -502,13 +505,11 @@ class BaseFetcher:
                 )
             except ValidationError as exc:
                 raise FetcherConfigError(
-                    f"Fetcher '{config.fetcher_name}' has invalid stored settings "
+                    f"Fetcher '{self.name}' has invalid stored settings "
                     "— update via the API"
                 ) from exc
 
-            self._previous_cursor = await self._load_previous_cursor(
-                config.fetcher_name
-            )
+            self._previous_cursor = await self._load_previous_cursor(self.name)
         except Exception as exc:
             return exc
 
@@ -553,7 +554,7 @@ class BaseFetcher:
             status = FetcherRunStatus.FAILURE.value
             processed = self._created + self._updated + self._failed
             error_message, error_detail = _sanitize_error(
-                execution_exc, config.run_timeout, self.name, processed
+                execution_exc, config.hard_time_limit_seconds, self.name, processed
             )
             error_traceback = "".join(
                 traceback.format_exception(
@@ -618,7 +619,7 @@ class BaseFetcher:
         except Exception as finalize_exc:
             logger.critical(
                 "fetcher_finalization_failed",
-                fetcher_name=config.fetcher_name,
+                fetcher_name=self.name,
                 run_id=str(run_id),
                 error=str(finalize_exc),
             )

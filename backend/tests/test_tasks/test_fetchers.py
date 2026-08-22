@@ -89,14 +89,11 @@ def _isolated_registry() -> Generator[None]:
     FETCHER_REGISTRY.update(original)
 
 
-def _make_config(fetcher_name: str = "test_fetcher") -> FetcherRunConfig:
+def _make_config() -> FetcherRunConfig:
     return FetcherRunConfig(
-        fetcher_name=fetcher_name,
-        enabled=True,
-        run_timeout=3600,
+        hard_time_limit_seconds=3600,
         request_delay=0,
         custom_settings={},
-        schedule_override=None,
     )
 
 
@@ -237,7 +234,7 @@ class TestRunFetcherAsync:
 
         with pytest.raises(ValueError, match="Invalid triggered_by"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "bogus", hard_time_limit=3600
+                "test_fetcher", "bogus", hard_time_limit_seconds=3600
             )
 
         factory.assert_not_called()
@@ -249,7 +246,7 @@ class TestRunFetcherAsync:
         monkeypatch.setattr(fetchers, "_handle_unknown_fetcher", handle)
 
         await fetchers.run_fetcher_async(
-            "ghost_fetcher", "schedule", hard_time_limit=3600
+            "ghost_fetcher", "schedule", hard_time_limit_seconds=3600
         )
 
         handle.assert_awaited_once_with("ghost_fetcher", None)
@@ -267,7 +264,7 @@ class TestRunFetcherAsync:
             "manual",
             str(user_id),
             str(run_id),
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         handle.assert_awaited_once_with("ghost_fetcher", run_id)
@@ -284,7 +281,7 @@ class TestRunFetcherAsync:
         monkeypatch.setattr(fetchers, "acquire_fetcher_run", acquire)
 
         await fetchers.run_fetcher_async(
-            "test_fetcher", "schedule", hard_time_limit=3600
+            "test_fetcher", "schedule", hard_time_limit_seconds=3600
         )
 
         session.commit.assert_awaited_once_with()
@@ -309,7 +306,7 @@ class TestRunFetcherAsync:
         monkeypatch.setattr(fetchers, "acquire_fetcher_run", acquire)
 
         await fetchers.run_fetcher_async(
-            "test_fetcher", "schedule", hard_time_limit=3600
+            "test_fetcher", "schedule", hard_time_limit_seconds=3600
         )
 
         assert len(_StubFetcher.created) == 1
@@ -336,7 +333,7 @@ class TestRunFetcherAsync:
             "manual",
             str(user_id),
             str(run_id),
-            hard_time_limit=3600,
+            hard_time_limit_seconds=3600,
         )
 
         _, kwargs = acquire.call_args
@@ -359,7 +356,7 @@ class TestRunFetcherAsync:
 
         with pytest.raises(RuntimeError, match="db unreachable"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "schedule", hard_time_limit=3600
+                "test_fetcher", "schedule", hard_time_limit_seconds=3600
             )
 
         session.commit.assert_not_awaited()
@@ -390,7 +387,7 @@ class TestRunFetcherAsync:
 
         with pytest.raises(RuntimeError, match="execution failed"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "schedule", hard_time_limit=3600
+                "test_fetcher", "schedule", hard_time_limit_seconds=3600
             )
 
 
@@ -428,7 +425,7 @@ class TestRunFetcherAsyncEngineDisposal:
         monkeypatch.setattr(fetchers, "engine", fake_engine)
 
         await fetchers.run_fetcher_async(
-            "test_fetcher", "schedule", hard_time_limit=3600
+            "test_fetcher", "schedule", hard_time_limit_seconds=3600
         )
 
         _StubFetcher.created[0].run.assert_awaited_once()
@@ -443,7 +440,7 @@ class TestRunFetcherAsyncEngineDisposal:
 
         with pytest.raises(ValueError, match="Invalid triggered_by"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "bogus", hard_time_limit=3600
+                "test_fetcher", "bogus", hard_time_limit_seconds=3600
             )
 
         fake_engine.dispose.assert_awaited_once_with()
@@ -456,7 +453,7 @@ class TestRunFetcherAsyncEngineDisposal:
         monkeypatch.setattr(fetchers, "engine", fake_engine)
 
         await fetchers.run_fetcher_async(
-            "ghost_fetcher", "schedule", hard_time_limit=3600
+            "ghost_fetcher", "schedule", hard_time_limit_seconds=3600
         )
 
         fake_engine.dispose.assert_awaited_once_with()
@@ -476,7 +473,7 @@ class TestRunFetcherAsyncEngineDisposal:
 
         with pytest.raises(RuntimeError, match="db unreachable"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "schedule", hard_time_limit=3600
+                "test_fetcher", "schedule", hard_time_limit_seconds=3600
             )
 
         fake_engine.dispose.assert_awaited_once_with()
@@ -505,7 +502,7 @@ class TestRunFetcherAsyncEngineDisposal:
 
         with pytest.raises(RuntimeError, match="execution failed"):
             await fetchers.run_fetcher_async(
-                "test_fetcher", "schedule", hard_time_limit=3600
+                "test_fetcher", "schedule", hard_time_limit_seconds=3600
             )
 
         fake_engine.dispose.assert_awaited_once_with()
@@ -519,55 +516,55 @@ class TestRunFetcherAsyncEngineDisposal:
 @pytest.mark.unit
 class TestExtractHardTimeLimit:
     def test_valid_two_element_list_returns_hard_limit(self) -> None:
-        assert fetchers._extract_hard_time_limit([3600, 3420]) == 3600
+        assert fetchers._extract_hard_time_limit_seconds([3600, 3420]) == 3600
 
     def test_valid_tuple_returns_hard_limit(self) -> None:
-        assert fetchers._extract_hard_time_limit((3600, 3420)) == 3600
+        assert fetchers._extract_hard_time_limit_seconds((3600, 3420)) == 3600
 
     def test_float_hard_limit_is_coerced_to_int(self) -> None:
-        assert fetchers._extract_hard_time_limit((3600.0, 3420.0)) == 3600
+        assert fetchers._extract_hard_time_limit_seconds((3600.0, 3420.0)) == 3600
 
     def test_minimum_boundary_60_is_valid(self) -> None:
-        assert fetchers._extract_hard_time_limit((60, 57)) == 60
+        assert fetchers._extract_hard_time_limit_seconds((60, 57)) == 60
 
     def test_maximum_boundary_604800_is_valid(self) -> None:
-        assert fetchers._extract_hard_time_limit((604800, 574560)) == 604800
+        assert fetchers._extract_hard_time_limit_seconds((604800, 574560)) == 604800
 
     def test_none_timelimit_raises(self) -> None:
         with pytest.raises(ValueError, match="Missing"):
-            fetchers._extract_hard_time_limit(None)
+            fetchers._extract_hard_time_limit_seconds(None)
 
     def test_empty_timelimit_raises(self) -> None:
         with pytest.raises(ValueError, match="Missing"):
-            fetchers._extract_hard_time_limit(())
+            fetchers._extract_hard_time_limit_seconds(())
 
     def test_none_hard_limit_raises(self) -> None:
         with pytest.raises(ValueError, match="Missing"):
-            fetchers._extract_hard_time_limit((None, None))
+            fetchers._extract_hard_time_limit_seconds((None, None))
 
     def test_non_numeric_hard_limit_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid"):
-            fetchers._extract_hard_time_limit(("not-a-number", 3420))
+            fetchers._extract_hard_time_limit_seconds(("not-a-number", 3420))
 
     def test_zero_hard_limit_raises(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
-            fetchers._extract_hard_time_limit((0, 0))
+            fetchers._extract_hard_time_limit_seconds((0, 0))
 
     def test_negative_hard_limit_raises(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
-            fetchers._extract_hard_time_limit((-100, -95))
+            fetchers._extract_hard_time_limit_seconds((-100, -95))
 
     def test_below_minimum_raises(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
-            fetchers._extract_hard_time_limit((59, 56))
+            fetchers._extract_hard_time_limit_seconds((59, 56))
 
     def test_above_maximum_raises(self) -> None:
         with pytest.raises(ValueError, match="out of range"):
-            fetchers._extract_hard_time_limit((604801, 574561))
+            fetchers._extract_hard_time_limit_seconds((604801, 574561))
 
     def test_logs_error_on_missing(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level("ERROR"), pytest.raises(ValueError, match="Missing"):
-            fetchers._extract_hard_time_limit(None)
+            fetchers._extract_hard_time_limit_seconds(None)
         assert any(
             "run_fetcher_missing_time_limit" in record.getMessage()
             for record in caplog.records
@@ -575,7 +572,7 @@ class TestExtractHardTimeLimit:
 
     def test_logs_error_on_out_of_range(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level("ERROR"), pytest.raises(ValueError, match="out of range"):
-            fetchers._extract_hard_time_limit((30, 28))
+            fetchers._extract_hard_time_limit_seconds((30, 28))
         assert any(
             "run_fetcher_time_limit_out_of_range" in record.getMessage()
             for record in caplog.records
@@ -615,7 +612,7 @@ def test_sync_wrapper_calls_async_workflow_once(
     )
 
     workflow.assert_awaited_once_with(
-        "test_fetcher", "manual", "user-id", "run-id", hard_time_limit=3600
+        "test_fetcher", "manual", "user-id", "run-id", hard_time_limit_seconds=3600
     )
 
 
@@ -629,7 +626,7 @@ def test_sync_wrapper_default_arguments(
     fetchers._run_fetcher_sync(_FakeTask(), "test_fetcher")
 
     workflow.assert_awaited_once_with(
-        "test_fetcher", "schedule", None, None, hard_time_limit=3600
+        "test_fetcher", "schedule", None, None, hard_time_limit_seconds=3600
     )
 
 
