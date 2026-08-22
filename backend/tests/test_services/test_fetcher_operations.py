@@ -6,13 +6,19 @@ Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
 `get_fetcher_timeline`, Disabled Period Derivation) for the contract
 under test.
 
-Pure calculation helpers (`_is_stale`, `_count_recognized_settings`) are
-unit tests (no DB, no Redis). Every public function performs real
-database reads and is tested with `db_session`/the fetcher factory
-fixtures. `list_fetchers`'s RedBeat integration uses the shared
-`celery_test_app` fixture (`tests/conftest.py`) against the isolated
-worker Redis logical database (see
-`docs/features/platform/testing-strategy.md`, Redis Strategy).
+Pure calculation helpers (`_count_recognized_settings`) are unit tests
+(no DB, no Redis). Staleness evaluation (`is_run_stale()`) is owned by
+`app.services.fetcher_execution` and tested in
+`test_fetcher_execution.py` — this module only tests that its own
+read functions (`list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`)
+correctly wire a run's own `hard_time_limit_seconds` (or the live
+`FetcherConfig.run_timeout` fallback) into the shared function. Every
+public function performs real database reads and is tested with
+`db_session`/the fetcher factory fixtures. `list_fetchers`'s RedBeat
+integration uses the shared `celery_test_app` fixture
+(`tests/conftest.py`) against the isolated worker Redis logical
+database (see `docs/features/platform/testing-strategy.md`, Redis
+Strategy).
 """
 
 from __future__ import annotations
@@ -51,7 +57,6 @@ from app.services.fetcher_operations import (
     FetcherSettingUnknownError,
     UpdateConfigPayload,
     _count_recognized_settings,
-    _is_stale,
     get_fetcher_config,
     get_fetcher_run,
     get_fetcher_timeline,
@@ -152,63 +157,6 @@ def _ops_log_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
 # ---------------------------------------------------------------------------
 # Pure calculation unit tests
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestIsStale:
-    def test_terminal_status_is_never_stale(self) -> None:
-        now = datetime.now(UTC)
-        assert (
-            _is_stale(
-                "success",
-                now - timedelta(hours=10),
-                now - timedelta(hours=10),
-                3600,
-                now,
-            )
-            is False
-        )
-
-    def test_running_under_threshold_is_not_stale(self) -> None:
-        now = datetime.now(UTC)
-        started_at = now - timedelta(seconds=3600 + 59)
-        assert _is_stale("running", started_at, started_at, 3600, now) is False
-
-    def test_running_at_exact_threshold_is_not_stale(self) -> None:
-        """Boundary: `elapsed == run_timeout + 60` is NOT stale — the
-        contract requires strictly greater than the threshold."""
-        now = datetime.now(UTC)
-        started_at = now - timedelta(seconds=3660)
-        assert _is_stale("running", started_at, started_at, 3600, now) is False
-
-    def test_running_over_threshold_is_stale(self) -> None:
-        now = datetime.now(UTC)
-        started_at = now - timedelta(seconds=3661)
-        assert _is_stale("running", started_at, started_at, 3600, now) is True
-
-    def test_queued_under_threshold_is_not_stale(self) -> None:
-        now = datetime.now(UTC)
-        created_at = now - timedelta(seconds=599)
-        assert _is_stale("queued", created_at, None, 3600, now) is False
-
-    def test_queued_at_exact_threshold_is_not_stale(self) -> None:
-        """Boundary: `elapsed == 600` is NOT stale — strictly greater
-        than the fixed Queued Stale Threshold."""
-        now = datetime.now(UTC)
-        created_at = now - timedelta(seconds=600)
-        assert _is_stale("queued", created_at, None, 3600, now) is False
-
-    def test_queued_over_threshold_is_stale(self) -> None:
-        now = datetime.now(UTC)
-        created_at = now - timedelta(seconds=601)
-        assert _is_stale("queued", created_at, None, 3600, now) is True
-
-    def test_queued_staleness_is_independent_of_run_timeout(self) -> None:
-        """The Queued Stale Threshold is a fixed 600 seconds — an
-        unusually large `run_timeout` does not extend it."""
-        now = datetime.now(UTC)
-        created_at = now - timedelta(seconds=601)
-        assert _is_stale("queued", created_at, None, 604800, now) is True
 
 
 @pytest.mark.unit
@@ -449,6 +397,39 @@ class TestListFetchersLastRun:
 
         last_run = items[0].last_run
         assert last_run is not None
+        assert last_run.stale is True
+
+    async def test_stale_uses_run_own_hard_limit_over_live_config(
+        self,
+        db_session: AsyncSession,
+        celery_test_app: Celery,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        """The run's own persisted `hard_time_limit_seconds` takes
+        precedence over the fetcher's current (possibly since-changed)
+        `FetcherConfig.run_timeout` — see
+        `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+        Detection, Running Stale Threshold)."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
+        )
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC) - timedelta(seconds=200),
+            hard_time_limit_seconds=60,
+        )
+
+        items = await list_fetchers(
+            db_session, has_manage_fetchers=False, celery_app=celery_test_app
+        )
+
+        last_run = items[0].last_run
+        assert last_run is not None
+        # 200s elapsed > own hard limit (60) + 60 margin == 120: stale,
+        # even though the live config's run_timeout (3600) would not be.
         assert last_run.stale is True
 
     async def test_triggered_by_user_hidden_without_manage_fetchers(
@@ -1930,6 +1911,49 @@ class TestUpdateFetcherConfigGuards:
         assert event.old_value == "60"
         assert event.new_value == "300"
         assert event.detail == {"field": "run_timeout"}
+
+    async def test_run_timeout_change_respects_running_run_own_persisted_hard_limit(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+        user_factory: UserFactory,
+    ) -> None:
+        """A `running` run dispatched under a larger persisted hard
+        limit must still block the guard after `run_timeout` is
+        lowered — the live config value must not override the row's
+        own limit. See
+        `docs/features/platform/fetcher-infrastructure.md` (Stale Run
+        Detection, Running Stale Threshold): under the live config
+        alone (60 -> threshold 120) the row's 200s elapsed would look
+        stale, but the row's own persisted limit (3600 -> threshold
+        3660) says otherwise, and that value must win."""
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(
+            fetcher_name=_NoSettingsFetcher.name, run_timeout=3600
+        )
+        run = await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="running",
+            started_at=datetime.now(UTC) - timedelta(seconds=200),
+            hard_time_limit_seconds=3600,
+        )
+        admin = await user_factory()
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await update_fetcher_config(
+                db_session,
+                fetcher_name=config.fetcher_name,
+                user_id=admin.id,
+                payload=UpdateConfigPayload(run_timeout=60),
+            )
+
+        await db_session.refresh(config)
+        assert config.run_timeout == 3600
+        await db_session.refresh(run)
+        assert run.status == "running"
+        events = (await db_session.execute(select(FetcherAuditEvent))).scalars().all()
+        assert events == []
 
     async def test_run_timeout_unchanged_value_skips_active_run_guard(
         self,

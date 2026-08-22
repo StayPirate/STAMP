@@ -106,6 +106,7 @@ class FetcherRun(Base):
         UUID(as_uuid=True), ForeignKey("user.id"), nullable=True
     )
     cursor: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    hard_time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -50,29 +50,14 @@ from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_audit_log import FetcherAuditLog
-from app.services.fetcher_execution import mark_queued_run_stale, mark_run_stale
+from app.services.fetcher_execution import (
+    is_run_stale,
+    mark_queued_run_stale,
+    mark_run_stale,
+    resolve_effective_hard_limit,
+)
 
 logger = structlog.get_logger(__name__)
-
-# Hardcoded stale-detection margin (seconds) for `running` runs, mirrors
-# the private `_STALE_MARGIN_SECONDS` constant in
-# `app/services/fetcher_execution.py` (see
-# `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-# Detection, Running Stale Threshold). Duplicated rather than imported:
-# that module's constant is a private implementation detail of the run
-# acquisition protocol, not a shared public contract, and the two
-# modules must not couple through a private symbol. Both values are
-# defined by the same specification and are expected to change together
-# if that specification's margin ever changes.
-_STALE_MARGIN_SECONDS = 60
-
-# Hardcoded stale-detection threshold (seconds) for `queued` runs,
-# mirrors the private `_QUEUED_STALE_SECONDS` constant in
-# `app/services/fetcher_execution.py` (see
-# `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-# Detection, Queued Stale Threshold). Same duplication rationale as
-# `_STALE_MARGIN_SECONDS` above.
-_QUEUED_STALE_SECONDS = 600
 
 # Default `run_timeout` for a registered fetcher with no `FetcherConfig`
 # row yet (bootstrap not run) — mirrors `FetcherConfig.run_timeout`'s
@@ -348,32 +333,6 @@ class FetcherAuditEventPage:
 # ---------------------------------------------------------------------------
 
 
-def _is_stale(
-    status: str,
-    created_at: datetime,
-    started_at: datetime | None,
-    run_timeout: int,
-    now: datetime,
-) -> bool:
-    """`True` when the run's elapsed time exceeds the threshold that
-    matches its own status — Queued Stale Threshold (`created_at`, 600
-    seconds, fixed) for `queued`, Running Stale Threshold (`started_at`,
-    `run_timeout + _STALE_MARGIN_SECONDS`) for `running`. `False` for
-    any terminal status. See
-    `docs/features/platform/fetcher-infrastructure.md` (Stale Run
-    Detection)."""
-    if status == FetcherRunStatus.QUEUED.value:
-        elapsed = (now - created_at).total_seconds()
-        return elapsed > _QUEUED_STALE_SECONDS
-    if status == FetcherRunStatus.RUNNING.value:
-        assert started_at is not None, (
-            "a 'running' FetcherRun always has a non-NULL started_at"
-        )
-        elapsed = (now - started_at).total_seconds()
-        return elapsed > run_timeout + _STALE_MARGIN_SECONDS
-    return False
-
-
 def _count_recognized_settings(
     fetcher_cls: type[BaseFetcher], custom_settings: dict[str, Any]
 ) -> int:
@@ -453,8 +412,17 @@ def _first_settings_error_message(exc: ValidationError) -> str:
 
 
 def _build_run_summary(
-    run: FetcherRun, run_timeout: int, now: datetime, has_manage_fetchers: bool
+    run: FetcherRun, fallback_run_timeout: int, now: datetime, has_manage_fetchers: bool
 ) -> FetcherRunSummary:
+    """Build a `FetcherRunSummary`, resolving `stale` via the shared
+    `is_run_stale()` (`app.services.fetcher_execution`).
+
+    `fallback_run_timeout` is the fetcher's current
+    `FetcherConfig.run_timeout` (or the code-level default for an
+    unbootstrapped registered fetcher) — used only when `run`'s own
+    `hard_time_limit_seconds` is `NULL` (a historical row predating the
+    column). See `resolve_effective_hard_limit()`.
+    """
     return FetcherRunSummary(
         id=run.id,
         fetcher_name=run.fetcher_name,
@@ -469,18 +437,52 @@ def _build_run_summary(
         error_message=run.error_message,
         triggered_by=run.triggered_by,
         triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
-        stale=_is_stale(run.status, run.created_at, run.started_at, run_timeout, now),
+        stale=is_run_stale(
+            status=run.status,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            hard_time_limit_seconds=run.hard_time_limit_seconds,
+            fallback_run_timeout=fallback_run_timeout,
+            now=now,
+        ),
     )
 
 
-async def _ensure_fetcher_exists(db: AsyncSession, fetcher_name: str) -> int:
-    """Validate that `fetcher_name` exists (registered or deregistered)
-    and return the `run_timeout` to use for stale-run calculations.
+async def _ensure_fetcher_exists(db: AsyncSession, fetcher_name: str) -> None:
+    """Validate that `fetcher_name` exists (registered or deregistered).
 
-    A registered fetcher with no `FetcherConfig` row yet (bootstrap not
-    run) is a valid, existing fetcher — returns the code-level default
-    (`_DEFAULT_RUN_TIMEOUT`). A name absent from both the registry and
-    `FetcherConfig` raises `FetcherNotFoundError`.
+    A registered fetcher (`FETCHER_REGISTRY` membership) is always
+    valid, even with no `FetcherConfig` row yet (bootstrap not run) —
+    checked first since it requires no database query. Otherwise, a
+    `FetcherConfig` row must exist (a deregistered fetcher whose config
+    row survives its code removal). A name absent from both raises
+    `FetcherNotFoundError`.
+
+    Raises:
+        FetcherNotFoundError: `fetcher_name` is neither registered nor
+            has a `FetcherConfig` row.
+    """
+    if fetcher_name in FETCHER_REGISTRY:
+        return
+    result = await db.execute(
+        select(FetcherConfig.fetcher_name).where(
+            FetcherConfig.fetcher_name == fetcher_name
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise FetcherNotFoundError()
+
+
+async def _resolve_fallback_run_timeout(db: AsyncSession, fetcher_name: str) -> int:
+    """Read `fetcher_name`'s current `FetcherConfig.run_timeout`, used
+    as the stale-evaluation fallback for `running` rows whose own
+    `hard_time_limit_seconds` is `NULL` (historical rows predating the
+    column — see `resolve_effective_hard_limit()`).
+
+    Assumes `fetcher_name` has already been validated to exist (see
+    `_ensure_fetcher_exists`). A registered fetcher with no
+    `FetcherConfig` row yet (bootstrap not run) has no live value —
+    returns the code-level default (`_DEFAULT_RUN_TIMEOUT`).
     """
     result = await db.execute(
         select(FetcherConfig.run_timeout).where(
@@ -488,11 +490,7 @@ async def _ensure_fetcher_exists(db: AsyncSession, fetcher_name: str) -> int:
         )
     )
     run_timeout = result.scalar_one_or_none()
-    if run_timeout is not None:
-        return run_timeout
-    if fetcher_name in FETCHER_REGISTRY:
-        return _DEFAULT_RUN_TIMEOUT
-    raise FetcherNotFoundError()
+    return run_timeout if run_timeout is not None else _DEFAULT_RUN_TIMEOUT
 
 
 def _read_due_times(celery_app: Celery, names: list[str]) -> dict[str, datetime | None]:
@@ -690,13 +688,13 @@ async def list_fetchers(
                 custom_settings_count = _count_recognized_settings(
                     fetcher_cls, config.custom_settings
                 )
-                run_timeout = config.run_timeout
+                fallback_run_timeout = config.run_timeout
             else:
                 enabled = True
                 effective_schedule = default_schedule
                 schedule_is_override = False
                 custom_settings_count = 0
-                run_timeout = _DEFAULT_RUN_TIMEOUT
+                fallback_run_timeout = _DEFAULT_RUN_TIMEOUT
             next_run_at = next_run_by_name.get(name) if enabled else None
         else:
             assert config is not None  # deregistered: a FetcherConfig row must exist
@@ -707,12 +705,12 @@ async def list_fetchers(
             effective_schedule = config.schedule_override
             schedule_is_override = None
             custom_settings_count = len(config.custom_settings)
-            run_timeout = config.run_timeout
+            fallback_run_timeout = config.run_timeout
             next_run_at = None
 
         run = last_run_by_name.get(name)
         last_run_summary = (
-            _build_run_summary(run, run_timeout, now, has_manage_fetchers)
+            _build_run_summary(run, fallback_run_timeout, now, has_manage_fetchers)
             if run is not None
             else None
         )
@@ -763,7 +761,8 @@ async def list_fetcher_runs(
         FetcherNotFoundError: `fetcher_name` is neither in the registry
             nor has a `FetcherConfig` row.
     """
-    run_timeout = await _ensure_fetcher_exists(db, fetcher_name)
+    await _ensure_fetcher_exists(db, fetcher_name)
+    fallback_run_timeout = await _resolve_fallback_run_timeout(db, fetcher_name)
 
     if status is not None:
         try:
@@ -795,7 +794,8 @@ async def list_fetcher_runs(
     runs = list((await db.execute(data_query)).scalars().all())
     now = datetime.now(UTC)
     items = [
-        _build_run_summary(run, run_timeout, now, has_manage_fetchers) for run in runs
+        _build_run_summary(run, fallback_run_timeout, now, has_manage_fetchers)
+        for run in runs
     ]
     return FetcherRunPage(items=items, total=total, page=page, per_page=per_page)
 
@@ -822,7 +822,8 @@ async def get_fetcher_run(
         FetcherRunNotFoundError: `run_id` does not exist or belongs to
             a different fetcher.
     """
-    run_timeout = await _ensure_fetcher_exists(db, fetcher_name)
+    await _ensure_fetcher_exists(db, fetcher_name)
+    fallback_run_timeout = await _resolve_fallback_run_timeout(db, fetcher_name)
 
     result = await db.execute(
         select(FetcherRun)
@@ -848,7 +849,14 @@ async def get_fetcher_run(
         error_message=run.error_message,
         triggered_by=run.triggered_by,
         triggered_by_user=run.triggered_by_user if has_manage_fetchers else None,
-        stale=_is_stale(run.status, run.created_at, run.started_at, run_timeout, now),
+        stale=is_run_stale(
+            status=run.status,
+            created_at=run.created_at,
+            started_at=run.started_at,
+            hard_time_limit_seconds=run.hard_time_limit_seconds,
+            fallback_run_timeout=fallback_run_timeout,
+            now=now,
+        ),
         error_detail=run.error_detail,
         error_traceback=run.error_traceback,
     )
@@ -1063,12 +1071,13 @@ async def update_fetcher_config(
         )
         active_run = active_result.scalar_one_or_none()
         if active_run is not None:
-            if _is_stale(
-                active_run.status,
-                active_run.created_at,
-                active_run.started_at,
-                config.run_timeout,
-                now,
+            if is_run_stale(
+                status=active_run.status,
+                created_at=active_run.created_at,
+                started_at=active_run.started_at,
+                hard_time_limit_seconds=active_run.hard_time_limit_seconds,
+                fallback_run_timeout=config.run_timeout,
+                now=now,
             ):
                 if active_run.status == FetcherRunStatus.QUEUED.value:
                     mark_queued_run_stale(
@@ -1078,7 +1087,9 @@ async def update_fetcher_config(
                     mark_run_stale(
                         active_run,
                         now=now,
-                        run_timeout=config.run_timeout,
+                        run_timeout=resolve_effective_hard_limit(
+                            active_run.hard_time_limit_seconds, config.run_timeout
+                        ),
                         fetcher_name=fetcher_name,
                     )
             else:
