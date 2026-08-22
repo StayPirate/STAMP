@@ -873,9 +873,11 @@ distinction.
     `duration_seconds = null`.
   - `stale`: `true` when the run's elapsed time exceeds the threshold
     for its own status — `now() - created_at > 600` for `queued`,
-    `now() - started_at > run_timeout + 60` for `running` (see
-    `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-    Detection). Always `false` for a terminal status.
+    `now() - started_at > hard_time_limit_seconds + 60` for `running`
+    (using the run's own persisted limit; falling back to
+    `FetcherConfig.run_timeout` for historical rows where the column is
+    `NULL` — see `docs/features/platform/fetcher-infrastructure.md`,
+    Stale Run Detection). Always `false` for a terminal status.
   - `triggered_by_user`: User Reference Object when `triggered_by` is
     `manual` AND the caller has `manage_fetchers`. Otherwise `null`.
   - `error_message`: sanitized public message (never contains raw
@@ -960,9 +962,10 @@ still appears in its correct chronological position.
   `duration_seconds = null`
 - `stale`: `true` when the run's elapsed time exceeds the threshold for
   its own status — `now() - created_at > 600` for `queued`,
-  `now() - started_at > run_timeout + 60` for `running` (from
-  `FetcherConfig.run_timeout`, which always exists for any fetcher that
-  has runs). Always `false` for a terminal status
+  `now() - started_at > hard_time_limit_seconds + 60` for `running`
+  (using the run's own persisted limit; falling back to
+  `FetcherConfig.run_timeout` for historical rows where the column is
+  `NULL`). Always `false` for a terminal status
 
 **Error responses**:
 
@@ -1537,10 +1540,10 @@ exist. If there are none, the section is omitted.
    - Show `running ({elapsed} elapsed)` where elapsed is calculated
      from `started_at` relative to now.
    - Elapsed formatting: same rules as above.
-   - If elapsed exceeds `run_timeout + 60` (the Running Stale
-     Threshold), append `, stale?` — e.g., `running (1h 2m elapsed, stale?)`.
-     Uses `FetcherConfig.run_timeout` (which always exists for any
-     fetcher that has runs).
+   - If elapsed exceeds `hard_time_limit_seconds + 60` (the Running
+     Stale Threshold — using the run's own persisted limit, falling back
+     to `FetcherConfig.run_timeout` for historical rows), append
+     `, stale?` — e.g., `running (1h 2m elapsed, stale?)`.
 3. Else if any `FetcherRun` records exist: show the status of the most
    recent `FetcherRun` (by `created_at DESC, id DESC` — not
    `started_at`, so a `queued -> failure` pre-adoption run, whose
