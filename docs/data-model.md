@@ -351,6 +351,7 @@ erDiagram
         VARCHAR_20 status "NOT NULL"
         VARCHAR_20 triggered_by "NOT NULL"
         UUID triggered_by_user_id FK "nullable"
+        INTEGER hard_time_limit_seconds "nullable"
         JSONB cursor "nullable"
     }
     FetcherAuditEvent {
@@ -1482,6 +1483,7 @@ summarized below.
 | error_traceback      | TEXT        | nullable                 | Full Python traceback (admin-only visibility in API) |
 | triggered_by         | VARCHAR(20) | NOT NULL                 | FetcherRunTriggeredBy: `schedule`, `manual` |
 | triggered_by_user_id | UUID        | FK(user.id), nullable    | Admin who triggered the run (only for `manual`) |
+| hard_time_limit_seconds | INTEGER | nullable                 | Effective Celery hard time limit (seconds) under which the worker executes this run. Persisted atomically at adoption. `NULL` while `status = queued`, for runs finalized without adoption, and for historical rows predating this column. Used for Running Stale Threshold evaluation and `SoftTimeLimitExceeded` diagnostics. Not exposed via the API |
 | cursor               | JSONB       | nullable                 | Fetcher-defined checkpoint for the next run (e.g., `{"sha": "...", "committed_at": "..."}` for git-based fetchers). Written when the final run status is `success` or `partial`; read by the next run to determine starting point. NULL for fetchers that derive cursors from other fields |
 | created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT        | Record creation timestamp — for a manual run, this is also the moment the trigger was accepted and the run entered `queued` |
 

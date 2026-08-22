@@ -135,11 +135,12 @@ dedicated exception type.
    Detection):
    - `status = queued`: `true` when `now() - created_at > 600` seconds
      (Queued Stale Threshold).
-   - `status = running`: `true` when `now() - started_at > run_timeout + 60`
-     seconds (Running Stale Threshold, using the fetcher's
-     `FetcherConfig.run_timeout`, which always exists for any fetcher
-     that has runs — a `FetcherRun` requires a `FetcherConfig` row via
-     its foreign key).
+   - `status = running`: `true` when
+     `now() - started_at > hard_time_limit_seconds + 60` seconds
+     (Running Stale Threshold, using the run's own persisted
+     `hard_time_limit_seconds` column). If `hard_time_limit_seconds` is
+     `NULL` (historical rows predating the column), fall back to the
+     fetcher's `FetcherConfig.run_timeout`.
    - Any terminal status: `false`.
 8. `custom_settings_count`: number of keys in
    `FetcherConfig.custom_settings` JSONB that exist in the current
@@ -337,20 +338,16 @@ is in the registry but has no `FetcherConfig` row (bootstrap prerequisite
    manual run's Celery task already has its `time_limit`/
    `soft_time_limit` fixed at publication time (an earlier, separate
    transaction), before adoption. If `run_timeout` were free to change
-   while that run is still `queued`, the *live* `FetcherConfig.run_timeout`
-   read by Stale Run Detection after adoption could diverge from the
-   value the already-published task is executing under, breaking the
-   invariant that the Running Stale Threshold is always set above the
-   task's actual hard time limit (see
-   `docs/features/platform/fetcher-infrastructure.md`, Stale Run
-   Detection, "Relationship to hard time limit") — a lowered
-   `run_timeout` could then cause the still-executing process to be
-   declared stale and a second run started while the first is still
-   alive. Evaluate staleness using the row's own status and the
-   **current** (pre-PATCH) `run_timeout` where applicable: Queued Stale
-   Threshold (`created_at`, fixed 600 seconds) if `queued`; Running
-   Stale Threshold (`started_at`, `current_run_timeout + 60`) if
-   `running`.
+   while that run is still `queued`, the value captured at adoption
+   would still be correct (per-run persistence), but the intent of the
+   guard is defense-in-depth: preventing operator surprise by rejecting
+   a change when an active run exists. Evaluate staleness using the
+   row's own status: Queued Stale Threshold (`created_at`, fixed 600
+   seconds) if `queued`; Running Stale Threshold (`started_at`,
+   `hard_time_limit_seconds + 60`) if `running` — using the run's own
+   persisted `hard_time_limit_seconds`. If `hard_time_limit_seconds` is
+   `NULL` (historical rows), fall back to the current (pre-PATCH)
+   `FetcherConfig.run_timeout`.
    - If **not stale**: raise `FetcherAlreadyRunningError`. The entire
      PATCH fails atomically — no field is modified, no audit event is
      created, no RedBeat propagation occurs.
@@ -544,8 +541,11 @@ and transactions.
 4. **Stale run handling**: if an active (`queued` or `running`) run
    exists and IS stale — evaluated using the threshold matching its
    own status: Queued Stale Threshold (`created_at`, 600 seconds) if
-   `queued`, Running Stale Threshold (`started_at`, `run_timeout + 60`)
-   if `running` — finalize it per
+   `queued`, Running Stale Threshold (`started_at`,
+   `hard_time_limit_seconds + 60`) if `running` — using the run's own
+   persisted `hard_time_limit_seconds` (falling back to
+   `FetcherConfig.run_timeout` for historical rows where the column is
+   `NULL`) — finalize it per
    `docs/features/platform/fetcher-infrastructure.md` (Stale Run
    Detection) — `status = failure`, specified error message, computed
    fields (a stale `queued` run keeps `started_at` and
