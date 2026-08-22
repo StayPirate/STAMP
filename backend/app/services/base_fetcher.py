@@ -496,19 +496,21 @@ class BaseFetcher:
         self, config: FetcherRunConfig
     ) -> BaseException | None:
         try:
-            self._settings_instance = self._build_settings_instance(
-                config.custom_settings
-            )
-        except ValidationError as exc:
             try:
+                self._settings_instance = self._build_settings_instance(
+                    config.custom_settings
+                )
+            except ValidationError as exc:
                 raise FetcherConfigError(
                     f"Fetcher '{config.fetcher_name}' has invalid stored settings "
                     "— update via the API"
                 ) from exc
-            except FetcherConfigError as config_exc:
-                return config_exc
 
-        self._previous_cursor = await self._load_previous_cursor(config.fetcher_name)
+            self._previous_cursor = await self._load_previous_cursor(
+                config.fetcher_name
+            )
+        except Exception as exc:
+            return exc
 
         async with async_session_factory() as session:
             try:

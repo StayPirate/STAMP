@@ -1664,6 +1664,73 @@ class TestRunLifecycleSettings:
 
 
 @pytest.mark.integration
+class TestRunLifecyclePreExecutionFailure:
+    async def test_previous_cursor_load_exception_finalizes_failure(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fetcher_name, run_id = await fetcher_lifecycle()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            pytest.fail("execute() must not run when cursor loading fails")
+
+        async def _load_previous_cursor(
+            self: BaseFetcher, fetcher_name: str
+        ) -> dict[str, Any] | None:
+            raise ValueError("previous cursor query failed")
+
+        fetcher_cls = _fetcher_class(
+            fetcher_name,
+            _execute,
+            _load_previous_cursor=_load_previous_cursor,
+        )
+        with pytest.raises(ValueError, match="previous cursor query failed"):
+            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == "Unexpected error"
+        assert run.error_detail == "previous cursor query failed"
+        assert run.error_traceback is not None
+        assert "ValueError" in run.error_traceback
+        assert run.finished_at is not None
+        assert run.duration_seconds is not None
+
+    async def test_non_validation_settings_exception_finalizes_failure(
+        self,
+        fetcher_lifecycle: Callable[..., Awaitable[tuple[str, UUID]]],
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fetcher_name, run_id = await fetcher_lifecycle()
+
+        async def _execute(self: BaseFetcher, session: AsyncSession) -> None:
+            pytest.fail("execute() must not run when settings construction fails")
+
+        def _build_settings_instance(
+            self: BaseFetcher, custom_settings: dict[str, Any]
+        ) -> BaseModel | None:
+            raise RuntimeError("settings construction failed")
+
+        fetcher_cls = _fetcher_class(
+            fetcher_name,
+            _execute,
+            _build_settings_instance=_build_settings_instance,
+        )
+        with pytest.raises(RuntimeError, match="settings construction failed"):
+            await fetcher_cls().run(run_id=run_id, config=_make_config(fetcher_name))
+
+        run = await _get_run(real_session_factory, run_id)
+        assert run.status == "failure"
+        assert run.error_message == "Unexpected error"
+        assert run.error_detail == "settings construction failed"
+        assert run.error_traceback is not None
+        assert "RuntimeError" in run.error_traceback
+        assert run.finished_at is not None
+        assert run.duration_seconds is not None
+
+
+@pytest.mark.integration
 class TestRunLifecycleExecutionSessionContract:
     async def test_explicit_commit_inside_execute_is_visible_afterward(
         self,
