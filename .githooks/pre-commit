@@ -15,8 +15,10 @@ echo "  mypy..."
 echo "  unit tests..."
 # Exit code 5 = "no tests collected" (no @pytest.mark.unit tests yet).
 # Treat it as success so the hook doesn't block commits before the
-# first unit test is added.
-(cd backend && uv run --locked pytest -m unit --no-header -q) || [ $? -eq 5 ]
+# first unit test is added. -x stops at the first failure so its
+# location is always the last thing printed, instead of being pushed
+# out of view by the remaining tests in the run.
+(cd backend && uv run --locked pytest -m unit --no-header -q -x) || [ $? -eq 5 ]
 
 # --- Shell script checks (shellcheck + shfmt) ---
 # Run only on staged shell files. Because shellcheck and shfmt are not
