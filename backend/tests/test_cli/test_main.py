@@ -21,6 +21,7 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import OperationalError
 
 import app.cli.api_key as api_key_module
+import app.cli.fetcher as fetcher_module
 import app.cli.manage_user as manage_user_module
 from app.cli import cli, main
 from app.cli._runtime import _load_settings, bootstrap
@@ -51,6 +52,7 @@ def _forbid_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(manage_user_module, "bootstrap", _fail)
     monkeypatch.setattr(api_key_module, "bootstrap", _fail)
+    monkeypatch.setattr(fetcher_module, "bootstrap", _fail)
 
 
 @pytest.mark.unit
@@ -63,6 +65,7 @@ def test_root_help_exits_zero_without_bootstrap(
     assert "Sentinel command-line interface" in result.output
     assert "manage-user" in result.output
     assert "api-key" in result.output
+    assert "fetcher" in result.output
 
 
 @pytest.mark.unit
@@ -99,6 +102,41 @@ def test_api_key_group_help_exits_zero_without_bootstrap(
     assert "list" in result.output
     assert "revoke" in result.output
     assert "create" not in result.output
+
+
+@pytest.mark.unit
+def test_fetcher_group_help_exits_zero_without_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["fetcher", "--help"])
+    assert result.exit_code == 0
+    assert "list" in result.output
+    assert "config" in result.output
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("command", ["list", "config"])
+def test_fetcher_command_help_exits_zero_without_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["fetcher", command, "--help"])
+    assert result.exit_code == 0
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
+def test_fetcher_config_missing_argument_exits_one_without_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`fetcher config` requires the `NAME` argument — Click's own
+    `MissingParameter` (a `ClickException` subclass) rejects the
+    invocation before the command callback (and thus `bootstrap()`)
+    ever runs."""
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["fetcher", "config"])
+    assert result.exit_code != 0
 
 
 @pytest.mark.unit

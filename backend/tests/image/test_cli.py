@@ -6,8 +6,9 @@ and the module invocation (`python -m app.cli`), that both reach the
 same command surface, and that the P2-12 bootstrap command group
 (`manage-user create/list/show`) plus the P2-13 remaining local identity
 commands (`manage-user set-password/unlock`, `api-key list/revoke`) are
-discoverable. See docs/features/platform/testing-strategy.md (Image /
-Container Smoke Testing, Growth Rule) and
+discoverable, along with the read-only `sentinel fetcher list/config`
+diagnostic commands. See docs/features/platform/testing-strategy.md
+(Image / Container Smoke Testing, Growth Rule) and
 docs/features/platform/cli-infrastructure.md.
 
 No destructive/interactive invocation is exercised here — creating a
@@ -18,8 +19,11 @@ contract is already covered by the in-process integration suite
 (`tests/test_cli/test_manage_user.py`, `tests/test_cli/test_api_key.py`),
 which runs far faster and does not need a running container. This suite
 proves command discovery and representative non-destructive paths
-(unknown-user/unknown-key errors, non-TTY rejection) against the actual
-built artifact.
+(unknown-user/unknown-key/unknown-fetcher errors, non-TTY rejection,
+and a real `fetcher list`/`fetcher config` execution) against the
+actual built artifact. The exhaustive `fetcher list`/`fetcher config`
+rendering contract is covered by
+`tests/test_cli/test_fetcher.py`.
 """
 
 from __future__ import annotations
@@ -274,3 +278,151 @@ def test_api_key_revoke_missing_key_exits_one(
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert "not found" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# `sentinel fetcher` (P3-10 — read-only diagnostic CLI)
+# ---------------------------------------------------------------------------
+
+_FETCHER_CLI_SEED_NAME = "image_smoke_cli_fetcher"
+
+# The shipped image's `FETCHER_REGISTRY` has no production fetcher yet
+# (see docs/features/platform/fetcher-infrastructure.md, Fetcher
+# Registry) — mirrors `tests/image/test_fetchers_api.py`'s rationale for
+# arranging a deregistered `FetcherConfig` row directly to get a
+# realistic, non-empty rendering for both commands.
+_FETCHER_CLI_ARRANGE_SCRIPT = r"""
+import asyncio
+
+from app.database import async_session_factory
+from app.models.fetcher_config import FetcherConfig
+
+async def main():
+    async with async_session_factory() as db:
+        db.add(
+            FetcherConfig(
+                fetcher_name="image_smoke_cli_fetcher",
+                schedule_override="0 5 * * *",
+                custom_settings={"raw_setting": "raw_value"},
+            )
+        )
+        await db.commit()
+
+asyncio.run(main())
+"""
+
+_FETCHER_CLI_CLEANUP_SCRIPT = r"""
+import asyncio
+
+from sqlalchemy import delete
+
+from app.database import async_session_factory
+from app.models.fetcher_config import FetcherConfig
+
+async def main():
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(FetcherConfig).where(
+                FetcherConfig.fetcher_name == "image_smoke_cli_fetcher"
+            )
+        )
+        await db.commit()
+
+asyncio.run(main())
+"""
+
+
+@pytest.mark.image
+def test_fetcher_group_is_discoverable(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """`sentinel fetcher --help` lists both read-only subcommands."""
+    result = compose_exec("api", "sentinel", "fetcher", "--help")
+    assert result.returncode == 0, (
+        f"fetcher --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "list" in result.stdout
+    assert "config" in result.stdout
+
+
+@pytest.mark.image
+def test_fetcher_list_help_exits_zero(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "fetcher", "list", "--help")
+    assert result.returncode == 0, (
+        f"fetcher list --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.image
+def test_fetcher_config_help_shows_name_argument(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = compose_exec("api", "sentinel", "fetcher", "config", "--help")
+    assert result.returncode == 0, (
+        f"fetcher config --help failed (rc={result.returncode}): "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "NAME" in result.stdout
+
+
+@pytest.mark.image
+def test_fetcher_config_unknown_fetcher_exits_one(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """A fetcher name certain not to exist proves the command reaches
+    the real database and reports the not-found error, with no
+    destructive effect (there is nothing to read)."""
+    result = compose_exec(
+        "api", "sentinel", "fetcher", "config", "image-smoke-nonexistent-fetcher"
+    )
+    assert result.returncode == 1, (
+        f"expected exit 1 (fetcher not found), got rc={result.returncode}: "
+        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "not found" in result.stderr
+
+
+@pytest.mark.image
+def test_fetcher_list_and_config_real_execution(
+    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """Representative non-destructive execution path for both `fetcher
+    list` and `fetcher config <name>` against the real database, per
+    docs/features/platform/testing-strategy.md (Image / Container Smoke
+    Testing, Growth Rule)."""
+    arrange = compose_exec("api", "python", "-c", _FETCHER_CLI_ARRANGE_SCRIPT)
+    assert arrange.returncode == 0, (
+        f"fetcher CLI smoke arrange failed "
+        f"(stdout={arrange.stdout!r}, stderr={arrange.stderr!r})"
+    )
+    try:
+        list_result = compose_exec("api", "sentinel", "fetcher", "list")
+        assert list_result.returncode == 0, (
+            f"fetcher list failed (rc={list_result.returncode}): "
+            f"stdout={list_result.stdout!r} stderr={list_result.stderr!r}"
+        )
+        assert "Deregistered (historical data only):" in list_result.stdout
+        assert _FETCHER_CLI_SEED_NAME in list_result.stdout
+
+        config_result = compose_exec(
+            "api", "sentinel", "fetcher", "config", _FETCHER_CLI_SEED_NAME
+        )
+        assert config_result.returncode == 0, (
+            f"fetcher config failed (rc={config_result.returncode}): "
+            f"stdout={config_result.stdout!r} stderr={config_result.stderr!r}"
+        )
+        assert (
+            f"Fetcher: {_FETCHER_CLI_SEED_NAME} (deregistered)" in config_result.stdout
+        )
+        assert "Schedule override: 0 5 * * *" in config_result.stdout
+        assert "raw_setting = raw_value" in config_result.stdout
+    finally:
+        cleanup = compose_exec("api", "python", "-c", _FETCHER_CLI_CLEANUP_SCRIPT)
+        assert cleanup.returncode == 0, (
+            f"fetcher CLI smoke cleanup failed "
+            f"(stdout={cleanup.stdout!r}, stderr={cleanup.stderr!r})"
+        )

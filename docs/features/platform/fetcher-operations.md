@@ -104,7 +104,9 @@ dedicated exception type.
 
 #### `list_fetchers`
 
-**Q1 (inputs)**: `db: AsyncSession`, `has_manage_fetchers: bool`.
+**Q1 (inputs)**: `db: AsyncSession`, `has_manage_fetchers: bool`,
+`celery_app: Celery` — the Celery application whose configured RedBeat
+schedule is read to resolve `next_run_at` (see Q3, step 5).
 
 **Q3 (behavior)**:
 

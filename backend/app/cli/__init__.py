@@ -17,6 +17,7 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.cli._runtime import install_signal_handlers
 from app.cli.api_key import api_key_group
+from app.cli.fetcher import fetcher_group
 from app.cli.manage_user import manage_user_group
 from app.core.exceptions import ServiceError
 
@@ -58,6 +59,7 @@ def cli() -> None:
 
 cli.add_command(manage_user_group)
 cli.add_command(api_key_group)
+cli.add_command(fetcher_group)
 
 
 def main() -> None:
