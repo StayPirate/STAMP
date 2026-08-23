@@ -631,7 +631,7 @@ class TestListFetchersNextRunAt:
         )
 
         sensitive_message = (
-            "Connection to redis://user:supersecret@10.0.0.5:6379 failed"
+            "Connection to redis://user:supersecret@192.0.2.5:6379 failed"
         )
 
         def _raise_redis_error(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
@@ -651,7 +651,7 @@ class TestListFetchersNextRunAt:
         assert len(records) == 1
         assert "fetcher_redbeat_next_run_unavailable" in caplog.text
         assert "supersecret" not in caplog.text
-        assert "10.0.0.5" not in caplog.text
+        assert "192.0.2.5" not in caplog.text
 
     async def test_redbeat_read_does_not_block_event_loop(
         self,
@@ -3986,7 +3986,7 @@ class TestTriggerFetcherBrokerFailure:
     ) -> None:
         fetcher_name, user_id = trigger_env
         sensitive_message = (
-            "Error 111 connecting to redis://user:supersecret@10.0.0.5:6379"
+            "Error 111 connecting to redis://user:supersecret@192.0.2.5:6379"
         )
 
         def _raise(*_args: Any, **_kwargs: Any) -> None:
@@ -4003,7 +4003,7 @@ class TestTriggerFetcherBrokerFailure:
             )
 
         assert "supersecret" not in str(exc_info.value)
-        assert "10.0.0.5" not in str(exc_info.value)
+        assert "192.0.2.5" not in str(exc_info.value)
 
         async with real_session_factory() as session:
             runs = (

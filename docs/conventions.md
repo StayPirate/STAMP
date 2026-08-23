@@ -155,6 +155,15 @@ Approved placeholder patterns:
 | Groups        | `pkg-maintainers`, `kernel-team`                     |
 | Group emails  | `pkg-maintainers@suse.de`                            |
 | External IDs  | `ext-12345`, `00000000-0000-0000-0000-000000000001` |
+| IP addresses  | `192.0.2.5`, `198.51.100.7`, `203.0.113.5`           |
+
+Fictional IP addresses MUST come from the RFC 5737 documentation-
+reserved ranges — `192.0.2.0/24` (TEST-NET-1), `198.51.100.0/24`
+(TEST-NET-2), or `203.0.113.0/24` (TEST-NET-3). These are guaranteed
+never to be assigned to a real host, unlike RFC 1918 private ranges
+(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), which may be in
+genuine use on a CI runner, a contributor's LAN, or a corporate
+network.
 
 When documenting API response formats from external services, first
 sanitize the response by replacing all real identifiers with fictional
