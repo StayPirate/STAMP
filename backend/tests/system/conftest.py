@@ -295,12 +295,81 @@ class FetcherPipelineHarness:
             return None
         return reply
 
-    def wait_worker_ready(self, timeout: float = _WORKER_READY_TIMEOUT) -> None:
+    async def _timeout_diagnostics(self) -> str:
+        """Best-effort diagnostic snapshot attached to every bounded-wait
+        timeout failure: captured process output, return codes, current
+        `FetcherConfig`/`FetcherRun` state, and RedBeat entry state (when
+        readable) — see testing-strategy.md, Bounded Waiting and
+        Diagnostics. Every section degrades independently to an
+        explanatory placeholder on its own failure, so a
+        diagnostics-gathering error never masks the real timeout being
+        reported.
+        """
+        sections: list[str] = []
+        for proc in (self.worker_process, self.beat_process):
+            if proc is None:
+                continue
+            sections.append(
+                f"--- {proc.name} process (return code: "
+                f"{proc.popen.poll()!r}) log (tail) ---\n{proc.tail_log()}"
+            )
+        try:
+            async with self.session_factory() as session:
+                config_result = await session.execute(
+                    select(FetcherConfig).where(
+                        FetcherConfig.fetcher_name == SYSTEM_FETCHER_NAME
+                    )
+                )
+                config = config_result.scalar_one_or_none()
+                run_result = await session.execute(
+                    select(FetcherRun)
+                    .where(FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME)
+                    .order_by(FetcherRun.created_at.desc())
+                )
+                runs = list(run_result.scalars().all())
+        except Exception as exc:
+            sections.append(
+                f"--- FetcherConfig/FetcherRun state: unavailable ({exc!r}) ---"
+            )
+        else:
+            config_repr = (
+                f"fetcher_name={config.fetcher_name!r} enabled={config.enabled!r} "
+                f"schedule_override={config.schedule_override!r}"
+                if config is not None
+                else "no row"
+            )
+            sections.append(f"--- FetcherConfig state: {config_repr} ---")
+            runs_repr = [
+                f"(id={r.id}, status={r.status!r}, started_at={r.started_at!r}, "
+                f"finished_at={r.finished_at!r})"
+                for r in runs
+            ]
+            sections.append(f"--- FetcherRun rows ({len(runs)}): {runs_repr} ---")
+        try:
+            key = RedBeatSchedulerEntry.generate_key(
+                self.celery_app, SYSTEM_FETCHER_NAME
+            )
+            entry = RedBeatSchedulerEntry.from_key(key, app=self.celery_app)
+        except KeyError:
+            sections.append("--- RedBeat entry state: not present ---")
+        except Exception as exc:
+            sections.append(f"--- RedBeat entry state: unreadable ({exc!r}) ---")
+        else:
+            sections.append(
+                f"--- RedBeat entry state: task={entry.task!r} "
+                f"enabled={entry.enabled!r} last_run_at={entry.last_run_at!r} "
+                f"total_run_count={entry.total_run_count!r} ---"
+            )
+        return "\n".join(sections)
+
+    async def wait_worker_ready(
+        self, timeout_seconds: float = _WORKER_READY_TIMEOUT
+    ) -> None:
         """Poll until the worker replies to `inspect ping` under its own
         hostname AND has the generic `run_fetcher` task registered.
         """
         assert self.worker_process is not None
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout_seconds
         last_status = "no successful inspect reply yet"
         while time.monotonic() < deadline:
             self.worker_process.assert_alive()
@@ -318,34 +387,35 @@ class FetcherPipelineHarness:
                 )
             else:
                 last_status = f"no ping reply yet: {ping_reply!r}"
-            time.sleep(_POLL_INTERVAL)
+            await asyncio.sleep(_POLL_INTERVAL)
         self.worker_process.assert_alive()
+        diagnostics = await self._timeout_diagnostics()
         pytest.fail(
-            f"worker did not become ready within {timeout}s: {last_status}\n"
-            f"--- worker log (tail) ---\n{self.worker_process.tail_log()}"
+            f"worker did not become ready within {timeout_seconds}s: "
+            f"{last_status}\n{diagnostics}"
         )
 
     # -- RedBeat ---------------------------------------------------------
 
-    def wait_redbeat_entry(
-        self, timeout: float = _REDBEAT_ENTRY_TIMEOUT
+    async def wait_redbeat_entry(
+        self, timeout_seconds: float = _REDBEAT_ENTRY_TIMEOUT
     ) -> RedBeatSchedulerEntry:
         """Poll until Beat's startup reconciliation has written the
         canonical redbeat entry for the test fetcher."""
         assert self.beat_process is not None
         key = RedBeatSchedulerEntry.generate_key(self.celery_app, SYSTEM_FETCHER_NAME)
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             self.beat_process.assert_alive()
             try:
                 return RedBeatSchedulerEntry.from_key(key, app=self.celery_app)
             except KeyError:
-                time.sleep(_POLL_INTERVAL)
+                await asyncio.sleep(_POLL_INTERVAL)
         self.beat_process.assert_alive()
+        diagnostics = await self._timeout_diagnostics()
         pytest.fail(
             f"RedBeat entry for '{SYSTEM_FETCHER_NAME}' did not appear "
-            f"within {timeout}s\n"
-            f"--- beat log (tail) ---\n{self.beat_process.tail_log()}"
+            f"within {timeout_seconds}s\n{diagnostics}"
         )
 
     def make_due(self, *, minutes_ago: int = 5) -> None:
@@ -369,6 +439,8 @@ class FetcherPipelineHarness:
         both call the same idempotent `bootstrap_fetcher_configs()`)."""
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
+            if self.worker_process is not None:
+                self.worker_process.assert_alive()
             if self.beat_process is not None:
                 self.beat_process.assert_alive()
             async with self.session_factory() as session:
@@ -381,9 +453,10 @@ class FetcherPipelineHarness:
             if config is not None:
                 return config
             await asyncio.sleep(_POLL_INTERVAL)
+        diagnostics = await self._timeout_diagnostics()
         pytest.fail(
             f"FetcherConfig row for '{SYSTEM_FETCHER_NAME}' did not appear "
-            f"within {timeout_seconds}s"
+            f"within {timeout_seconds}s\n{diagnostics}"
         )
 
     async def wait_finalized_run(
@@ -408,14 +481,10 @@ class FetcherPipelineHarness:
             if run is not None:
                 return run
             await asyncio.sleep(_POLL_INTERVAL)
-        worker_log = (
-            self.worker_process.tail_log() if self.worker_process else "<no worker>"
-        )
-        beat_log = self.beat_process.tail_log() if self.beat_process else "<no beat>"
+        diagnostics = await self._timeout_diagnostics()
         pytest.fail(
             f"No finalized FetcherRun for '{SYSTEM_FETCHER_NAME}' within "
-            f"{timeout_seconds}s\n--- worker log (tail) ---\n{worker_log}\n"
-            f"--- beat log (tail) ---\n{beat_log}"
+            f"{timeout_seconds}s\n{diagnostics}"
         )
 
     async def list_runs(self) -> list[FetcherRun]:

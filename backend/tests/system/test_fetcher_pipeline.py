@@ -47,7 +47,7 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     # 1. A real worker starts, becomes reachable, and has the generic
     # `run_fetcher` task registered.
     harness.start_worker()
-    harness.wait_worker_ready()
+    await harness.wait_worker_ready()
 
     # 2. A real Beat starts, bootstraps the test fetcher's
     # `FetcherConfig`, and reconciles a RedBeat entry for it.
@@ -56,7 +56,7 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     assert config.fetcher_name == SYSTEM_FETCHER_NAME
     assert config.enabled is True
 
-    entry = harness.wait_redbeat_entry()
+    entry = await harness.wait_redbeat_entry()
     assert entry.task == "run_fetcher"
     assert entry.enabled is True
     assert entry.kwargs == {
