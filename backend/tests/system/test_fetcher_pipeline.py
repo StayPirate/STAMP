@@ -6,7 +6,9 @@ Testing) for the full behavioral contract this test proves: real worker
 and Beat processes, real PostgreSQL and Redis, registration → config
 bootstrap → RedBeat scheduling → broker delivery → worker execution →
 `FetcherRun` finalization → Public API visibility, with no domain-table
-mutation and no `FetcherAuditEvent` for a scheduled run.
+mutation and no `FetcherAuditEvent` for a scheduled run. It also proves
+the fixture's preflight purge of stale residue from an interrupted
+prior invocation (see `_seed_stale_fetcher_artifacts` in `conftest.py`).
 
 This is the ONLY test in this module — the harness fixture
 (`fetcher_pipeline_harness` in `conftest.py`) owns all process spawning
@@ -79,6 +81,12 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     # test still runs (the schedule is "* * * * *"; only one finalized
     # run must exist for the entire test).
     harness.stop_beat()
+
+    # Proves the fixture's preflight purge actually removed the stale
+    # run it seeded before this test started — otherwise this could be
+    # the leftover row rather than a genuinely new dispatch (see
+    # `_seed_stale_fetcher_artifacts` in conftest.py).
+    assert run.id != harness.stale_run_id
 
     assert run.status == "success", (
         f"expected a successful run, got {run.status!r}: "

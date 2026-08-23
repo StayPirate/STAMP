@@ -224,6 +224,12 @@ class FetcherPipelineHarness:
     worker_hostname: str
     worker_process: _SpawnedProcess | None = None
     beat_process: _SpawnedProcess | None = None
+    #: id of the stale `FetcherRun` seeded by the fixture (before its own
+    #: preflight purge) to simulate residue left by a prior invocation
+    #: that was interrupted before its own teardown could run. The test
+    #: asserts the run it observes is NOT this one — see
+    #: `_seed_stale_fetcher_artifacts` below.
+    stale_run_id: uuid.UUID | None = None
 
     # -- Process lifecycle ---------------------------------------------
 
@@ -522,6 +528,79 @@ class FetcherPipelineHarness:
             return snapshot
 
 
+async def _delete_fetcher_artifacts(
+    session_factory: async_sessionmaker[AsyncSession], names: set[str]
+) -> None:
+    """Delete all `FetcherRun`/`FetcherAuditEvent`/`FetcherConfig` rows
+    for `names`, in FK-safe order, and commit. No-op if `names` is
+    empty.
+
+    Shared by two callers: the fixture's preflight purge (removes
+    residue from a prior invocation that was interrupted before its own
+    teardown could run — e.g. SIGKILL, OOM, host crash — so a leftover
+    terminal `FetcherRun` can never satisfy this invocation's own
+    `wait_finalized_run()` poll) and its final teardown (removes rows
+    created during this invocation). See testing-strategy.md,
+    Deterministic Cleanup, step 6.
+    """
+    if not names:
+        return
+    async with session_factory() as session:
+        await session.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name.in_(names))
+        )
+        await session.execute(
+            delete(FetcherAuditEvent).where(FetcherAuditEvent.fetcher_name.in_(names))
+        )
+        await session.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name.in_(names))
+        )
+        await session.commit()
+
+
+async def _seed_stale_fetcher_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> uuid.UUID:
+    """Commit a stale `FetcherConfig` + terminal `FetcherRun` +
+    `FetcherAuditEvent` for the test fetcher, simulating residue left by
+    a prior invocation of this suite that was interrupted before its
+    own teardown could run (relevant when `TEST_DATABASE_URL` points at
+    a persistent local database rather than an ephemeral per-run
+    container — see testing-strategy.md, Execution).
+
+    Called by `fetcher_pipeline_harness` immediately before its own
+    preflight purge, so every invocation of the suite exercises and
+    proves that purge — without this, a leftover terminal `FetcherRun`
+    could satisfy `wait_finalized_run()` on the very first poll,
+    reporting success without this invocation's own worker/Beat/broker
+    path ever executing.
+
+    Returns the stale run's id so the test can assert the run it
+    eventually observes is a different row.
+    """
+    stale_run_id = uuid.uuid7()
+    now = datetime.now(UTC) - timedelta(hours=1)
+    async with session_factory() as session:
+        session.add(FetcherConfig(fetcher_name=SYSTEM_FETCHER_NAME, enabled=True))
+        session.add(
+            FetcherRun(
+                id=stale_run_id,
+                fetcher_name=SYSTEM_FETCHER_NAME,
+                status="success",
+                triggered_by="schedule",
+                started_at=now,
+                finished_at=now,
+            )
+        )
+        session.add(
+            FetcherAuditEvent(
+                fetcher_name=SYSTEM_FETCHER_NAME, event_type="config_changed"
+            )
+        )
+        await session.commit()
+    return stale_run_id
+
+
 @pytest_asyncio.fixture
 async def fetcher_pipeline_harness(
     tmp_path: Path,
@@ -558,6 +637,13 @@ async def fetcher_pipeline_harness(
     previous_registry_entry = FETCHER_REGISTRY.get(SYSTEM_FETCHER_NAME)
     FETCHER_REGISTRY[SYSTEM_FETCHER_NAME] = fetcher_cls
 
+    # Seed stale residue, then immediately purge it via the same
+    # preflight every invocation performs — proving the purge on every
+    # run rather than only when a real prior invocation happens to have
+    # been interrupted. See `_seed_stale_fetcher_artifacts` above.
+    stale_run_id = await _seed_stale_fetcher_artifacts(real_session_factory)
+    await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
+
     async with real_session_factory() as baseline_session:
         baseline_result = await baseline_session.execute(
             select(FetcherConfig.fetcher_name)
@@ -571,6 +657,7 @@ async def fetcher_pipeline_harness(
         celery_app=celery_test_app,
         session_factory=real_session_factory,
         worker_hostname=worker_hostname,
+        stale_run_id=stale_run_id,
     )
 
     cleanup_errors: list[str] = []
@@ -616,23 +703,7 @@ async def fetcher_pipeline_harness(
                     select(FetcherConfig.fetcher_name)
                 )
                 created_names = set(current_result.scalars().all()) - baseline_names
-                if created_names:
-                    await cleanup_session.execute(
-                        delete(FetcherRun).where(
-                            FetcherRun.fetcher_name.in_(created_names)
-                        )
-                    )
-                    await cleanup_session.execute(
-                        delete(FetcherAuditEvent).where(
-                            FetcherAuditEvent.fetcher_name.in_(created_names)
-                        )
-                    )
-                    await cleanup_session.execute(
-                        delete(FetcherConfig).where(
-                            FetcherConfig.fetcher_name.in_(created_names)
-                        )
-                    )
-                    await cleanup_session.commit()
+            await _delete_fetcher_artifacts(real_session_factory, created_names)
         except Exception as exc:
             cleanup_errors.append(f"postgres row cleanup failed: {exc!r}")
 
