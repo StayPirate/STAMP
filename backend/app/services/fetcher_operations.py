@@ -1,26 +1,28 @@
-"""Fetcher Operations Service — reads and configuration mutation.
+"""Fetcher Operations Service — reads, configuration mutation, and
+manual trigger orchestration.
 
 See `docs/features/platform/fetcher-operations.md` (Fetcher Operations
 Service, `list_fetchers`, `list_fetcher_runs`, `get_fetcher_run`,
 `get_fetcher_timeline`, `get_fetcher_config`, `update_fetcher_config`,
-`list_fetcher_audit_events`, Disabled Period Derivation) for the full
-specification this module implements.
+`list_fetcher_audit_events`, `trigger_fetcher`, Disabled Period
+Derivation) for the full specification this module implements.
 
 The four Public read functions (`list_fetchers`, `list_fetcher_runs`,
 `get_fetcher_run`, `get_fetcher_timeline`), the two capability-protected
-reads (`get_fetcher_config`, `list_fetcher_audit_events`), and the
-capability-protected mutation (`update_fetcher_config`) are implemented
-here. `trigger_fetcher` is owned by a later work item (P3-09) and is
-out of scope for this module as it stands.
+reads (`get_fetcher_config`, `list_fetcher_audit_events`), the
+capability-protected mutation (`update_fetcher_config`), and the
+capability-protected manual trigger orchestration (`trigger_fetcher`)
+are all implemented here.
 
 Module-level defaults (`docs/conventions.md`, Function Specification
 Completeness): every read function accepts a caller-supplied
 `AsyncSession`, performs reads only, never flushes or commits, and
-creates no audit events. `update_fetcher_config` is the sole exception
-— see its own docstring for its transaction, audit, and re-invocation
-contract. Every function propagates only the exceptions listed in the
-Service Exceptions table below, plus standard database exceptions that
-surface as the global `500 INTERNAL_ERROR` response.
+creates no audit events. `update_fetcher_config` and `trigger_fetcher`
+are the exceptions — see each function's own docstring for its
+transaction, audit, and re-invocation contract. Every function
+propagates only the exceptions listed in the Service Exceptions table
+below, plus standard database exceptions that surface as the global
+`500 INTERNAL_ERROR` response.
 """
 
 from __future__ import annotations
@@ -38,11 +40,15 @@ from pydantic import ValidationError
 from redbeat import RedBeatSchedulerEntry
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from app.core.dates import normalize_date_bound
-from app.core.enums import FetcherAuditEventType, FetcherRunStatus
+from app.core.enums import (
+    FetcherAuditEventType,
+    FetcherRunStatus,
+    FetcherRunTriggeredBy,
+)
 from app.core.exceptions import ServiceError
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
@@ -51,11 +57,13 @@ from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
 from app.services.fetcher_audit_log import FetcherAuditLog
 from app.services.fetcher_execution import (
+    finalize_manual_run_as_failure,
     is_run_stale,
     mark_queued_run_stale,
     mark_run_stale,
     resolve_effective_hard_limit,
 )
+from app.services.fetcher_schedule import effective_task_time_limits
 
 logger = structlog.get_logger(__name__)
 
@@ -63,6 +71,15 @@ logger = structlog.get_logger(__name__)
 # row yet (bootstrap not run) — mirrors `FetcherConfig.run_timeout`'s
 # column default (`docs/data-model.md`, FetcherConfig).
 _DEFAULT_RUN_TIMEOUT = 3600
+
+# Sanitized, fixed detail message for a manual trigger's Celery
+# publication failure — see `docs/features/platform/fetcher-operations.md`
+# (`trigger_fetcher`, Publication Failure Path). Never includes the raw
+# broker exception string, which routinely contains hostname, IP, port,
+# a Redis URI, or credentials.
+_BROKER_PUBLICATION_FAILURE_MESSAGE = (
+    "Manual run could not be dispatched to the task broker"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -99,11 +116,32 @@ class FetcherDeregisteredError(FetcherOperationsServiceError):
 
 
 class FetcherAlreadyRunningError(FetcherOperationsServiceError):
-    """`run_timeout` is changing and a non-stale run is currently active
-    for this fetcher."""
+    """An active (`queued` or `running`, non-stale) run exists for this
+    fetcher. Raised by both `trigger_fetcher` (a new manual trigger is
+    rejected outright) and `update_fetcher_config`'s Run Timeout Active
+    Guard (a `run_timeout` change is rejected while the run is active)."""
 
     def __init__(self) -> None:
-        super().__init__("Fetcher has an active run; run_timeout cannot be changed.")
+        super().__init__("Fetcher has an active run.")
+
+
+class FetcherDisabledError(FetcherOperationsServiceError):
+    """`FetcherConfig.enabled` is `false` — a manual trigger is rejected
+    outright (no bypass of the schedule's disabled state)."""
+
+    def __init__(self) -> None:
+        super().__init__("Fetcher is disabled.")
+
+
+class FetcherBrokerUnavailableError(FetcherOperationsServiceError):
+    """`trigger_fetcher`'s Celery publication (`apply_async`) raised —
+    the task broker is unreachable or rejected the message. The
+    pre-created `queued` `FetcherRun` is finalized as `failure` only if
+    a worker had not already adopted it (see `trigger_fetcher`,
+    Ambiguous Broker Acknowledgement)."""
+
+    def __init__(self) -> None:
+        super().__init__("Manual run could not be dispatched to the task broker.")
 
 
 class FetcherSettingUnknownError(FetcherOperationsServiceError):
@@ -222,6 +260,16 @@ class TimelinePoint:
 class FetcherTimeline:
     points: list[TimelinePoint]
     disabled_periods: list[DisabledPeriod]
+
+
+@dataclass(frozen=True)
+class TriggerFetcherResult:
+    """The outcome of a successful `trigger_fetcher()` call — the
+    committed `queued` run's identifier and a human-readable
+    confirmation message for the API response."""
+
+    run_id: UUID
+    message: str
 
 
 @dataclass(frozen=True)
@@ -1327,3 +1375,204 @@ async def list_fetcher_audit_events(
     )
     items = list((await db.execute(data_query)).scalars().all())
     return FetcherAuditEventPage(items=items, total=total, page=page, per_page=per_page)
+
+
+async def trigger_fetcher(
+    fetcher_name: str,
+    *,
+    user_id: UUID,
+    session_factory: async_sessionmaker[AsyncSession],
+    celery_app: Celery,
+) -> TriggerFetcherResult:
+    """Create a `queued` manual `FetcherRun`, commit it, and publish it
+    to Celery.
+
+    See `docs/features/platform/fetcher-operations.md` (`trigger_fetcher`)
+    for the full specification this function implements — this
+    docstring summarizes it, the spec is authoritative.
+
+    Unlike every other function in this module, `trigger_fetcher` does
+    NOT accept a caller-supplied `AsyncSession`. It is a service-owned
+    orchestration boundary: it opens and commits its own short-lived
+    sessions from `session_factory`, and publishes to Celery strictly
+    after the first transaction commits and its `FetcherConfig` lock is
+    released (`docs/conventions.md`, Transaction Hygiene Rules — no
+    network I/O while a row lock is held). `celery_app` identifies the
+    Celery application whose `"run_fetcher"` task is published to via
+    `send_task()` (by name — not the decorated task object, which
+    lives in `app.tasks` and is not importable from this layer per
+    `docs/architecture.md`, Backend Layer Architecture); passed
+    explicitly, mirroring `list_fetchers`, so tests can substitute an
+    isolated Celery/Redis instance instead of the production singleton.
+    `ignore_result=True` is passed explicitly to `send_task()` — unlike
+    `apply_async()`, `send_task()` does not inherit the task's own
+    `ignore_result` default, so this makes explicit at the call site
+    the app-wide `task_ignore_result = True` / no-result-backend
+    contract already established in
+    `docs/features/platform/fetcher-infrastructure.md` (Result
+    handling).
+
+    Q2 (guards, evaluated in this order under the `FetcherConfig`
+    lock):
+    1. `FetcherNotFoundError` — no `FetcherConfig` row for
+       `fetcher_name` (whether or not it is registered — a
+       `FetcherConfig` row is a bootstrap prerequisite for triggering).
+    2. `FetcherDeregisteredError` — the row exists but `fetcher_name` is
+       not in `FETCHER_REGISTRY`.
+    3. `FetcherDisabledError` — `FetcherConfig.enabled` is `false`.
+    4. `FetcherAlreadyRunningError` — a non-stale active (`queued` or
+       `running`) `FetcherRun` exists (a stale one is finalized
+       in-place under the same lock, matching its own status, and the
+       new run proceeds).
+
+    Q4 (audit events): one `FetcherAuditEvent` (`triggered`, no
+    payload), created in the first transaction — retained regardless of
+    the Celery publication outcome.
+
+    Q5 (re-invocation): NOT idempotent — each call creates a new
+    `FetcherRun` and audit event (guards permitting).
+
+    Q6 (exceptions): `FetcherNotFoundError`, `FetcherDeregisteredError`,
+    `FetcherDisabledError`, `FetcherAlreadyRunningError`,
+    `FetcherBrokerUnavailableError`.
+    """
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        try:
+            result = await session.execute(
+                select(FetcherConfig)
+                .where(FetcherConfig.fetcher_name == fetcher_name)
+                .with_for_update()
+            )
+            config = result.scalar_one_or_none()
+            if config is None:
+                raise FetcherNotFoundError()
+
+            fetcher_cls = FETCHER_REGISTRY.get(fetcher_name)
+            if fetcher_cls is None:
+                raise FetcherDeregisteredError()
+
+            if not config.enabled:
+                raise FetcherDisabledError()
+
+            active_result = await session.execute(
+                select(FetcherRun).where(
+                    FetcherRun.fetcher_name == fetcher_name,
+                    FetcherRun.status.in_(
+                        [
+                            FetcherRunStatus.QUEUED.value,
+                            FetcherRunStatus.RUNNING.value,
+                        ]
+                    ),
+                )
+            )
+            active_run = active_result.scalar_one_or_none()
+            if active_run is not None:
+                if is_run_stale(
+                    status=active_run.status,
+                    created_at=active_run.created_at,
+                    started_at=active_run.started_at,
+                    hard_time_limit_seconds=active_run.hard_time_limit_seconds,
+                    fallback_run_timeout=config.run_timeout,
+                    now=now,
+                ):
+                    if active_run.status == FetcherRunStatus.QUEUED.value:
+                        mark_queued_run_stale(
+                            active_run, now=now, fetcher_name=fetcher_name
+                        )
+                    else:
+                        mark_run_stale(
+                            active_run,
+                            now=now,
+                            hard_time_limit_seconds=resolve_effective_hard_limit(
+                                active_run.hard_time_limit_seconds,
+                                config.run_timeout,
+                            ),
+                            fetcher_name=fetcher_name,
+                        )
+                else:
+                    raise FetcherAlreadyRunningError()
+
+            new_run = FetcherRun(
+                fetcher_name=fetcher_name,
+                status=FetcherRunStatus.QUEUED.value,
+                triggered_by=FetcherRunTriggeredBy.MANUAL.value,
+                triggered_by_user_id=user_id,
+            )
+            session.add(new_run)
+            await session.flush()
+
+            await FetcherAuditLog.log_event(
+                session,
+                event_type=FetcherAuditEventType.TRIGGERED,
+                fetcher_name=fetcher_name,
+                user_id=user_id,
+            )
+
+            run_id = new_run.id
+            run_timeout = config.run_timeout
+            queue = fetcher_cls.queue
+
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+    task_options: dict[str, Any] = dict(effective_task_time_limits(run_timeout))
+    if queue is not None:
+        task_options["queue"] = queue
+
+    try:
+        await asyncio.to_thread(
+            celery_app.send_task,
+            "run_fetcher",
+            kwargs={
+                "fetcher_name": fetcher_name,
+                "triggered_by": FetcherRunTriggeredBy.MANUAL.value,
+                "user_id": str(user_id),
+                "run_id": str(run_id),
+            },
+            ignore_result=True,
+            **task_options,
+        )
+    except Exception as exc:
+        logger.warning(
+            "fetcher_manual_trigger_publish_failed",
+            fetcher_name=fetcher_name,
+            run_id=str(run_id),
+            error_type=type(exc).__name__,
+        )
+        async with session_factory() as session:
+            try:
+                compensation_won = await finalize_manual_run_as_failure(
+                    session,
+                    run_id=run_id,
+                    fetcher_name=fetcher_name,
+                    error_message=_BROKER_PUBLICATION_FAILURE_MESSAGE,
+                    now=datetime.now(UTC),
+                    error_detail=type(exc).__name__,
+                    error_traceback=None,
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+        if not compensation_won:
+            # Ambiguous Broker Acknowledgement, outcome 2 (worker wins):
+            # the broker actually accepted the task despite the
+            # exception raised here, and a worker adopted the run
+            # before this compensation attempt executed. See
+            # `docs/features/platform/fetcher-operations.md`
+            # (`trigger_fetcher`, Ambiguous Broker Acknowledgement).
+            logger.warning(
+                "fetcher_manual_trigger_compensation_lost_to_adoption",
+                fetcher_name=fetcher_name,
+                run_id=str(run_id),
+            )
+        raise FetcherBrokerUnavailableError() from exc
+
+    return TriggerFetcherResult(
+        run_id=run_id,
+        message=f"Fetcher '{fetcher_name}' has been queued for execution",
+    )

@@ -1,10 +1,11 @@
 """Request/response/query schemas for the fetcher observation and
-admin config/audit-log endpoints.
+admin config/audit-log/trigger endpoints.
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
-Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
-Fetcher Config, Update Fetcher Config, Get Fetcher Audit Log) for the
-authoritative request/response contract these schemas implement.
+Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data,
+Trigger Fetcher, Get Fetcher Config, Update Fetcher Config, Get Fetcher
+Audit Log) for the authoritative request/response contract these
+schemas implement.
 """
 
 from __future__ import annotations
@@ -382,3 +383,25 @@ class FetcherAuditListResponse(BaseModel):
 
     data: list[FetcherAuditEventData]
     meta: PaginationMeta
+
+
+# ---------------------------------------------------------------------------
+# Trigger Fetcher
+# ---------------------------------------------------------------------------
+
+
+class FetcherTriggerData(BaseModel):
+    """The `data` object for
+    `POST /api/v1/fetchers/{fetcher_name}/trigger` (`fetcher-operations.md`,
+    Trigger Fetcher). `run_id` identifies a `FetcherRun` already
+    committed with `status = queued` — it transitions to `running` once
+    a worker adopts it."""
+
+    run_id: UUID
+    message: str
+
+
+class FetcherTriggerResponse(BaseModel):
+    """Response body for `POST /api/v1/fetchers/{fetcher_name}/trigger`."""
+
+    data: FetcherTriggerData

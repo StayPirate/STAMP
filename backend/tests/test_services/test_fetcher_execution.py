@@ -1035,7 +1035,7 @@ class TestFinalizeManualRunAsFailure:
         )
         now = datetime.now(UTC)
 
-        await finalize_manual_run_as_failure(
+        won = await finalize_manual_run_as_failure(
             db_session,
             run_id=run.id,
             fetcher_name=run.fetcher_name,
@@ -1043,6 +1043,7 @@ class TestFinalizeManualRunAsFailure:
             now=now,
         )
 
+        assert won is True
         await db_session.refresh(run)
         assert run.status == "failure"
         assert run.error_message == (
@@ -1051,6 +1052,37 @@ class TestFinalizeManualRunAsFailure:
         assert run.finished_at == now
         assert run.started_at is None
         assert run.duration_seconds is None
+        assert run.error_detail is None
+        assert run.error_traceback is None
+
+    async def test_persists_error_detail_and_traceback_when_provided(
+        self,
+        db_session: AsyncSession,
+        fetcher_run_factory: Callable[..., Awaitable[FetcherRun]],
+    ) -> None:
+        """The manual-trigger broker-publication-failure path (used by
+        `fetcher_operations.trigger_fetcher`) supplies `error_detail`
+        (the exception class name only) and, per the sanitization
+        contract, always passes `error_traceback=None` — but the
+        parameter itself is a general capability of this function, not
+        hardcoded to that one caller."""
+        run = await fetcher_run_factory(
+            status="queued", started_at=None, triggered_by="manual"
+        )
+
+        await finalize_manual_run_as_failure(
+            db_session,
+            run_id=run.id,
+            fetcher_name=run.fetcher_name,
+            error_message="Manual run could not be dispatched to the task broker",
+            now=datetime.now(UTC),
+            error_detail="OperationalError",
+            error_traceback=None,
+        )
+
+        await db_session.refresh(run)
+        assert run.error_detail == "OperationalError"
+        assert run.error_traceback is None
 
     async def test_missing_run_raises_value_error(
         self, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
@@ -1126,7 +1158,7 @@ class TestFinalizeManualRunAsFailure:
         run = await fetcher_run_factory(status="running", triggered_by="manual")
 
         with caplog.at_level("INFO"):
-            await finalize_manual_run_as_failure(
+            won = await finalize_manual_run_as_failure(
                 db_session,
                 run_id=run.id,
                 fetcher_name=run.fetcher_name,
@@ -1134,6 +1166,7 @@ class TestFinalizeManualRunAsFailure:
                 now=datetime.now(UTC),
             )
 
+        assert won is False
         await db_session.refresh(run)
         assert run.status == "running"
         assert "manual_run_already_transitioned" in _service_log_text(caplog)
