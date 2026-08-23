@@ -38,6 +38,7 @@ from redbeat import RedBeatSchedulerEntry
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.config import Settings
 from app.database import Base
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
@@ -79,21 +80,94 @@ _INSPECT_TIMEOUT = 5.0
 # Fictional JWT secret — never a real credential (AGENTS.md Guardrail 23).
 _SYSTEM_TEST_JWT_SECRET_KEY = "system-test-jwt-secret-key-not-for-production-32ch"
 
+# Minimal OS-level context every subprocess needs to actually run
+# (locate the interpreter, resolve locale) — NOT application
+# configuration. Anything not listed here is deliberately absent from
+# the spawned process's environment, so a value can only ever reach
+# `Settings()` through `_FIXED_SAFE_SETTINGS_OVERRIDES` /
+# `build_system_process_env` below (testing-strategy.md, Registration
+# Boundary).
+_INHERITED_OS_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TZ")
+
+# Safe, explicit value for every `Settings` field this suite does NOT
+# need to vary per invocation. Combined in `build_system_process_env`
+# with the per-invocation dynamic values (database/redis URLs, JWT
+# secret). Keyed by the field's Python attribute name — the transform
+# to the upper-snake-case environment variable name (`Settings`'s
+# `case_sensitive=False` model_config) happens in that function.
+_FIXED_SAFE_SETTINGS_OVERRIDES: dict[str, str] = {
+    "app_name": "sentinel-system-test",
+    "debug": "false",
+    "log_level": "INFO",
+    "log_format": "json",
+    "celery_timezone": "UTC",
+    "celery_enable_utc": "true",
+    "cors_origins": "http://localhost",
+    "ibs_api_url": "https://ibs.invalid.example",
+    "ibs_username": "",
+    "ibs_password": "",
+    "ibs_download_base_url": "https://ibs.invalid.example/download",
+    "nvd_api_key": "",
+    "jwt_expiry_hours": "72",
+    "session_max_lifetime_days": "30",
+    "login_max_attempts": "5",
+    "login_lockout_minutes": "10",
+    "suse_ca_cert_path": "certs/SUSE_Trust_Root.crt",
+}
+
+
+def build_system_process_env(
+    *, database_url: str, redis_url: str, jwt_secret_key: str
+) -> dict[str, str]:
+    """Build the explicit environment for spawned worker/Beat subprocesses.
+
+    Pure function (no fixture dependencies) so the isolation contract
+    can be tested directly against ambient/canary environment variables
+    — see `test_system_process_env.py`. The `system_process_env` fixture
+    below is a thin wrapper supplying the real per-invocation dynamic
+    values.
+
+    Built from a minimal OS-level allowlist (`_INHERITED_OS_ENV_KEYS`)
+    — NOT `os.environ.copy()` — plus an explicit, safe value for EVERY
+    `Settings` field, not only the handful this suite cares about. This
+    ensures the subprocess can never observe a developer's shell-exported
+    application configuration value, nor `backend/.env` file content,
+    for any field (pydantic-settings environment variables take
+    precedence over the `.env` file, so supplying every field here is
+    sufficient regardless of `.env` content) — see testing-strategy.md
+    (Registration Boundary): "The subprocess environment MUST NOT
+    inherit application-configured values from the developer's shell or
+    `.env` file." `PYTHONPATH` is set explicitly so `-m celery` module
+    resolution does not depend on `cwd`-derived `sys.path` behavior.
+
+    Raises `AssertionError` if any `Settings` field is missing from the
+    combined override set — a field added to `Settings` without a
+    corresponding safe value here would otherwise silently fall through
+    to the ambient environment, defeating this function's purpose.
+    """
+    dynamic_overrides = {
+        "database_url": database_url,
+        "redis_url": redis_url,
+        "celery_broker_url": redis_url,
+        "jwt_secret_key": jwt_secret_key,
+    }
+    overrides = {**_FIXED_SAFE_SETTINGS_OVERRIDES, **dynamic_overrides}
+    missing = set(Settings.model_fields) - set(overrides)
+    assert not missing, (
+        f"build_system_process_env: Settings field(s) {sorted(missing)} "
+        "have no safe override defined — add them to "
+        "_FIXED_SAFE_SETTINGS_OVERRIDES or `dynamic_overrides` above."
+    )
+    env = {key: os.environ[key] for key in _INHERITED_OS_ENV_KEYS if key in os.environ}
+    env["PYTHONPATH"] = str(_BACKEND_DIR)
+    env.update({name.upper(): value for name, value in overrides.items()})
+    return env
+
 
 @pytest.fixture
 def system_process_env(_engine: AsyncEngine, _redis_test_url: str) -> dict[str, str]:
-    """Explicit environment for spawned worker/Beat subprocesses.
-
-    Starts from a copy of the current process environment (so `PATH`,
-    the venv, locale, etc. resolve normally) but unconditionally
-    overrides every application-configured value the spawned process
-    reads at `Settings()` construction time — `DATABASE_URL`,
-    `CELERY_BROKER_URL`, `REDIS_URL`, `JWT_SECRET_KEY`,
-    `CELERY_TIMEZONE`, `CELERY_ENABLE_UTC` — so the subprocess can never
-    observe a developer's local `.env` or shell-exported value for any
-    of them (see testing-strategy.md, Registration Boundary). Environment
-    variables take precedence over `.env` file values in pydantic-settings,
-    so this override is sufficient regardless of `backend/.env` content.
+    """Explicit environment for spawned worker/Beat subprocesses — see
+    `build_system_process_env` for the full isolation contract.
 
     `DATABASE_URL` is derived from the same test engine `_engine` (and
     therefore the same physical PostgreSQL database) the rest of the
@@ -103,18 +177,11 @@ def system_process_env(_engine: AsyncEngine, _redis_test_url: str) -> dict[str, 
     `CELERY_BROKER_URL`/`REDIS_URL` both point at this pytest worker's
     dedicated Redis logical database (`_redis_test_url`).
     """
-    env = os.environ.copy()
-    env.update(
-        {
-            "DATABASE_URL": _engine.url.render_as_string(hide_password=False),
-            "CELERY_BROKER_URL": _redis_test_url,
-            "REDIS_URL": _redis_test_url,
-            "JWT_SECRET_KEY": _SYSTEM_TEST_JWT_SECRET_KEY,
-            "CELERY_TIMEZONE": "UTC",
-            "CELERY_ENABLE_UTC": "true",
-        }
+    return build_system_process_env(
+        database_url=_engine.url.render_as_string(hide_password=False),
+        redis_url=_redis_test_url,
+        jwt_secret_key=_SYSTEM_TEST_JWT_SECRET_KEY,
     )
-    return env
 
 
 @dataclass
@@ -224,11 +291,11 @@ class FetcherPipelineHarness:
     worker_hostname: str
     worker_process: _SpawnedProcess | None = None
     beat_process: _SpawnedProcess | None = None
-    #: id of the stale `FetcherRun` seeded by the fixture (before its own
-    #: preflight purge) to simulate residue left by a prior invocation
-    #: that was interrupted before its own teardown could run. The test
-    #: asserts the run it observes is NOT this one — see
-    #: `_seed_stale_fetcher_artifacts` below.
+    #: id of the stale `FetcherRun` the fixture seeds (between its two
+    #: preflight purges — see `_seed_stale_fetcher_artifacts` below) to
+    #: simulate residue left by a prior invocation that was interrupted
+    #: before its own teardown could run. The test asserts the run it
+    #: observes is NOT this one.
     stale_run_id: uuid.UUID | None = None
 
     # -- Process lifecycle ---------------------------------------------
@@ -558,6 +625,55 @@ async def _delete_fetcher_artifacts(
         await session.commit()
 
 
+async def _residual_fetcher_artifacts(
+    session_factory: async_sessionmaker[AsyncSession], names: set[str]
+) -> list[str]:
+    """Read-only check: describe every `FetcherConfig`/`FetcherRun`/
+    `FetcherAuditEvent` row still present for any name in `names`, or
+    return an empty list if none remain.
+
+    Used to verify that `_delete_fetcher_artifacts` actually removed
+    what it claims to — see testing-strategy.md, Deterministic Cleanup,
+    step 8: "Verify that processes are dead and test artifacts are
+    absent." A silent regression in the delete filter or FK ordering
+    would otherwise surface only later, as the *next* invocation's own
+    preflight purge quietly absorbing residue this invocation's cleanup
+    was supposed to have removed.
+    """
+    if not names:
+        return []
+    residues: list[str] = []
+    async with session_factory() as session:
+        config_result = await session.execute(
+            select(FetcherConfig.fetcher_name).where(
+                FetcherConfig.fetcher_name.in_(names)
+            )
+        )
+        residues.extend(
+            f"FetcherConfig(fetcher_name={name!r})"
+            for name in config_result.scalars().all()
+        )
+        run_result = await session.execute(
+            select(FetcherRun.id, FetcherRun.fetcher_name).where(
+                FetcherRun.fetcher_name.in_(names)
+            )
+        )
+        residues.extend(
+            f"FetcherRun(id={run_id}, fetcher_name={name!r})"
+            for run_id, name in run_result.all()
+        )
+        event_result = await session.execute(
+            select(FetcherAuditEvent.id, FetcherAuditEvent.fetcher_name).where(
+                FetcherAuditEvent.fetcher_name.in_(names)
+            )
+        )
+        residues.extend(
+            f"FetcherAuditEvent(id={event_id}, fetcher_name={name!r})"
+            for event_id, name in event_result.all()
+        )
+    return residues
+
+
 async def _seed_stale_fetcher_artifacts(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> uuid.UUID:
@@ -708,9 +824,14 @@ async def fetcher_pipeline_harness(
         # 6. Delete committed test rows from PostgreSQL, FK-safe order,
         # restricted to fetcher names absent from the pre-spawn baseline
         # — never a table-wide delete (testing-strategy.md, Parallel
-        # Safety). This also removes any `FetcherConfig` row the
-        # subprocess registry's bootstrap created for a *production*
-        # fetcher, not just the test fetcher's own row.
+        # Safety). Computed by diffing against the baseline (rather than
+        # hardcoding SYSTEM_FETCHER_NAME) as defense-in-depth: the
+        # spawned processes' registry is pruned to exactly the test
+        # fetcher (see `tests/support/system_fetcher_app.py`), so this
+        # is expected to equal exactly {SYSTEM_FETCHER_NAME} in
+        # practice — a diff-based delete still catches any subprocess
+        # bootstrap regression without silently leaving orphaned rows.
+        created_names: set[str] = set()
         try:
             async with real_session_factory() as cleanup_session:
                 current_result = await cleanup_session.execute(
@@ -728,10 +849,50 @@ async def fetcher_pipeline_harness(
         else:
             FETCHER_REGISTRY[SYSTEM_FETCHER_NAME] = previous_registry_entry
 
-        # 8. Verify processes are dead and test artifacts are absent.
+        # 8. Verify processes are dead and test artifacts are absent —
+        # reads back exactly what steps 4-6 claim to have removed, so a
+        # silent regression in any of them (wrong filter, FK-order bug,
+        # a swallowed exception) fails THIS invocation instead of
+        # surfacing later as the next invocation's preflight purge
+        # quietly absorbing the leftover residue.
         for proc in (harness.worker_process, harness.beat_process):
             if proc is not None and proc.is_alive():
                 cleanup_errors.append(f"{proc.name} process still alive after cleanup")
+
+        try:
+            residues = await _residual_fetcher_artifacts(
+                real_session_factory, created_names | {SYSTEM_FETCHER_NAME}
+            )
+            if residues:
+                cleanup_errors.append(
+                    f"PostgreSQL artifacts still present after cleanup: {residues}"
+                )
+        except Exception as exc:
+            cleanup_errors.append(f"postgres residue verification failed: {exc!r}")
+
+        try:
+            key = RedBeatSchedulerEntry.generate_key(
+                celery_test_app, SYSTEM_FETCHER_NAME
+            )
+            RedBeatSchedulerEntry.from_key(key, app=celery_test_app)
+        except KeyError:
+            pass
+        except Exception as exc:
+            cleanup_errors.append(f"redbeat residue verification failed: {exc!r}")
+        else:
+            cleanup_errors.append(
+                f"RedBeat entry for '{SYSTEM_FETCHER_NAME}' still present after cleanup"
+            )
+
+        try:
+            remaining_keys = await redis_client.dbsize()
+            if remaining_keys != 0:
+                cleanup_errors.append(
+                    "Redis logical database not empty after FLUSHDB: "
+                    f"{remaining_keys} key(s) remain"
+                )
+        except Exception as exc:
+            cleanup_errors.append(f"redis residue verification failed: {exc!r}")
 
         if cleanup_errors:
             pytest.fail(
