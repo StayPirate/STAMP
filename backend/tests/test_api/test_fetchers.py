@@ -1217,7 +1217,9 @@ class TestTriggerFetcherEndpoint:
         fetcher_name = await _arrange_trigger_fetcher(real_session_factory)
 
         def _raise(*_args: Any, **_kwargs: Any) -> None:
-            raise ConnectionError("redis://user:supersecret@10.0.0.5:6379 unreachable")
+            raise ConnectionError(
+                "redis://user:supersecret@203.0.113.5:6379 unreachable"
+            )
 
         monkeypatch.setattr(celery_test_app, "send_task", _raise)
         try:
@@ -1227,7 +1229,7 @@ class TestTriggerFetcherEndpoint:
             assert response.status_code == 503
             assert response.json()["code"] == "CELERY_UNAVAILABLE"
             assert "supersecret" not in response.text
-            assert "10.0.0.5" not in response.text
+            assert "203.0.113.5" not in response.text
         finally:
             await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
 
