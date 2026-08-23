@@ -45,10 +45,18 @@ including a different function — is still detected:
   affected by this write's outcome). Its companion factory function
   `get_last_used_session_factory` is authorized for the same reason as
   `get_readiness_session_factory` above.
+- `app/api/v1/fetchers.py`, function
+  `get_fetcher_trigger_session_factory`: `trigger_fetcher()` (the
+  `POST .../trigger` service function) is a service-owned orchestration
+  boundary per the same "Caller-Owned Service Transactions" clause — it
+  manages its own short-lived sessions across two independent
+  transactions and publishes to Celery strictly between them with no
+  row lock held (`docs/conventions.md`, Transaction Hygiene Rules). See
+  `docs/features/platform/fetcher-operations.md` (`trigger_fetcher`).
 
 The module-level `import` of `async_session_factory` in each of these
-two files (needed for the authorized function to reference it at all)
-is allowed only in the two files that contain an authorized function —
+three files (needed for the authorized function to reference it at all)
+is allowed only in the files that contain an authorized function —
 tracked separately from function-scoped usage, since an `import`
 statement is inherently outside any function body.
 """
@@ -75,6 +83,7 @@ _AUTHORIZED_QUALNAMES: dict[Path, set[str]] = {
         "get_last_used_session_factory",
         "LastUsedDebouncer.touch",
     },
+    Path("v1/fetchers.py"): {"get_fetcher_trigger_session_factory"},
 }
 
 _FORBIDDEN_NAMES = {"async_session_factory"}

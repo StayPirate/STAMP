@@ -1,14 +1,17 @@
-"""Fetcher observation and admin config/audit-log API endpoints.
+"""Fetcher observation and admin config/audit-log/trigger API endpoints.
 
 See `docs/features/platform/fetcher-operations.md` (List Fetchers, List
-Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data, Get
-Fetcher Config, Update Fetcher Config, Get Fetcher Audit Log) for the
-authoritative endpoint contracts this module implements. Handlers stay
-thin: they validate, derive `has_manage_fetchers` from the optional
-principal (Public endpoints) or require the `manage_fetchers`
-capability outright (admin endpoints), delegate to
-`app.services.fetcher_operations`, and map the result to the documented
-response — no business logic or database query lives here.
+Fetcher Runs, Get Fetcher Run Detail, Get Fetcher Run Timeline Data,
+Trigger Fetcher, Get Fetcher Config, Update Fetcher Config, Get Fetcher
+Audit Log) for the authoritative endpoint contracts this module
+implements. Handlers stay thin: they validate, derive
+`has_manage_fetchers` from the optional principal (Public endpoints) or
+require the `manage_fetchers` capability outright (admin endpoints),
+delegate to `app.services.fetcher_operations`, and map the result to
+the documented response — no business logic or database query lives
+here. `trigger_fetcher` is the sole exception to the `DatabaseSession`
+pattern used by every other handler in this module — see
+`get_fetcher_trigger_session_factory` below for why.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, Query, status
 from redis.exceptions import RedisError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.dependencies import (
     AuthenticatedPrincipal,
@@ -36,7 +40,11 @@ from app.core.dates import (
 from app.core.enums import Capability
 from app.core.errors import AppError, ErrorCode
 from app.core.permissions import get_capabilities
-from app.database import DatabaseSession, register_post_commit_callback
+from app.database import (
+    DatabaseSession,
+    async_session_factory,
+    register_post_commit_callback,
+)
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.schemas.common import PaginationMeta, UserReference
 from app.schemas.fetcher import (
@@ -59,12 +67,16 @@ from app.schemas.fetcher import (
     FetcherTimelinePointData,
     FetcherTimelineQuery,
     FetcherTimelineResponse,
+    FetcherTriggerData,
+    FetcherTriggerResponse,
 )
 from app.services import fetcher_operations, fetcher_schedule, user_service
 from app.services.fetcher_operations import (
     UNSET,
     FetcherAlreadyRunningError,
+    FetcherBrokerUnavailableError,
     FetcherDeregisteredError,
+    FetcherDisabledError,
     FetcherListItem,
     FetcherNotFoundError,
     FetcherRunNotFoundError,
@@ -210,6 +222,22 @@ def _already_running(exc: Exception) -> AppError:
     return AppError(
         status_code=status.HTTP_409_CONFLICT,
         code=ErrorCode.FETCHER_ALREADY_RUNNING,
+        detail=str(exc),
+    )
+
+
+def _disabled(exc: Exception) -> AppError:
+    return AppError(
+        status_code=status.HTTP_409_CONFLICT,
+        code=ErrorCode.FETCHER_DISABLED,
+        detail=str(exc),
+    )
+
+
+def _broker_unavailable(exc: Exception) -> AppError:
+    return AppError(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        code=ErrorCode.CELERY_UNAVAILABLE,
         detail=str(exc),
     )
 
@@ -527,6 +555,79 @@ async def get_fetcher_timeline(
     except FetcherNotFoundError as exc:
         raise _not_found(exc) from exc
     return FetcherTimelineResponse(data=_serialize_timeline(timeline))
+
+
+def get_fetcher_trigger_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Provide the session factory used by `trigger_fetcher()`'s
+    service-owned orchestration.
+
+    Performs no I/O — returns the production `async_session_factory`.
+    `trigger_fetcher()` does not participate in the request-scoped
+    `DatabaseSession` transaction: it is a service-owned orchestration
+    boundary that opens and commits its own short-lived sessions across
+    two independent transactions, publishing to Celery strictly between
+    them with no lock held (`docs/conventions.md`, Caller-Owned Service
+    Transactions: "a component that explicitly owns its sessions ...
+    keeps the transaction contract defined by its owning specification";
+    Transaction Hygiene Rules) — see
+    `docs/features/platform/fetcher-operations.md` (`trigger_fetcher`).
+    Overridable via `app.dependency_overrides` so tests can point it at
+    the test database engine, mirroring `get_readiness_session_factory`
+    (`app/api/health.py`) and `get_last_used_session_factory`
+    (`app/api/dependencies.py`).
+    """
+    return async_session_factory
+
+
+@router.post(
+    "/fetchers/{fetcher_name}/trigger",
+    response_model=FetcherTriggerResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Trigger fetcher",
+    description=(
+        "Enqueues a manual run of the specified fetcher. Returns the "
+        "identifier of a FetcherRun already committed with status "
+        "'queued'; poll GET .../runs/{run_id} for progress. Requires the "
+        "manage_fetchers capability."
+    ),
+)
+async def trigger_fetcher(
+    fetcher_name: str,
+    principal: Annotated[
+        AuthenticatedPrincipal,
+        Depends(require_capability(Capability.MANAGE_FETCHERS)),
+    ],
+    session_factory: Annotated[
+        async_sessionmaker[AsyncSession],
+        Depends(get_fetcher_trigger_session_factory),
+    ],
+) -> FetcherTriggerResponse:
+    """Trigger fetcher — see
+    `docs/features/platform/fetcher-operations.md` (Trigger Fetcher).
+
+    Does not declare a `DatabaseSession` dependency: `trigger_fetcher()`
+    manages its own sessions/transactions (see
+    `get_fetcher_trigger_session_factory`)."""
+    try:
+        result = await fetcher_operations.trigger_fetcher(
+            fetcher_name,
+            user_id=principal.user.id,
+            session_factory=session_factory,
+            celery_app=celery_app,
+        )
+    except FetcherNotFoundError as exc:
+        raise _not_found(exc) from exc
+    except FetcherDeregisteredError as exc:
+        raise _deregistered(exc) from exc
+    except FetcherDisabledError as exc:
+        raise _disabled(exc) from exc
+    except FetcherAlreadyRunningError as exc:
+        raise _already_running(exc) from exc
+    except FetcherBrokerUnavailableError as exc:
+        raise _broker_unavailable(exc) from exc
+    return FetcherTriggerResponse(
+        data=FetcherTriggerData(run_id=result.run_id, message=result.message)
+    )
 
 
 @router.get(

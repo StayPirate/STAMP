@@ -82,6 +82,18 @@ class TestErrorCode:
         Operations Service, Service Exceptions)."""
         assert ErrorCode.FETCHER_NOT_FOUND == "FETCHER_NOT_FOUND"
 
+    def test_fetcher_disabled_is_registered(self) -> None:
+        """See docs/features/platform/fetcher-operations.md (Fetcher
+        Operations Service, Service Exceptions; Trigger Fetcher)."""
+        assert ErrorCode.FETCHER_DISABLED == "FETCHER_DISABLED"
+
+    def test_celery_unavailable_is_registered(self) -> None:
+        """See docs/features/platform/fetcher-operations.md (Fetcher
+        Operations Service, Service Exceptions; Trigger Fetcher) and
+        docs/api-spec.md (Error Code Categories,
+        `<DEPENDENCY>_UNAVAILABLE`)."""
+        assert ErrorCode.CELERY_UNAVAILABLE == "CELERY_UNAVAILABLE"
+
     def test_admin_user_mutation_error_codes_are_registered(self) -> None:
         """See docs/features/identity/user-service.md (Service
         Exceptions) and docs/features/identity/user-management.md

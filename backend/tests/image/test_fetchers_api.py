@@ -1,25 +1,25 @@
 """Black-box image smoke assertions for the fetcher observation and
-admin config/audit-log/config-mutation API
+admin config/audit-log/config-mutation/trigger API
 (`backend/app/api/v1/fetchers.py`).
 
 Verifies — over a real ASGI server (uvicorn) and a real HTTP client
 (`urllib`), the only combination that can observe this — representative
-authorized and anonymous responses from all seven
-`GET|PATCH /api/v1/fetchers*` endpoints against the built image. The
+authorized and anonymous responses from all eight
+`GET|PATCH|POST /api/v1/fetchers*` endpoints against the built image. The
 shipped image's `FETCHER_REGISTRY` has no production fetcher yet (see
 `docs/features/platform/fetcher-infrastructure.md`, Fetcher Registry),
 so this scenario arranges a deregistered `FetcherConfig` row directly —
 the same "historical data only" shape the endpoints document for a
-fetcher whose code has been removed. This also means the PATCH
-endpoint's only fully observable outcome here is the `409
-FETCHER_DEREGISTERED` guard — a successful mutation and its RedBeat
-propagation require a registered fetcher, already covered by the
-in-process e2e suite. The exhaustive contract (merge logic, filters,
-pagination, disabled-period derivation, mutation/audit/propagation) is
-already covered by the in-process e2e suite
-(`tests/test_api/test_fetchers.py`) and the service suite
-(`tests/test_services/test_fetcher_operations.py`), which run far
-faster and do not need a running container.
+fetcher whose code has been removed. This also means the PATCH and
+trigger endpoints' only fully observable outcome here is the `409
+FETCHER_DEREGISTERED` guard — a successful mutation, Celery publication,
+and RedBeat propagation all require a registered fetcher, already
+covered by the in-process e2e suite. The exhaustive contract (merge
+logic, filters, pagination, disabled-period derivation,
+mutation/audit/propagation, trigger orchestration) is already covered by
+the in-process e2e suite (`tests/test_api/test_fetchers.py`) and the
+service suite (`tests/test_services/test_fetcher_operations.py`), which
+run far faster and do not need a running container.
 
 See docs/features/platform/testing-strategy.md (Image / Container
 Smoke Testing, Growth Rule).
@@ -262,6 +262,27 @@ def patch_fetcher_config_admin_deregistered_returns_409(admin_token):
     print("fetchers-config-patch-deregistered-409-ok")
 
 
+def trigger_fetcher_anonymous_returns_401():
+    status, body = _request("POST", f"/api/v1/fetchers/{_FETCHER_NAME}/trigger")
+    assert status == 401, (status, body)
+    assert body["code"] == "AUTH_NOT_AUTHENTICATED"
+    print("fetchers-trigger-anonymous-401-ok")
+
+
+def trigger_fetcher_admin_deregistered_returns_409(admin_token):
+    # Same rationale as patch_fetcher_config_admin_deregistered_returns_409:
+    # the shipped image has no registered production fetcher, so the
+    # deregistered guard is the one outcome fully observable here — a
+    # successful trigger requires a registered fetcher and a running
+    # Celery worker, already covered by the in-process e2e/service suites.
+    status, body = _request(
+        "POST", f"/api/v1/fetchers/{_FETCHER_NAME}/trigger", token=admin_token
+    )
+    assert status == 409, (status, body)
+    assert body["code"] == "FETCHER_DEREGISTERED"
+    print("fetchers-trigger-deregistered-409-ok")
+
+
 def get_fetcher_audit_log_anonymous_returns_401():
     status, body = _request("GET", f"/api/v1/fetchers/{_FETCHER_NAME}/audit-log")
     assert status == 401, (status, body)
@@ -335,6 +356,10 @@ async def main():
         await asyncio.to_thread(
             patch_fetcher_config_admin_deregistered_returns_409, admin_token
         )
+        await asyncio.to_thread(trigger_fetcher_anonymous_returns_401)
+        await asyncio.to_thread(
+            trigger_fetcher_admin_deregistered_returns_409, admin_token
+        )
         await asyncio.to_thread(get_fetcher_audit_log_anonymous_returns_401)
         await asyncio.to_thread(
             get_fetcher_audit_log_admin_shows_event, admin_token, admin_id
@@ -372,6 +397,8 @@ def test_fetchers_api_read_paths_are_observable_in_built_image(
     assert "fetchers-config-admin-ok" in result.stdout
     assert "fetchers-config-patch-anonymous-401-ok" in result.stdout
     assert "fetchers-config-patch-deregistered-409-ok" in result.stdout
+    assert "fetchers-trigger-anonymous-401-ok" in result.stdout
+    assert "fetchers-trigger-deregistered-409-ok" in result.stdout
     assert "fetchers-audit-log-anonymous-401-ok" in result.stdout
     assert "fetchers-audit-log-admin-ok" in result.stdout
     assert "fetchers-invalid-credential-401-ok" in result.stdout

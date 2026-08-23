@@ -368,31 +368,44 @@ async def finalize_manual_run_as_failure(
     fetcher_name: str,
     error_message: str,
     now: datetime,
-) -> None:
+    error_detail: str | None = None,
+    error_traceback: str | None = None,
+) -> bool:
     """Finalize a manually pre-created, still-`queued` `FetcherRun` as
     an immediate failure with no accompanying audit event.
 
-    Shared by two acquisition-time failure paths where the fetcher
-    never executes: the fetcher was deregistered (caller: the
-    `run_fetcher` task wrapper, before any `FetcherConfig` lock is
-    taken), or the fetcher was disabled (caller: `acquire_fetcher_run`
-    above, under the `FetcherConfig` lock). See
+    Shared by three failure paths where the fetcher never executes: the
+    fetcher was deregistered (caller: the `run_fetcher` task wrapper,
+    before any `FetcherConfig` lock is taken), the fetcher was disabled
+    (caller: `acquire_fetcher_run` above, under the `FetcherConfig`
+    lock), or the manual trigger's Celery publication failed (caller:
+    `fetcher_operations.trigger_fetcher()`, after its first transaction
+    committed and with no lock held). See
     `docs/features/platform/fetcher-infrastructure.md` (Celery
     Integration — Unknown and deregistered fetcher handling; and
-    Concurrency Control — Atomic Run Acquisition Protocol, step 2).
+    Concurrency Control — Atomic Run Acquisition Protocol, step 2) and
+    `docs/features/platform/fetcher-operations.md` (`trigger_fetcher`,
+    Publication Failure Path).
 
     Performs a **conditional atomic UPDATE**
     (`WHERE id = :run_id AND fetcher_name = :fetcher_name AND
     status = 'queued'`) setting `status = failure`, the caller-supplied
-    `error_message`, and `finished_at = now`. `started_at` and
-    `duration_seconds` are left untouched — they remain `NULL`, since
-    the run was never adopted. This is safe to call even when a
-    concurrent path (e.g., a future broker-failure compensation, or a
-    redelivered Celery message racing this same call) has already
-    transitioned the row away from `queued`: the UPDATE then matches
-    zero rows and is silently a no-op, deferring to whichever
-    transition already won. Flushes but does not commit — the caller's
-    transaction owns durability.
+    `error_message`/`error_detail`/`error_traceback`, and
+    `finished_at = now`. `started_at` and `duration_seconds` are left
+    untouched — they remain `NULL`, since the run was never adopted.
+    This is safe to call even when a concurrent path (e.g., a
+    concurrent worker adoption, or a redelivered Celery message racing
+    this same call) has already transitioned the row away from
+    `queued`: the UPDATE then matches zero rows and is silently a
+    no-op, deferring to whichever transition already won. Flushes but
+    does not commit — the caller's transaction owns durability.
+
+    Returns:
+        `True` if this call's conditional UPDATE won the race (the row
+        was still `queued` and is now `failure`). `False` if a
+        concurrent transition already moved the row away from `queued`
+        before this call's UPDATE executed — the row is left
+        untouched.
 
     Raises:
         ValueError: `run_id` does not identify an existing
@@ -408,6 +421,8 @@ async def finalize_manual_run_as_failure(
         .values(
             status=FetcherRunStatus.FAILURE.value,
             error_message=error_message,
+            error_detail=error_detail,
+            error_traceback=error_traceback,
             finished_at=now,
         )
         .returning(FetcherRun.id)
@@ -415,7 +430,7 @@ async def finalize_manual_run_as_failure(
     updated_id = result.scalar_one_or_none()
     await db.flush()
     if updated_id is not None:
-        return
+        return True
 
     run = await db.get(FetcherRun, run_id)
     if run is None or run.fetcher_name != fetcher_name:
@@ -430,6 +445,7 @@ async def finalize_manual_run_as_failure(
         run_id=str(run_id),
         status=run.status,
     )
+    return False
 
 
 def mark_run_stale(

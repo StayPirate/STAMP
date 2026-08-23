@@ -17,8 +17,8 @@ import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import AsyncMock
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -30,19 +30,21 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel, Field
 from redbeat import RedBeatSchedulerEntry
 from redis.exceptions import RedisError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.api.v1.fetchers as fetchers_module
 import app.services.fetcher_schedule as fetcher_schedule_module
 from app.api import dependencies
 from app.api.dependencies import SESSION_COOKIE_NAME
 from app.core.enums import Role, SessionCreationReason
-from app.database import get_db
+from app.database import async_session_factory, get_db
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
+from app.models.session import Session
 from app.models.user import User
 from app.models.user_role import UserRole
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
@@ -204,10 +206,10 @@ async def _patch_celery_app(
 
 @pytest.mark.e2e
 class TestRouteInventory:
-    def test_only_the_seven_endpoints_are_registered(self) -> None:
-        """No trigger or IBS consumer endpoint is introduced by this
-        work item — see fetcher-operations.md (Scope). Route discovery
-        uses `iter_route_contexts()` — see `tests/test_api_conventions.py`
+    def test_only_the_eight_endpoints_are_registered(self) -> None:
+        """No IBS consumer endpoint is introduced by this work item —
+        see fetcher-operations.md (Scope). Route discovery uses
+        `iter_route_contexts()` — see `tests/test_api_conventions.py`
         for why `app.routes` alone does not expose routes included via
         `include_router()`.
         """
@@ -224,6 +226,7 @@ class TestRouteInventory:
             ("/api/v1/fetchers/{fetcher_name}/runs", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/runs/{run_id}", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/timeline", "GET"),
+            ("/api/v1/fetchers/{fetcher_name}/trigger", "POST"),
             ("/api/v1/fetchers/{fetcher_name}/config", "GET"),
             ("/api/v1/fetchers/{fetcher_name}/config", "PATCH"),
             ("/api/v1/fetchers/{fetcher_name}/audit-log", "GET"),
@@ -866,24 +869,381 @@ class TestGetFetcherTimelineEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/v1/fetchers/{fetcher_name}/trigger
+#
+# `trigger_fetcher()` manages its own sessions and commits real
+# transactions (see its docstring in `app/services/fetcher_operations.py`)
+# — it never participates in the request-scoped `DatabaseSession`
+# transaction the `client`/`admin_client` fixtures override with the
+# rollback-only `db_session`. Because `trigger_fetcher()` commits
+# `FetcherRun` rows with a `triggered_by_user_id` foreign key through its
+# own, separately connected session, the authenticating admin's `User`
+# row must ALSO be committed for real (not merely visible inside
+# `db_session`'s uncommitted savepoint) — otherwise the FK constraint
+# fails from `trigger_fetcher`'s perspective. `admin_trigger_client`/
+# `admin_api_key_trigger_client` below therefore create their own admin
+# identity directly through `real_session_factory` and override both
+# `get_db` and `get_fetcher_trigger_session_factory` to the same test
+# engine, rather than reusing `admin_client`/`admin_api_key_client`.
+# Fetcher-specific rows (`FetcherConfig`/`FetcherRun`/`FetcherAuditEvent`)
+# are armed/cleaned up per test via `_arrange_trigger_fetcher`/
+# `_cleanup_trigger_fetcher_rows`.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def admin_trigger_client(
+    real_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[AsyncClient]:
+    """An `AsyncClient` authenticated as an admin whose `User`,
+    `UserRole`, and `Session` rows are committed for real through
+    `real_session_factory` — required because `trigger_fetcher()`
+    commits `FetcherRun` rows referencing `triggered_by_user_id` via its
+    own, separately connected session (see module note above); a user
+    visible only inside the savepoint-scoped `db_session` (as
+    `user_factory`/`admin_client` create it) would violate that foreign
+    key from `trigger_fetcher`'s perspective. Also overrides `get_db` (so
+    the request's own auth lookup uses the same real engine, not the
+    savepoint-scoped one) and `get_fetcher_trigger_session_factory`.
+    Cleans up the admin identity rows on teardown; fetcher-specific rows
+    remain the caller's responsibility (see
+    `_cleanup_trigger_fetcher_rows`)."""
+    async with real_session_factory() as session:
+        admin = User(
+            username=f"triggerapiadmin{uuid4().hex[:8]}",
+            email=f"triggerapiadmin{uuid4().hex[:8]}@example.com",
+            password_hash="$2b$12$" + "a" * 53,
+        )
+        session.add(admin)
+        await session.flush()
+        session.add(UserRole(user_id=admin.id, role=Role.ADMIN.value))
+        created = await create_session(
+            session, admin, SessionCreationReason.LOCAL_LOGIN
+        )
+        await session.commit()
+        admin_id = admin.id
+        token = created.token
+
+    async def _override_get_db() -> AsyncGenerator[AsyncSession]:
+        async with real_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[fetchers_module.get_fetcher_trigger_session_factory] = (
+        lambda: real_session_factory
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as trigger_client:
+            trigger_client.cookies.set(SESSION_COOKIE_NAME, token)
+            yield trigger_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(
+            fetchers_module.get_fetcher_trigger_session_factory, None
+        )
+        async with real_session_factory() as session:
+            await session.execute(delete(UserRole).where(UserRole.user_id == admin_id))
+            await session.execute(delete(Session).where(Session.user_id == admin_id))
+            await session.execute(delete(User).where(User.id == admin_id))
+            await session.commit()
+
+
+@pytest_asyncio.fixture
+async def admin_api_key_trigger_client(
+    real_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[AsyncClient]:
+    """Same as `admin_trigger_client`, authenticated via a real,
+    committed API key instead of a JWT session cookie."""
+    token, digest = _make_api_key_credential()
+    async with real_session_factory() as session:
+        admin = User(
+            username=f"triggerapikeyadmin{uuid4().hex[:8]}",
+            email=f"triggerapikeyadmin{uuid4().hex[:8]}@example.com",
+            password_hash="$2b$12$" + "a" * 53,
+        )
+        session.add(admin)
+        await session.flush()
+        session.add(UserRole(user_id=admin.id, role=Role.ADMIN.value))
+        session.add(
+            ApiKey(
+                user_id=admin.id,
+                name="trigger-test-key",
+                key_hash=digest,
+                prefix=token[:12],
+            )
+        )
+        await session.commit()
+        admin_id = admin.id
+
+    monkeypatch.setattr(dependencies._last_used_debouncer, "touch", AsyncMock())
+
+    async def _override_get_db() -> AsyncGenerator[AsyncSession]:
+        async with real_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[fetchers_module.get_fetcher_trigger_session_factory] = (
+        lambda: real_session_factory
+    )
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as trigger_client:
+            trigger_client.headers["Authorization"] = f"Bearer {token}"
+            yield trigger_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(
+            fetchers_module.get_fetcher_trigger_session_factory, None
+        )
+        async with real_session_factory() as session:
+            await session.execute(delete(ApiKey).where(ApiKey.user_id == admin_id))
+            await session.execute(delete(UserRole).where(UserRole.user_id == admin_id))
+            await session.execute(delete(User).where(User.id == admin_id))
+            await session.commit()
+
+
+async def _arrange_trigger_fetcher(
+    real_session_factory: async_sessionmaker[AsyncSession],
+    *,
+    enabled: bool = True,
+    queue: str | None = None,
+) -> str:
+    """Register a per-test stub fetcher and commit its `FetcherConfig`
+    row through `real_session_factory` — see module note above for why
+    `fetcher_config_factory` cannot be used here. Returns the generated
+    `fetcher_name`."""
+    fetcher_name = f"api_trigger_{uuid4().hex[:8]}"
+    stub = cast(
+        "type[Any]",
+        type(
+            "_ApiTriggerStub",
+            (),
+            {
+                "name": fetcher_name,
+                "description": "Stub fetcher for trigger endpoint tests",
+                "default_schedule": "0 3 * * *",
+                "queue": queue,
+                "Settings": None,
+            },
+        ),
+    )
+    FETCHER_REGISTRY[fetcher_name] = stub
+    async with real_session_factory() as session:
+        session.add(
+            FetcherConfig(fetcher_name=fetcher_name, enabled=enabled, run_timeout=3600)
+        )
+        await session.commit()
+    return fetcher_name
+
+
+async def _cleanup_trigger_fetcher_rows(
+    real_session_factory: async_sessionmaker[AsyncSession], fetcher_name: str
+) -> None:
+    async with real_session_factory() as session:
+        await session.execute(
+            delete(FetcherAuditEvent).where(
+                FetcherAuditEvent.fetcher_name == fetcher_name
+            )
+        )
+        await session.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+        )
+        await session.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+        )
+        await session.commit()
+
+
+@pytest.mark.unit
+class TestGetFetcherTriggerSessionFactory:
+    def test_returns_the_shared_application_session_factory(self) -> None:
+        """Every trigger endpoint test overrides this dependency (via
+        `admin_trigger_client`/`admin_api_key_trigger_client`) to point
+        at the test database instead of whatever `DATABASE_URL` the
+        environment running the suite happens to have configured — so
+        the default, un-overridden implementation is exercised directly
+        here instead, mirroring `TestGetReadinessSessionFactory`
+        (`tests/test_health.py`)."""
+        assert (
+            fetchers_module.get_fetcher_trigger_session_factory()
+            is async_session_factory
+        )
+
+
+@pytest.mark.e2e
+class TestTriggerFetcherEndpoint:
+    async def test_unauthenticated_returns_401(
+        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await client.post(f"/api/v1/fetchers/{config.fetcher_name}/trigger")
+        assert response.status_code == 401
+        assert response.json()["code"] == "AUTH_NOT_AUTHENTICATED"
+
+    async def test_ordinary_user_returns_403(
+        self,
+        authenticated_client: AsyncClient,
+        fetcher_config_factory: FetcherConfigFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        response = await authenticated_client.post(
+            f"/api/v1/fetchers/{config.fetcher_name}/trigger"
+        )
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_INSUFFICIENT_PERMISSION"
+
+    async def test_unknown_fetcher_returns_404(
+        self, admin_trigger_client: AsyncClient
+    ) -> None:
+        response = await admin_trigger_client.post(
+            "/api/v1/fetchers/no-such-fetcher/trigger"
+        )
+        assert response.status_code == 404
+        assert response.json()["code"] == "FETCHER_NOT_FOUND"
+
+    async def test_deregistered_fetcher_returns_409(
+        self,
+        admin_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fetcher_name = f"api_trigger_dereg_{uuid4().hex[:8]}"
+        async with real_session_factory() as session:
+            session.add(FetcherConfig(fetcher_name=fetcher_name, enabled=True))
+            await session.commit()
+        try:
+            response = await admin_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+            assert response.status_code == 409
+            assert response.json()["code"] == "FETCHER_DEREGISTERED"
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+    async def test_disabled_fetcher_returns_409(
+        self,
+        admin_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fetcher_name = await _arrange_trigger_fetcher(
+            real_session_factory, enabled=False
+        )
+        try:
+            response = await admin_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+            assert response.status_code == 409
+            assert response.json()["code"] == "FETCHER_DISABLED"
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+    async def test_active_run_returns_409(
+        self,
+        admin_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        fetcher_name = await _arrange_trigger_fetcher(real_session_factory)
+        async with real_session_factory() as session:
+            session.add(
+                FetcherRun(
+                    fetcher_name=fetcher_name, status="queued", triggered_by="manual"
+                )
+            )
+            await session.commit()
+        try:
+            response = await admin_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+            assert response.status_code == 409
+            assert response.json()["code"] == "FETCHER_ALREADY_RUNNING"
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+    async def test_admin_jwt_returns_202_with_queued_run(
+        self,
+        admin_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name = await _arrange_trigger_fetcher(real_session_factory)
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+        try:
+            response = await admin_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+
+            assert response.status_code == 202
+            data = response.json()["data"]
+            assert set(data.keys()) == {"run_id", "message"}
+            assert data["message"] == (
+                f"Fetcher '{fetcher_name}' has been queued for execution"
+            )
+            async with real_session_factory() as session:
+                run = await session.get(FetcherRun, UUID(data["run_id"]))
+                assert run is not None
+                assert run.status == "queued"
+                assert run.triggered_by == "manual"
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+    async def test_admin_api_key_returns_202(
+        self,
+        admin_api_key_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name = await _arrange_trigger_fetcher(real_session_factory)
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+        try:
+            response = await admin_api_key_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+            assert response.status_code == 202
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+    async def test_broker_unavailable_returns_503_sanitized(
+        self,
+        admin_trigger_client: AsyncClient,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name = await _arrange_trigger_fetcher(real_session_factory)
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise ConnectionError("redis://user:supersecret@10.0.0.5:6379 unreachable")
+
+        monkeypatch.setattr(celery_test_app, "send_task", _raise)
+        try:
+            response = await admin_trigger_client.post(
+                f"/api/v1/fetchers/{fetcher_name}/trigger"
+            )
+            assert response.status_code == 503
+            assert response.json()["code"] == "CELERY_UNAVAILABLE"
+            assert "supersecret" not in response.text
+            assert "10.0.0.5" not in response.text
+        finally:
+            await _cleanup_trigger_fetcher_rows(real_session_factory, fetcher_name)
+
+
+# ---------------------------------------------------------------------------
 # Out-of-scope endpoints
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
 class TestOutOfScopeEndpoints:
-    """No manual-trigger or IBS consumer endpoint is introduced by this
-    work item — see `docs/features/platform/fetcher-operations.md`
-    (Scope). Verified here in addition to `TestRouteInventory` since a
-    client request to an unregistered path is the actually-observable
-    contract at the HTTP layer."""
-
-    async def test_trigger_endpoint_not_found(
-        self, client: AsyncClient, fetcher_config_factory: FetcherConfigFactory
-    ) -> None:
-        config = await fetcher_config_factory()
-        response = await client.post(f"/api/v1/fetchers/{config.fetcher_name}/trigger")
-        assert response.status_code == 404
+    """No IBS consumer endpoint is introduced by this work item — see
+    `docs/features/platform/fetcher-operations.md` (Scope). Verified
+    here in addition to `TestRouteInventory` since a client request to
+    an unregistered path is the actually-observable contract at the
+    HTTP layer."""
 
     async def test_ibs_consumer_status_endpoint_not_found(
         self, client: AsyncClient

@@ -128,20 +128,34 @@ def _effective_schedule(
     return crontab.from_string(raw)
 
 
+def effective_task_time_limits(run_timeout: int) -> dict[str, int]:
+    """Derive the `time_limit`/`soft_time_limit` Celery task options from
+    `run_timeout`, per the formulas in fetcher-infrastructure.md (Redbeat
+    Entry Structure, Options field) and fetcher-operations.md
+    (`trigger_fetcher`, Celery Publication): `time_limit = max(5,
+    run_timeout)`, `soft_time_limit = max(1, floor(run_timeout * 0.95))`.
+
+    Shared by `_effective_options()` below (RedBeat schedule entries) and
+    `app.services.fetcher_operations.trigger_fetcher()` (manual trigger
+    publication) so both call sites derive the same values from a single
+    formula.
+    """
+    return {
+        "time_limit": max(5, run_timeout),
+        "soft_time_limit": max(1, floor(run_timeout * 0.95)),
+    }
+
+
 def _effective_options(
     fetcher: type[BaseFetcher], config: _ScheduleConfigLike
 ) -> dict[str, Any]:
     """Build the `apply_async()` options dict for `fetcher`'s redbeat entry.
 
-    Always includes `time_limit` and `soft_time_limit`, derived from
-    `config.run_timeout` per the formulas in fetcher-infrastructure.md
-    (Redbeat Entry Structure, Options field). Includes `queue` only
-    when `fetcher.queue` is not `None`.
+    Always includes `time_limit` and `soft_time_limit` (see
+    `effective_task_time_limits`). Includes `queue` only when
+    `fetcher.queue` is not `None`.
     """
-    options: dict[str, Any] = {
-        "time_limit": max(5, config.run_timeout),
-        "soft_time_limit": max(1, floor(config.run_timeout * 0.95)),
-    }
+    options: dict[str, Any] = dict(effective_task_time_limits(config.run_timeout))
     if fetcher.queue is not None:
         options["queue"] = fetcher.queue
     return options

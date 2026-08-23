@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Awaitable, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
-from unittest.mock import AsyncMock
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
 
 import pytest
 from celery import Celery
@@ -40,7 +40,7 @@ from redbeat.schedulers import get_redis
 from redis.exceptions import RedisError
 from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.services.fetcher_operations as fetcher_operations_module
 from app.models.fetcher_audit_event import FetcherAuditEvent
@@ -48,9 +48,12 @@ from app.models.fetcher_config import FetcherConfig
 from app.models.fetcher_run import FetcherRun
 from app.models.user import User
 from app.services.base_fetcher import FETCHER_REGISTRY, BaseFetcher
+from app.services.fetcher_audit_log import FetcherAuditLog
 from app.services.fetcher_operations import (
     FetcherAlreadyRunningError,
+    FetcherBrokerUnavailableError,
     FetcherDeregisteredError,
+    FetcherDisabledError,
     FetcherNotFoundError,
     FetcherRunNotFoundError,
     FetcherSettingInvalidError,
@@ -63,6 +66,7 @@ from app.services.fetcher_operations import (
     list_fetcher_audit_events,
     list_fetcher_runs,
     list_fetchers,
+    trigger_fetcher,
     update_fetcher_config,
 )
 
@@ -3409,3 +3413,773 @@ class TestListFetcherAuditEvents:
             await list_fetcher_audit_events(
                 db_session, fetcher_name="irrelevant", page=1, per_page=20
             )
+
+
+# ---------------------------------------------------------------------------
+# trigger_fetcher()
+# ---------------------------------------------------------------------------
+#
+# Unlike every other function tested in this module, `trigger_fetcher()`
+# manages its own sessions and commits real transactions — it cannot
+# accept the savepoint-scoped `db_session` fixture (see that function's
+# docstring and `docs/features/platform/fetcher-operations.md`,
+# `trigger_fetcher`). Every test below therefore uses `real_session_factory`
+# (a real `async_sessionmaker`, per `tests/conftest.py`) both to pass as
+# `trigger_fetcher`'s `session_factory` argument and to arrange/clean up
+# its own committed `FetcherConfig`/`User`/`FetcherRun` rows directly —
+# the `fetcher_config_factory`/`user_factory`/`fetcher_run_factory`
+# fixtures are bound to the separate, savepoint-scoped `db_session`
+# connection and are therefore invisible to `trigger_fetcher`'s own
+# sessions. `celery_test_app` (real Celery app, isolated test Redis) is
+# used as `celery_app`; its `send_task` is monkeypatched per test to
+# control the Celery publication outcome deterministically without
+# depending on network I/O or a running worker.
+
+
+def _stub_fetcher_class(name: str, *, queue: str | None = None) -> type[BaseFetcher]:
+    """Build a per-test `FETCHER_REGISTRY`-shaped stub class with the
+    given `name` — deliberately NOT a `BaseFetcher` subclass (see
+    `test_fetcher_schedule.py`, Test Independence). `trigger_fetcher()`
+    tests generate a unique `fetcher_name` per test (real commits, no
+    savepoint isolation — see module note above), so the registry key
+    must match that generated name exactly, which the shared
+    `_NoSettingsFetcher`-style stubs (fixed `name`) cannot provide."""
+    return cast(
+        "type[BaseFetcher]",
+        type(
+            "_DynamicStubFetcher",
+            (),
+            {
+                "name": name,
+                "description": "Stub fetcher for trigger_fetcher() tests",
+                "default_schedule": "0 3 * * *",
+                "queue": queue,
+                "Settings": None,
+            },
+        ),
+    )
+
+
+async def _cleanup_trigger_rows(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    fetcher_name: str,
+    user_id: UUID,
+) -> None:
+    async with session_factory() as session:
+        await session.execute(
+            delete(FetcherAuditEvent).where(
+                FetcherAuditEvent.fetcher_name == fetcher_name
+            )
+        )
+        await session.execute(
+            delete(FetcherRun).where(FetcherRun.fetcher_name == fetcher_name)
+        )
+        await session.execute(
+            delete(FetcherConfig).where(FetcherConfig.fetcher_name == fetcher_name)
+        )
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+
+
+@pytest.fixture
+async def trigger_env(
+    real_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[tuple[str, UUID]]:
+    """A real, committed, enabled `FetcherConfig` row
+    (`run_timeout=3600`) and admin `User`, registered under a unique
+    per-test fetcher name. Yields `(fetcher_name, user_id)`; cleans up
+    explicitly on teardown (see module note above)."""
+    fetcher_name = f"trigger_test_{uuid4().hex[:8]}"
+    _register(_stub_fetcher_class(fetcher_name))
+    async with real_session_factory() as session:
+        admin = User(
+            username=f"triggeradmin{uuid4().hex[:8]}",
+            email=f"triggeradmin{uuid4().hex[:8]}@example.com",
+            password_hash="$2b$12$" + "a" * 53,
+        )
+        session.add(admin)
+        session.add(
+            FetcherConfig(fetcher_name=fetcher_name, enabled=True, run_timeout=3600)
+        )
+        await session.commit()
+        user_id = admin.id
+
+    yield fetcher_name, user_id
+
+    await _cleanup_trigger_rows(
+        real_session_factory, fetcher_name=fetcher_name, user_id=user_id
+    )
+
+
+@pytest.mark.integration
+class TestTriggerFetcherGuards:
+    async def test_unregistered_and_no_config_row_raises_not_found(
+        self,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        with pytest.raises(FetcherNotFoundError):
+            await trigger_fetcher(
+                "no-such-fetcher",
+                user_id=uuid4(),
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+    async def test_registered_but_no_config_row_raises_not_found(
+        self,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        """A registered fetcher with no `FetcherConfig` row yet
+        (bootstrap not run) is a prerequisite failure, consistent with
+        `update_fetcher_config`/`get_fetcher_config`."""
+        fetcher_name = f"trigger_bootstrap_{uuid4().hex[:8]}"
+        _register(_stub_fetcher_class(fetcher_name))
+        with pytest.raises(FetcherNotFoundError):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=uuid4(),
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+    async def test_deregistered_config_row_raises_deregistered(
+        self,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        FETCHER_REGISTRY.clear()
+        fetcher_name = f"trigger_deregistered_{uuid4().hex[:8]}"
+        async with real_session_factory() as session:
+            admin = User(
+                username=f"deregadmin{uuid4().hex[:8]}",
+                email=f"deregadmin{uuid4().hex[:8]}@example.com",
+                password_hash="$2b$12$" + "a" * 53,
+            )
+            session.add(admin)
+            session.add(FetcherConfig(fetcher_name=fetcher_name, enabled=True))
+            await session.commit()
+            user_id = admin.id
+
+        try:
+            with pytest.raises(FetcherDeregisteredError):
+                await trigger_fetcher(
+                    fetcher_name,
+                    user_id=user_id,
+                    session_factory=real_session_factory,
+                    celery_app=celery_test_app,
+                )
+        finally:
+            await _cleanup_trigger_rows(
+                real_session_factory, fetcher_name=fetcher_name, user_id=user_id
+            )
+
+    async def test_disabled_fetcher_raises_disabled(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        async with real_session_factory() as session:
+            config = await session.get(FetcherConfig, fetcher_name)
+            assert config is not None
+            config.enabled = False
+            await session.commit()
+
+        with pytest.raises(FetcherDisabledError):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+    async def test_active_queued_run_raises_already_running(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        async with real_session_factory() as session:
+            session.add(
+                FetcherRun(
+                    fetcher_name=fetcher_name,
+                    status="queued",
+                    triggered_by="manual",
+                    triggered_by_user_id=user_id,
+                )
+            )
+            await session.commit()
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+        async with real_session_factory() as session:
+            runs = (
+                (
+                    await session.execute(
+                        select(FetcherRun).where(
+                            FetcherRun.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(runs) == 1
+        assert runs[0].status == "queued"
+
+    async def test_active_running_run_raises_already_running(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        async with real_session_factory() as session:
+            session.add(
+                FetcherRun(
+                    fetcher_name=fetcher_name,
+                    status="running",
+                    triggered_by="schedule",
+                    started_at=datetime.now(UTC),
+                    hard_time_limit_seconds=3600,
+                )
+            )
+            await session.commit()
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+
+@pytest.mark.integration
+class TestTriggerFetcherStaleRecovery:
+    async def test_stale_queued_run_is_finalized_and_new_run_proceeds(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+        stale_created_at = datetime.now(UTC) - timedelta(seconds=601)
+        async with real_session_factory() as session:
+            stale_run = FetcherRun(
+                fetcher_name=fetcher_name,
+                status="queued",
+                triggered_by="manual",
+                triggered_by_user_id=user_id,
+                created_at=stale_created_at,
+            )
+            session.add(stale_run)
+            await session.commit()
+            stale_run_id = stale_run.id
+
+        result = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+
+        assert result.run_id != stale_run_id
+        async with real_session_factory() as session:
+            stale_after = await session.get(FetcherRun, stale_run_id)
+            assert stale_after is not None
+            assert stale_after.status == "failure"
+            new_run = await session.get(FetcherRun, result.run_id)
+            assert new_run is not None
+            assert new_run.status == "queued"
+
+    async def test_stale_running_run_is_finalized_and_new_run_proceeds(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+        async with real_session_factory() as session:
+            stale_run = FetcherRun(
+                fetcher_name=fetcher_name,
+                status="running",
+                triggered_by="schedule",
+                started_at=datetime.now(UTC) - timedelta(seconds=3661),
+                hard_time_limit_seconds=3600,
+            )
+            session.add(stale_run)
+            await session.commit()
+            stale_run_id = stale_run.id
+
+        result = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+
+        async with real_session_factory() as session:
+            stale_after = await session.get(FetcherRun, stale_run_id)
+            assert stale_after is not None
+            assert stale_after.status == "failure"
+            new_run = await session.get(FetcherRun, result.run_id)
+            assert new_run is not None
+            assert new_run.status == "queued"
+
+
+@pytest.mark.integration
+class TestTriggerFetcherSuccess:
+    async def test_creates_queued_run_and_triggered_audit_event(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+
+        result = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+
+        expected_message = f"Fetcher '{fetcher_name}' has been queued for execution"
+        assert result.message == expected_message
+        async with real_session_factory() as session:
+            run = await session.get(FetcherRun, result.run_id)
+            assert run is not None
+            assert run.status == "queued"
+            assert run.triggered_by == "manual"
+            assert run.triggered_by_user_id == user_id
+            assert run.started_at is None
+            assert run.finished_at is None
+            assert run.duration_seconds is None
+
+            events = (
+                (
+                    await session.execute(
+                        select(FetcherAuditEvent).where(
+                            FetcherAuditEvent.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(events) == 1
+        assert events[0].event_type == "triggered"
+        assert events[0].user_id == user_id
+        assert events[0].old_value is None
+        assert events[0].new_value is None
+        assert events[0].detail is None
+
+    async def test_failure_before_commit_rolls_back_run_and_audit_event(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The `queued` `FetcherRun` and its `triggered` audit event are
+        created in the same first transaction (`docs/features/platform/
+        fetcher-operations.md`, `trigger_fetcher`, First Transaction,
+        steps 5-7). If anything raises between the audit event's flush
+        and that transaction's commit, neither the run nor the audit
+        event survives, and Celery is never contacted — proving the
+        two mutations share one transaction rather than being committed
+        independently."""
+        fetcher_name, user_id = trigger_env
+        send_task_spy = MagicMock()
+        monkeypatch.setattr(celery_test_app, "send_task", send_task_spy)
+
+        original_log_event = FetcherAuditLog.log_event
+
+        async def _log_then_fail(session: AsyncSession, **kwargs: Any) -> None:
+            await original_log_event(session, **kwargs)
+            raise RuntimeError("simulated failure after audit event flush")
+
+        monkeypatch.setattr(FetcherAuditLog, "log_event", _log_then_fail)
+
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+        send_task_spy.assert_not_called()
+        async with real_session_factory() as session:
+            runs = (
+                (
+                    await session.execute(
+                        select(FetcherRun).where(
+                            FetcherRun.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            events = (
+                (
+                    await session.execute(
+                        select(FetcherAuditEvent).where(
+                            FetcherAuditEvent.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert runs == []
+        assert events == []
+
+    async def test_publishes_run_fetcher_with_exact_kwargs_and_options(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        send_task_spy = MagicMock()
+        monkeypatch.setattr(celery_test_app, "send_task", send_task_spy)
+
+        result = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+
+        send_task_spy.assert_called_once_with(
+            "run_fetcher",
+            kwargs={
+                "fetcher_name": fetcher_name,
+                "triggered_by": "manual",
+                "user_id": str(user_id),
+                "run_id": str(result.run_id),
+            },
+            ignore_result=True,
+            time_limit=3600,
+            soft_time_limit=3420,
+        )
+
+    async def test_queue_option_included_when_fetcher_declares_one(
+        self,
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name = f"trigger_queue_{uuid4().hex[:8]}"
+        _register(_stub_fetcher_class(fetcher_name, queue="git"))
+        send_task_spy = MagicMock()
+        monkeypatch.setattr(celery_test_app, "send_task", send_task_spy)
+        async with real_session_factory() as session:
+            admin = User(
+                username=f"queueadmin{uuid4().hex[:8]}",
+                email=f"queueadmin{uuid4().hex[:8]}@example.com",
+                password_hash="$2b$12$" + "a" * 53,
+            )
+            session.add(admin)
+            session.add(
+                FetcherConfig(fetcher_name=fetcher_name, enabled=True, run_timeout=100)
+            )
+            await session.commit()
+            user_id = admin.id
+
+        try:
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+            assert send_task_spy.call_args.kwargs["queue"] == "git"
+            assert send_task_spy.call_args.kwargs["time_limit"] == 100
+            assert send_task_spy.call_args.kwargs["soft_time_limit"] == 95
+            assert send_task_spy.call_args.kwargs["ignore_result"] is True
+        finally:
+            await _cleanup_trigger_rows(
+                real_session_factory, fetcher_name=fetcher_name, user_id=user_id
+            )
+
+    async def test_not_idempotent_second_call_creates_a_second_run(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+
+        first = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+        # Simulate the worker completing the first run so the second
+        # trigger is not blocked by the Already Running guard.
+        async with real_session_factory() as session:
+            run = await session.get(FetcherRun, first.run_id)
+            assert run is not None
+            run.status = "success"
+            run.started_at = datetime.now(UTC)
+            run.finished_at = datetime.now(UTC)
+            await session.commit()
+
+        second = await trigger_fetcher(
+            fetcher_name,
+            user_id=user_id,
+            session_factory=real_session_factory,
+            celery_app=celery_test_app,
+        )
+
+        assert second.run_id != first.run_id
+        async with real_session_factory() as session:
+            events = (
+                (
+                    await session.execute(
+                        select(FetcherAuditEvent).where(
+                            FetcherAuditEvent.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(events) == 2
+
+
+@pytest.mark.integration
+class TestTriggerFetcherBrokerFailure:
+    async def test_publication_failure_finalizes_run_and_raises_broker_unavailable(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        sensitive_message = (
+            "Error 111 connecting to redis://user:supersecret@10.0.0.5:6379"
+        )
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise ConnectionError(sensitive_message)
+
+        monkeypatch.setattr(celery_test_app, "send_task", _raise)
+
+        with pytest.raises(FetcherBrokerUnavailableError) as exc_info:
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+        assert "supersecret" not in str(exc_info.value)
+        assert "10.0.0.5" not in str(exc_info.value)
+
+        async with real_session_factory() as session:
+            runs = (
+                (
+                    await session.execute(
+                        select(FetcherRun).where(
+                            FetcherRun.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(runs) == 1
+            run = runs[0]
+            assert run.status == "failure"
+            assert run.started_at is None
+            assert run.duration_seconds is None
+            assert run.error_message == (
+                "Manual run could not be dispatched to the task broker"
+            )
+            assert run.error_detail == "ConnectionError"
+            assert run.error_traceback is None
+            assert "supersecret" not in (run.error_message or "")
+            assert "supersecret" not in (run.error_detail or "")
+
+            events = (
+                (
+                    await session.execute(
+                        select(FetcherAuditEvent).where(
+                            FetcherAuditEvent.fetcher_name == fetcher_name
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(events) == 1
+        assert events[0].event_type == "triggered"
+
+    async def test_compensation_losing_the_adoption_race_still_raises_and_logs(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Ambiguous Broker Acknowledgement, outcome 2 (worker wins):
+        `finalize_manual_run_as_failure()` returning `False` (a worker
+        already adopted the run) is mocked directly here — the
+        conditional-UPDATE race itself is proven at the
+        `fetcher_execution` layer
+        (`test_fetcher_execution.py::TestAcquireFetcherRunConcurrency`).
+        This test verifies `trigger_fetcher()`'s own reaction to that
+        outcome: it still raises `FetcherBrokerUnavailableError` and
+        logs a WARNING distinguishing the lost race."""
+        fetcher_name, user_id = trigger_env
+
+        def _raise(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(celery_test_app, "send_task", _raise)
+        monkeypatch.setattr(
+            fetcher_operations_module,
+            "finalize_manual_run_as_failure",
+            AsyncMock(return_value=False),
+        )
+
+        with (
+            caplog.at_level("WARNING", logger="app.services.fetcher_operations"),
+            pytest.raises(FetcherBrokerUnavailableError),
+        ):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+        assert "fetcher_manual_trigger_compensation_lost_to_adoption" in caplog.text
+
+    async def test_unexpected_compensation_error_propagates_uncaught(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An unexpected failure while compensating (e.g. a database
+        error distinct from the documented `ValueError` for a missing
+        run) rolls back the compensation session and propagates
+        uncaught — it is not swallowed or converted into
+        `FetcherBrokerUnavailableError`."""
+        fetcher_name, user_id = trigger_env
+
+        def _raise_broker_error(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("boom")
+
+        async def _raise_compensation_error(*_args: Any, **_kwargs: Any) -> bool:
+            raise ValueError("simulated compensation failure")
+
+        monkeypatch.setattr(celery_test_app, "send_task", _raise_broker_error)
+        monkeypatch.setattr(
+            fetcher_operations_module,
+            "finalize_manual_run_as_failure",
+            _raise_compensation_error,
+        )
+
+        with pytest.raises(ValueError, match="simulated compensation failure"):
+            await trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+
+
+@pytest.mark.integration
+class TestTriggerFetcherConcurrency:
+    """See docs/features/platform/testing-strategy.md (Concurrency
+    Testing) for the canonical two-session pattern applied here.
+    `trigger_fetcher()` manages its own sessions internally, so the
+    blocking point is injected via `FetcherAuditLog.log_event` — called
+    once per successful trigger, immediately before commit, i.e. while
+    the `FetcherConfig` row lock is still held."""
+
+    async def test_concurrent_triggers_serialize_on_the_config_lock(
+        self,
+        trigger_env: tuple[str, UUID],
+        real_session_factory: async_sessionmaker[AsyncSession],
+        celery_test_app: Celery,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetcher_name, user_id = trigger_env
+        monkeypatch.setattr(celery_test_app, "send_task", MagicMock())
+
+        hold_event = asyncio.Event()
+        proceed_event = asyncio.Event()
+        original_log_event = FetcherAuditLog.log_event
+        call_count = 0
+
+        async def _blocking_log_event(session: AsyncSession, **kwargs: Any) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                hold_event.set()
+                await proceed_event.wait()
+            await original_log_event(session, **kwargs)
+
+        monkeypatch.setattr(FetcherAuditLog, "log_event", _blocking_log_event)
+
+        task_a = asyncio.create_task(
+            trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+        )
+        await asyncio.wait_for(hold_event.wait(), timeout=2)
+
+        task_b = asyncio.create_task(
+            trigger_fetcher(
+                fetcher_name,
+                user_id=user_id,
+                session_factory=real_session_factory,
+                celery_app=celery_test_app,
+            )
+        )
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(task_b), timeout=0.3)
+
+        proceed_event.set()
+        result_a = await asyncio.wait_for(task_a, timeout=5)
+        assert result_a.run_id is not None
+
+        with pytest.raises(FetcherAlreadyRunningError):
+            await asyncio.wait_for(task_b, timeout=5)
