@@ -568,12 +568,16 @@ async def _seed_stale_fetcher_artifacts(
     a persistent local database rather than an ephemeral per-run
     container — see testing-strategy.md, Execution).
 
-    Called by `fetcher_pipeline_harness` immediately before its own
-    preflight purge, so every invocation of the suite exercises and
-    proves that purge — without this, a leftover terminal `FetcherRun`
-    could satisfy `wait_finalized_run()` on the very first poll,
-    reporting success without this invocation's own worker/Beat/broker
-    path ever executing.
+    Called by `fetcher_pipeline_harness` immediately after its own
+    preflight purge (which must run first — `FetcherConfig.fetcher_name`
+    is a primary key, so seeding before purging a genuine leftover row
+    from that same prior invocation would raise `IntegrityError` instead
+    of exercising the purge) and immediately before a second purge, so
+    every invocation of the suite exercises and proves that purge —
+    without this, a leftover terminal `FetcherRun` could satisfy
+    `wait_finalized_run()` on the very first poll, reporting success
+    without this invocation's own worker/Beat/broker path ever
+    executing.
 
     Returns the stale run's id so the test can assert the run it
     eventually observes is a different row.
@@ -637,10 +641,20 @@ async def fetcher_pipeline_harness(
     previous_registry_entry = FETCHER_REGISTRY.get(SYSTEM_FETCHER_NAME)
     FETCHER_REGISTRY[SYSTEM_FETCHER_NAME] = fetcher_cls
 
-    # Seed stale residue, then immediately purge it via the same
-    # preflight every invocation performs — proving the purge on every
-    # run rather than only when a real prior invocation happens to have
-    # been interrupted. See `_seed_stale_fetcher_artifacts` above.
+    # Preflight: purge any genuine residue left by a prior invocation of
+    # this suite that was interrupted before its own teardown could run
+    # (e.g. SIGKILL, OOM, host crash — relevant when `TEST_DATABASE_URL`
+    # points at a persistent local database). This MUST run before
+    # seeding below — `FetcherConfig.fetcher_name` is a primary key, so
+    # seeding first would raise `IntegrityError` against a genuine
+    # leftover row instead of ever reaching the purge that's supposed to
+    # remove it.
+    await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
+
+    # Seed synthetic stale residue of the same shape, then immediately
+    # purge it via the same call — proving the purge above actually
+    # works on every invocation, not only when a real prior invocation
+    # happens to have been interrupted. See `_seed_stale_fetcher_artifacts`.
     stale_run_id = await _seed_stale_fetcher_artifacts(real_session_factory)
     await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
 
