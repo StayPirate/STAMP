@@ -23,3 +23,11 @@ echo "  full test suite..."
 # run (or truncated by an external time limit on a long-running full
 # suite before the run reaches its own completion summary).
 (cd backend && uv run --locked pytest --no-header -q -x) || [ $? -eq 5 ]
+
+echo "  local process system suite..."
+# Separate invocation from the ordinary suite above (excluded from its
+# default run) — spawns real worker/Beat processes against the test
+# infrastructure. See docs/features/platform/testing-strategy.md
+# (Local Process System Testing, Automation).
+(cd backend && uv run --locked pytest -m system tests/system/ --no-header -q -x) ||
+    [ $? -eq 5 ]

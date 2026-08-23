@@ -71,6 +71,16 @@ static entries untouched, and a worker restart never writes to or
 removes any redbeat entry. See that class's own docstring for the
 scope this suite cannot exercise without a registered production
 fetcher.
+
+`TestWorkerStartup.test_system_test_fetcher_absent_from_shipped_worker`
+covers the production-exclusion assertion owned by this suite per
+docs/features/platform/testing-strategy.md (Local Process System
+Testing, Relationship to Other Test Suites): the test-only
+`evaluate_test_pipeline` fetcher must be unreachable from the shipped
+image, both via Celery's own task registry and via the production
+`FETCHER_REGISTRY` populated by `app.services.fetcher_discovery`. The
+companion assertion — that the Public API never lists it either — is
+in `tests/image/test_fetchers_api.py`.
 """
 
 from __future__ import annotations
@@ -497,6 +507,59 @@ class TestWorkerStartup:
         assert replies, f"no worker replied to inspect registered: {result.stdout!r}"
         for registered_tasks in replies.values():
             assert "run_fetcher" in registered_tasks, registered_tasks
+
+    def test_system_test_fetcher_absent_from_shipped_worker(
+        self,
+        compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+    ) -> None:
+        """The test-only `evaluate_test_pipeline` fetcher
+        (`backend/tests/support/system_fetcher.py`) MUST NOT be
+        reachable from the shipped image — see
+        docs/features/platform/testing-strategy.md (Local Process
+        System Testing, Relationship to Other Test Suites) and
+        docs/features/platform/fetcher-infrastructure.md (Registry
+        Maintenance, Test-only system-fetcher exception).
+
+        `inspect registered` lists Celery *task* names, not
+        `FETCHER_REGISTRY` classes — a generic `run_fetcher` task being
+        present proves nothing about which fetchers are registered
+        behind it. The second assertion queries `FETCHER_REGISTRY`
+        directly, as populated by the shipped image's own production
+        `app.services.fetcher_discovery` import — the actual exclusion
+        this test must prove.
+        """
+        result = compose_exec(
+            "worker",
+            "celery",
+            "-A",
+            "app.celery_app",
+            "inspect",
+            "registered",
+            "--json",
+        )
+        assert result.returncode == 0, (
+            f"expected exit 0 for inspect registered "
+            f"(stdout={result.stdout!r}, stderr={result.stderr!r})"
+        )
+        replies = json.loads(result.stdout)
+        assert replies, f"no worker replied to inspect registered: {result.stdout!r}"
+        for registered_tasks in replies.values():
+            assert "evaluate_test_pipeline" not in registered_tasks, registered_tasks
+
+        registry_result = compose_exec(
+            "worker",
+            "python",
+            "-c",
+            "from app.services.base_fetcher import FETCHER_REGISTRY\n"
+            "assert 'evaluate_test_pipeline' not in FETCHER_REGISTRY, "
+            "FETCHER_REGISTRY.keys()\n"
+            "print('SYSTEM-FETCHER-ABSENT-OK')",
+        )
+        assert registry_result.returncode == 0, (
+            f"expected exit 0 for FETCHER_REGISTRY exclusion check "
+            f"(stdout={registry_result.stdout!r}, stderr={registry_result.stderr!r})"
+        )
+        assert "SYSTEM-FETCHER-ABSENT-OK" in registry_result.stdout
 
 
 @pytest.mark.image

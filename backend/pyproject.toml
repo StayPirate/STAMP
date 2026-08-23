@@ -130,19 +130,24 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
-# Exclude the black-box container smoke suite from the default run. It
-# requires a running container (started by scripts/image-smoke.sh) and
-# must not be pulled into `uv run pytest` or the coverage measurement.
+# Exclude the black-box container smoke suite and the local process
+# system suite from the default run. The image suite requires a running
+# container (started by scripts/image-smoke.sh); the system suite spawns
+# real worker/Beat processes (see docs/features/platform/testing-strategy.md,
+# Local Process System Testing). Neither must be pulled into
+# `uv run pytest` or the coverage measurement — both run as separate,
+# dedicated invocations (pre-push hook, CI).
 # --strict-markers: an unregistered marker fails the run instead of
 # emitting a silent warning.
 # --strict-config: an unrecognized ini option fails the run instead of
 # being silently ignored.
-addopts = "-m 'not image' --strict-markers --strict-config"
+addopts = "-m 'not image and not system' --strict-markers --strict-config"
 markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
     "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
+    "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 filterwarnings = [
     "error",

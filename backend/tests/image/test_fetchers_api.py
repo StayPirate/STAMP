@@ -170,6 +170,16 @@ def list_fetchers_anonymous_shows_deregistered_fetcher():
     assert item["registered"] is False
     assert item["description"] is None
     assert item["last_run"]["status"] == "failure"
+    # Production-exclusion assertion: the test-only
+    # `evaluate_test_pipeline` fetcher (backend/tests/support/
+    # system_fetcher.py) must never be listed by the shipped image's
+    # own Public API — see docs/features/platform/testing-strategy.md
+    # (Local Process System Testing, Relationship to Other Test
+    # Suites). The companion Celery-registry assertion is in
+    # tests/image/test_celery.py.
+    assert all(
+        i["fetcher_name"] != "evaluate_test_pipeline" for i in body["data"]
+    ), body["data"]
     print("fetchers-list-anonymous-ok")
 
 
