@@ -74,7 +74,7 @@ jobs:
   backend-test:
     name: Backend Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: backend
@@ -116,6 +116,13 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run pytest -v --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=95
+      - name: Run local process system suite
+        # Separate, blocking invocation from the coverage-measured run
+        # above — spawns real worker/Beat processes against this job's
+        # same PostgreSQL/Redis service containers. See
+        # docs/features/platform/testing-strategy.md (Local Process
+        # System Testing, CI Pipeline).
+        run: uv run pytest -m system tests/system/ -v
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
