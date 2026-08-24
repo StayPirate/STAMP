@@ -27,7 +27,7 @@ and completion evidence.
 - [Phase 1 — Cross-Cutting and Identity Roots](#phase-1--cross-cutting-and-identity-roots)
 - [Phase 2 — Local Identity Foundation](#phase-2--local-identity-foundation)
 - [Phase 3 — Generic Fetcher Platform](#phase-3--generic-fetcher-platform)
-- [Phase 4 — Ticket, CVE, and Package Domain Core](#phase-4--ticket-cve-and-package-domain-core)
+- [Phase 4 — Ticket, CVE, Product, and Package Domain Core](#phase-4--ticket-cve-product-and-package-domain-core)
 - [Phase 5 — CVE Fetcher Infrastructure and Ingestion](#phase-5--cve-fetcher-infrastructure-and-ingestion)
 - [Phase 6 — Domain Operational Completion](#phase-6--domain-operational-completion)
 - [Phase 7+ — Integrations Requiring WIP Specifications](#phase-7--integrations-requiring-wip-specifications)
@@ -154,39 +154,46 @@ Current blocked groups:
 | Package ownership | `package-bugowner`, `maintainer` |
 | Advanced identity | `sso-authentication`, `identity-provisioning` |
 
-### Mandatory roadmap specification gate (`RG-01`)
+### Phase 4 specification-readiness gate (`SG4-00`)
 
-The previous version of this plan proposed a no-op
-`resolve_ticket_packages` task so CVE ingestion could precede SMELT-backed
-package resolution. That seam is not authorized by the owning specifications:
-`cve-service.md` and `cve-fetcher-infrastructure.md` require real post-ingest
-dispatch to `package_service.add_package_to_ticket()`.
+Phase 4 requires several independent documentation corrections before domain
+implementation can proceed. The former `RG-01` work item treated the
+product/package/CVE boundary as one documentation PR. Reassessment after Phase
+3 found that this would mix unrelated security, data-model, lifecycle,
+transaction, API, and fetcher contracts into an oversized work unit.
 
-`RG-01` is an immediate documentation work item, not a Phase 4 implementation
-piece. It should be resolved after this planning PR and before Phase 4 is
-elaborated into GitHub sub-issues. It must choose and specify one of these
-coherent paths:
+GitHub issue #21 is therefore the `SG4-00` umbrella gate. It closes only after
+all `SG4-01` through `SG4-12` documentation sub-issues merge. Each child owns
+one coherent specification correction and one documentation branch/PR.
 
-1. complete the product catalog and package orchestration prerequisites, or
-2. explicitly define a supported deferred package-resolution mode and its
-   recovery semantics in the owning specifications.
+The approved planning direction for those gates is:
 
-It must also resolve these related contract conflicts and dependencies:
+- Phase 4 includes the Product/ProductRepository catalog, live SMELT and AIMAAS
+  synchronization, catalog readiness, package resolution, and package-tree
+  mutations. Resolution of each package candidate must fail before mutation
+  rather than persist an internally incomplete package/track/Product tree.
+  Independently successful package candidates retain the per-package
+  durability defined by the CVE ingestion contract.
+- WIP IBS bugowner, maintainer, submission tracking, and release-detection
+  behavior remains outside Phase 4. Package addition does not invoke those
+  side effects.
+- Confidential-ticket visibility in Phase 4 uses scope and explicit
+  `TicketAccessGrant` records. Bugowner cache data is not an authorization
+  source. This avoids granting embargoed-ticket access from a cache whose
+  owning WIP contract permits long refresh intervals.
+- CVE ingestion is split into a database transaction and a post-commit package
+  resolution workflow. No no-op package-resolution seam is introduced.
+- The generic `run_catch_up` task substrate precedes status reconciliation;
+  CVE-specific fetcher registration and on-demand orchestration follow the
+  source-neutral ingestion service. This removes the former dependency cycle.
+- Source-specific CVE parsing and NVD applicability-tree selection move to
+  Phase 5, where real upstream contracts and fixtures can be verified with
+  their first consumers.
 
-- Product/ProductRepository ownership and synchronization timing;
-- the `add_package_to_ticket()` ordering conflict between `package-model.md`
-  and `package-service.md` (database creation before SMELT versus I/O first);
-- bugowner resolution and submission-discovery side effects whose owning specs
-  are WIP;
-- bugowner-based visibility for confidential tickets required by `rbac.md`,
-  including whether PackageBugowner persistence/resolution must precede scoped
-  Ticket/CVE APIs or the visibility contract is explicitly deferred;
-- whether the package-add API and real CVE ingestion can exist before a
-  populated product catalog.
-
-The implementation plan does not choose those behaviors. Until `RG-01` merges,
-package orchestration, full CVE ingestion, and all real CVE fetchers remain
-blocked. Independent CVE/Ticket schemas and pure domain logic are not blocked.
+Until the applicable SG4 gate merges, its dependent implementation pieces
+remain Blocked. The dependency graph below records those relationships
+directly rather than imposing one global documentation barrier on independent
+foundations.
 
 ### Partially implementable specifications
 
@@ -201,11 +208,12 @@ Examples:
 - System-setting mutation and recalculation endpoints require Ticket/CVSS
   services. `P2-14` implements persistence/startup foundations, `P2-15`
   implements the two read APIs, and mutation/recalculation behavior completes
-  only in `P4-28`.
+  only in `P4-35`.
 - `BaseCVEFetcher` requires CVE/Ticket models and CVE services. Only generic
   `BaseFetcher` infrastructure belongs in Phase 3.
-- The IBS consumer status endpoint in `fetcher-operations.md` remains deferred
-  with the disabled IBS RabbitMQ specification.
+- The IBS consumer status endpoint defined in
+  `integrations/ibs-rabbitmq-integration.md` remains deferred with that WIP
+  integration.
 
 ## Release Strategy
 
@@ -233,8 +241,8 @@ deployable behavior; that decision is recorded in the phase parent issue.
 | 1 | Cross-cutting platform foundations and identity roots | Completed (2026-08-03) |
 | 2 | Local identity foundation | Completed (2026-08-14) |
 | 3 | Generic fetcher platform | Completed (2026-08-24) |
-| RG-01 | Resolve product/package/CVE contract boundary | Not started — immediate documentation work |
-| 4 | Ticket, CVE, and conditional package domain core | Not started; package orchestration blocked by `RG-01` |
+| SG4-00 | Complete Phase 4 specification readiness | In progress — umbrella documentation gate |
+| 4 | Ticket, CVE, Product, and package domain core | Elaborated; implementation blocked by applicable SG4 gates |
 | 5 | CVE fetcher infrastructure and real ingestion | Blocked by Phase 4 |
 | 6 | Domain operational completion | Blocked by Phases 4-5 |
 | 7+ | WIP integrations and advanced identity | Blocked by specification work |
@@ -417,7 +425,7 @@ lifespan/image tests. It does not introduce settings API routes.
 and their permission, validation, API, audit-read, OpenAPI, and image tests. It
 does not mutate settings or create audit events. The PATCH endpoint,
 recalculation endpoint, Redis/Celery coordination, mutation transaction and
-  audit insertion, and recalculation task remain exclusively in `P4-28`.
+audit insertion, and recalculation task remain exclusively in `P4-35`.
 
 ## Phase 3 — Generic Fetcher Platform
 
@@ -510,56 +518,111 @@ integration in Phase 7+.
   flush without commit), worker and Beat signal handler placement under
   `app/tasks/` (not `app/core/`), engine disposal before worker fork,
   and fail-fast startup behavior across all processes.
-- `P4-23` owns `BaseCVEFetcher`, the default CVE `catch_up()`
-  implementation, the `run_catch_up` Celery task wrapper, `CVENotInSource`
-  handling, ticket/CVE invocation from `reconcile_ticket_status()`,
-  the production fetcher catch-up inventory, and all real fetcher
-  registrations.
+- `P4-11` owns the generic `run_catch_up` Celery wrapper required by status
+  reconciliation and the `CVENotInSource` signal that its exception handling
+  consumes. `P4-30` owns `BaseCVEFetcher`, the default CVE `catch_up()`
+  implementation, and CVE source registries. `P4-31` owns on-demand invocation
+  and source/refetch operations. Real production CVE fetcher registrations
+  remain in Phase 5.
 
-## Phase 4 — Ticket, CVE, and Package Domain Core
+## Phase 4 — Ticket, CVE, Product, and Package Domain Core
 
-**Outcome**: consumers can create, inspect, and mutate tickets and CVE/package
-data through permission-tested APIs before any production fetcher begins
-automatic ingestion.
+**Status: Elaborated.** Documentation gates must merge before their dependent
+implementation pieces begin.
+
+**Outcome**: consumers can create, inspect, and mutate Ticket, CVE, Product,
+and package data through permission-tested APIs before any production CVE
+fetcher begins automatic ingestion. Product catalog synchronization and real
+SMELT package resolution are operational because package-tree correctness
+depends on them.
+
+### Phase boundary
+
+Phase 4 includes:
+
+- source-neutral CVE persistence, CVSS logic, ingestion, and CVE fetcher
+  infrastructure;
+- Ticket persistence, lifecycle, status gates, confidentiality through scope
+  and explicit grants, references, audit, and API surfaces;
+- Product and ProductRepository persistence, SMELT/AIMAAS synchronization,
+  readiness, lifecycle/threshold evaluation, and the public Product API;
+- package-tree persistence, SMELT resolution, package mutations, reads, and
+  post-ingest resolution;
+- ticket-coupled local identity operations deferred from Phase 2; and
+- system-setting mutation and CVSS batch recalculation deferred from Phase 2.
+
+Phase 4 explicitly excludes IBS bugowner persistence/resolution, maintainer
+views, submission tracking, release detection, the IBS RabbitMQ consumer, and
+git/SLFO package workflows. Those features remain with their WIP owning specs
+in Phase 7+. Phase 4 package responses therefore contain no bugowner/member
+data, and confidential visibility does not consult bugowner caches.
+
+### Documentation gates
+
+`SG4-00` (#21) is the umbrella. The child gates below are independently
+mergeable documentation work items; each implementation issue records only its
+direct gate blockers.
+
+| ID | Gate | Direct blockers | Primary contract |
+|---|---|---|---|
+| `SG4-01` | Define the package, IBS, and confidentiality boundary | `PG4-00` | package model/service, Ticket visibility, RBAC, WIP IBS specs |
+| `SG4-02` | Correct Product and repository identity against live SMELT | `SG4-01` | `packages/product-catalog.md`, `data-model.md`, `data-sources.md` |
+| `SG4-03` | Complete Product synchronization, readiness, and read contracts | `SG4-02` | product catalog, configuration, fetcher registry, Product API |
+| `SG4-04` | Complete lifecycle, threshold, and eligibility contracts | `SG4-02` | product catalog/lifecycle, package service, Ticket audit |
+| `SG4-05` | Complete package mutation and orchestration contracts | `SG4-03`, `SG4-04` | package model/service, Ticket audit, package APIs |
+| `SG4-06` | Correct Ticket lifecycle, locking, and audit contracts | `SG4-01` | ticket service/mutations/audit, data model |
+| `SG4-07` | Complete Ticket/CVE read, confidentiality, and reference contracts | `SG4-05`, `SG4-06` | Ticket/CVE/reference APIs, RBAC, API/architecture rules |
+| `SG4-08` | Correct CVSS resolution and status-reconciliation contracts | `SG4-04`, `SG4-05`, `SG4-06` | CVSS scoring, ticket mutations, data model |
+| `SG4-09` | Complete CVE ingestion and source-status contracts | `SG4-05`, `SG4-06`, `SG4-08` | CVE service/tracking, ticket service, package dispatch |
+| `SG4-10` | Complete BaseCVEFetcher, on-demand, and catch-up contracts | `SG4-09` | CVE/generic fetcher infrastructure, CVE service |
+| `SG4-11` | Correct ticket-coupled identity lifecycle contracts | `SG4-06` | user service/management, RBAC, Ticket service/audit |
+| `SG4-12` | Correct settings mutation and CVSS batch contracts | `SG4-08` | system settings, CVSS scoring, transaction/Redis conventions |
+
+### Implementation pieces
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P4-01` | CVE/CVESource core models and migration | Phase 3 | `tickets/cve-service.md`, `data-model.md` |
-| `P4-02` | CVE enrichment child models and migration | `P4-01` | CVE and CVSS specs, `data-model.md` |
-| `P4-03` | Ticket, TicketAuditEvent, reference/access models and migration | `P4-01`, `P1-05` | ticket specs, `data-model.md` |
-| `P4-04` | Pure CVSS resolution | `P2-14`, `P4-02` | `tickets/cvss-scoring.md` |
-| `P4-05` | CPE canonical file, parser, package-relative loader, cached resolvers, and focused validation | Phase 3, `SG3-01` | `packages/cpe-package-mapping.md` |
-| `P4-06` | Pure CVE JSON record parser | `P4-02` | `platform/cve-record-parser.md` |
-| `P4-07` | CVE existence and source-status primitives | `P4-01` | `tickets/cve-service.md` |
-| `P4-08` | Product/package-tree persistence required by gates | `RG-01`, `P4-03` | approved product/package contracts |
-| `P4-09` | Ticket audit service and pure gate predicates | `P4-03`, `P4-04`, `P4-08` | `tickets/ticket-audit-log.md`, `tickets/ticket-mutations.md` |
-| `P4-10` | Status reconciliation plus CVSS mutation/recalculation chain | `P4-09` | `tickets/ticket-mutations.md`, `tickets/cvss-scoring.md` |
-| `P4-11` | CVSS assessment and severity APIs | `P4-10` | `tickets/cvss-scoring.md` |
-| `P4-12` | Manual-zone ticket mutations | `P4-10` | `tickets/ticket-mutations.md` |
-| `P4-13` | Ticket creation and CVE-association service functions | `P4-07`, `P4-10` | `tickets/ticket-service.md` |
-| `P4-14` | Ticket assignment/lifecycle service and APIs | `P4-12`, `P4-13` | ticket service/mutation specs |
-| `P4-15` | Ticket confidentiality/access service, APIs, and stale-grant cleanup task | `P4-13` | `tickets/ticket-service.md`, `tickets/tickets.md` |
-| `P4-16` | Internal package record creation and state mutation services/APIs | `P4-08`, `P4-10` | package model/service specs |
-| `P4-17` | Package exclusion/restore services and APIs | `P4-16` | package model/service specs |
-| `P4-18` | Package query services and read APIs | `P4-16` | package model/service specs |
-| `P4-19` | Ticket reference service and APIs | `P4-03`, `P4-13` | `tickets/ticket-references.md` |
-| `P4-20` | Ticket/CVE list/detail and audit read APIs | `RG-01`, `P4-13`, `P4-18`, `P4-19` | `tickets/tickets.md`, `tickets/cve-tracking.md` |
-| `P4-21` | Full package orchestration and package-add API | `RG-01`, `P4-05`, `P4-16` | package model/service specs plus `RG-01` resolution |
-| `P4-22` | Complete CVE ingestion transaction | `P4-02`, `P4-05`, `P4-06`, `P4-10`, `P4-13`, `P4-19`, `P4-21` | `tickets/cve-service.md` |
-| `P4-23` | BaseCVEFetcher and on-demand/catch-up orchestration | `P4-22`, `P3-02` | `platform/cve-fetcher-infrastructure.md`, `platform/fetcher-infrastructure.md` |
-| `P4-24` | Ticket create/CVE-associate APIs and CVE source/refetch APIs | `P4-20`, `P4-23` | ticket and CVE API specs |
-| `P4-25` | Shared active-ticket unassignment helper and audit behavior | `P4-10`, `P2-08` | `identity/user-service.md`, `tickets/ticket-audit-log.md` |
-| `P4-26` | Complete `update_roles`, `manage-user update`, and role-management APIs | `P4-25` | identity service/management specs |
-| `P4-27` | Complete `deactivate_user`, impact query, `manage-user deactivate`, and APIs | `P4-25` | identity service/management specs |
-| `P4-28` | Settings PATCH/recalculation endpoints, atomic setting-change audit, and CVSS batch task | `P4-10`, `P2-14` | `platform/system-settings.md`, `tickets/cvss-scoring.md` |
+| `P4-01` | CVE and CVESource persistence | `SG4-09` | `tickets/cve-service.md`, `data-model.md` |
+| `P4-02` | CVE enrichment persistence and ingestion DTOs | `P4-01` | CVE/CVSS specs, `data-model.md` |
+| `P4-03` | Ticket, audit, access-grant, and reference persistence | `SG4-06`, `SG4-07`, `P4-01` | Ticket specs, `data-model.md` |
+| `P4-04` | Pure CVSS resolution and vector validation | `SG4-08` | `tickets/cvss-scoring.md` |
+| `P4-05` | CPE mapping loader, cached resolvers, and resource validation | `SG3-01` | `packages/cpe-package-mapping.md` |
+| `P4-06` | Product and ProductRepository persistence | `SG4-02` | `packages/product-catalog.md`, `data-model.md` |
+| `P4-07` | CVE existence and atomic source-status primitives | `P4-01` | `tickets/cve-service.md` |
+| `P4-08` | SMELT Product sync, catalog readiness, and Product API | `SG4-03`, `P4-06`, `P4-09` | `packages/product-catalog.md` |
+| `P4-09` | AIMAAS lifecycle and threshold synchronization | `SG4-04`, `P4-06` | product catalog/lifecycle specs |
+| `P4-10` | Ticket package-tree persistence | `SG4-05`, `P4-03`, `P4-06` | package model/service, `data-model.md` |
+| `P4-11` | Generic catch-up task and CVE absence signal | `SG4-10` | generic/CVE fetcher infrastructure |
+| `P4-12` | Ticket reconciliation and CVSS recalculation chain | `P4-02`, `P4-03`, `P4-04`, `P4-10`, `P4-11` | ticket mutations, CVSS scoring |
+| `P4-13` | CVSS, manual-severity, and manual-zone mutation services | `P4-12` | ticket mutations, CVSS scoring |
+| `P4-14` | Package record and state mutation services/APIs | `P4-10`, `P4-12` | package model/service |
+| `P4-15` | Package exclusion, restore, and orphan-chain services/APIs | `P4-14` | package model/service, Ticket audit |
+| `P4-16` | SMELT package resolution and package-add API | `P4-08`, `P4-09`, `P4-14` | package model/service |
+| `P4-17` | Product lifecycle evaluator and eligibility sub-task | `P4-09`, `P4-11`, `P4-15` | product lifecycle transitions |
+| `P4-18` | Confidential visibility and explicit access services | `P4-03` | Ticket service, tickets, RBAC |
+| `P4-19` | Ticket reference service | `P4-03`, `P4-12` | `tickets/ticket-references.md` |
+| `P4-20` | Ticket creation and CVE-association services | `P4-07`, `P4-12` | `tickets/ticket-service.md` |
+| `P4-21` | Ticket assignment and lifecycle services | `P4-12`, `P4-18` | ticket service/mutations |
+| `P4-22` | Package query services and read APIs | `P4-10`, `P4-18` | package model/service |
+| `P4-23` | Ticket/CVE queries, detail assembly, and audit read APIs | `P4-02`, `P4-18`, `P4-22` | tickets, CVE tracking, Ticket audit |
+| `P4-24` | Ticket create and CVE-associate APIs | `P4-20`, `P4-23`, `P4-31` | tickets, CVE service |
+| `P4-25` | CVSS assessment and manual-severity APIs | `P4-13`, `P4-18`, `P4-23` | CVSS scoring, tickets |
+| `P4-26` | Ticket lifecycle and manual-zone APIs | `P4-13`, `P4-21`, `P4-23` | ticket service/mutations, tickets |
+| `P4-27` | Confidentiality, explicit-access, and reference APIs | `P4-18`, `P4-19`, `P4-23` | tickets, references, RBAC |
+| `P4-28` | Source-neutral CVE ingestion transaction | `P4-02`, `P4-07`, `P4-13`, `P4-20` | `tickets/cve-service.md` |
+| `P4-29` | Post-ingest package-resolution task | `P4-05`, `P4-16`, `P4-28` | CVE service, package service |
+| `P4-30` | BaseCVEFetcher and CVE source registries | `P4-07`, `P4-11`, `P4-28` | CVE fetcher infrastructure |
+| `P4-31` | On-demand/catch-up orchestration and source/refetch APIs | `P4-18`, `P4-29`, `P4-30` | CVE service/tracking, CVE fetcher infrastructure |
+| `P4-32` | Active-ticket unassignment primitive and audit | `SG4-11`, `P4-03` | user service, Ticket service/audit |
+| `P4-33` | User role mutation API and CLI | `P4-32` | identity user service/management |
+| `P4-34` | User deactivation impact, API, and CLI | `P4-32` | identity user service/management |
+| `P4-35` | Settings PATCH and CVSS recalculation task | `SG4-12`, `P4-12` | system settings, CVSS scoring |
 
-The candidate pieces above are intentionally more granular than the old
-service-wide PRs. During Phase 4 elaboration, each tracking issue must enumerate
-the exact functions/endpoints it owns and preserve complete contracts.
-`P4-01` through `P4-07` are independent of `RG-01`; `P4-08` and every piece
-transitively dependent on it remain Blocked until that gate merges. Migration
-and endpoint image assertions remain with the pieces that introduce them under
-the testing-strategy Growth Rule.
+Each piece owns focused tests and the image-suite Growth Rule consequences of
+the artifacts it introduces. Model pieces own their migrations and migration
+tests. API pieces own permission, validation, error, OpenAPI, and image
+coverage. Task pieces own task registration, cross-loop engine disposal, and
+sync-entry-point structural tests.
 
 `P4-05` is the sole implementation owner for the committed mapping data,
 canonical key grammar, CPE parser, package-relative loader, process cache,
@@ -571,10 +634,10 @@ resolver, failure, fallback, and canonical-data behavior directly. Generic
 worker startup has no CPE dependency, and `P4-05` introduces no eager startup
 check. If a later consumer requires eager validation, the mapping module owns
 the reusable check contract and the consumer work item owns its invocation.
-`P4-22` owns complete-ingestion integration tests without duplicating `P4-05`
+`P4-29` owns post-ingest integration tests without duplicating `P4-05`
 contract tests. NVD applicability-tree and `vulnerable=false` selection
-semantics must be approved by the owning ingestion contract before `P4-22` or
-`P5-02` begins.
+semantics are source-specific and belong to `P5-02`; they do not block the
+source-neutral `P4-28` ingestion transaction.
 
 ## Phase 5 — CVE Fetcher Infrastructure and Ingestion
 
@@ -583,20 +646,28 @@ platform and the complete CVE ingestion service.
 
 | ID | Piece | Direct blockers | Primary contract |
 |---|---|---|---|
-| `P5-01` | BaseGitFetcher, git operations, git-worker runtime and image smoke | `P4-23` | `platform/git-fetcher-infrastructure.md` |
-| `P5-02` | NVD fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-nvd.md` |
-| `P5-03` | Red Hat fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-redhat.md` |
-| `P5-04` | GHSA fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-ghsa.md` |
-| `P5-05` | OSV fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-osv.md` |
-| `P5-06` | EPSS fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-epss.md` |
-| `P5-07` | CISA KEV fetcher | `P4-23`, `P4-24` | `tickets/cve-sync-kev.md` |
-| `P5-08` | MITRE fetcher | `P5-01`, `P4-24` | `tickets/cve-sync-mitre.md` |
-| `P5-09` | Linux Kernel fetcher | `P5-01`, `P4-24` | `tickets/cve-sync-kernel.md` |
-| `P5-10` | CVE source failure retry fetcher | `P5-02` through `P5-09` | `platform/cve-source-failure-retry.md` |
+| `P5-01` | BaseGitFetcher, git operations, git-worker runtime and image smoke | `P4-30` | `platform/git-fetcher-infrastructure.md` |
+| `P5-02` | NVD applicability selection and fetcher | `P4-31` | `tickets/cve-sync-nvd.md` |
+| `P5-03` | Red Hat fetcher | `P4-31` | `tickets/cve-sync-redhat.md` |
+| `P5-04` | GHSA fetcher | `P4-31` | `tickets/cve-sync-ghsa.md` |
+| `P5-05` | OSV fetcher | `P4-31` | `tickets/cve-sync-osv.md` |
+| `P5-06` | EPSS fetcher | `P4-31` | `tickets/cve-sync-epss.md` |
+| `P5-07` | CISA KEV fetcher | `P4-31` | `tickets/cve-sync-kev.md` |
+| `P5-08` | Shared CVE 5.x record parser and live-format fixtures | `P4-02` | `platform/cve-record-parser.md` |
+| `P5-09` | MITRE fetcher | `P5-01`, `P5-08`, `P4-31` | `tickets/cve-sync-mitre.md` |
+| `P5-10` | Linux Kernel fetcher | `P5-01`, `P5-08`, `P4-31` | `tickets/cve-sync-kernel.md` |
+| `P5-11` | CVE source failure retry fetcher | `P5-02` through `P5-07`, `P5-09`, `P5-10` | `platform/cve-source-failure-retry.md` |
 
 Each external integration piece satisfies the mandatory external-contract
 verification requirements of the implementation workflow. One fetcher per PR
 keeps upstream contract risk and rollback scope isolated.
+
+`P5-02` owns the NVD applicability-tree contract and implementation, including
+nested operators, negation, `vulnerable=false` prerequisites, version ranges,
+and package-candidate selection. `P5-08` owns the source-neutral CVE 5.x parser
+against sanitized real MITRE/kernel formats before those two fetchers consume
+it. Neither source-specific concern blocks the Phase 4 ingestion DTO or
+transaction.
 
 ## Phase 6 — Domain Operational Completion
 
@@ -607,7 +678,7 @@ ingestion, and remaining non-WIP administrative surfaces are completed.
 |---|---|---|---|
 | `P6-01` | Real-ingestion CVE → Ticket → package-tree E2E verification | Phase 5 | ingestion and package specs |
 | `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-06` | fetcher operations and CVE service specs |
-| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-26`, `P4-27` | identity and ticket specs |
+| `P6-03` | Full local identity/ticket interaction E2E verification | `P4-33`, `P4-34` | identity and ticket specs |
 | `P6-04` | Cross-surface image smoke assertions not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
 | `P6-05` | Operational release checkpoint and manual acceptance | `P6-04` | deployment and testing docs |
 
@@ -622,13 +693,11 @@ Each item requires specification completion and merge before implementation.
 The candidate order is provisional and must be recalculated when contracts are
 approved:
 
-1. product catalog synchronization and lifecycle transitions;
-2. remaining SMELT/package orchestration not resolved by `RG-01`;
-3. IBS integration, RabbitMQ consumer, submission tracking, and release
+1. IBS bugowner and maintainer workflows;
+2. IBS integration, RabbitMQ consumer, submission tracking, and release
    detection;
-4. git-based track/product release detection;
-5. package bugowner and maintainer workflows;
-6. SSO authentication and external identity provisioning.
+3. git/SLFO package and release workflows;
+4. SSO authentication and external identity provisioning.
 
 Each large integration becomes its own milestone or a later numbered phase if
 its implementation requires multiple independently deployable pieces. The
@@ -676,3 +745,11 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   Release checkpoint taken: release-please PR #258 merged, releasing
   **v0.5.0**; tag, GitHub Release, image build, smoke gate, and publication
   all succeeded.
+- **2026-08-24 — Phase 4 elaboration started.** Replaced the stale
+  product/package/CVE umbrella gate and 28 candidate pieces with twelve
+  independently mergeable specification gates and 35 dependency-complete
+  implementation work units. Product catalog synchronization remains in Phase
+  4 because complete package resolution depends on it; WIP IBS bugowner,
+  maintainer, submission, release-detection, and git/SLFO behavior remains in
+  Phase 7+. Source-specific CVE parsing and NVD applicability selection moved
+  to their first real consumers in Phase 5.
