@@ -52,9 +52,10 @@ Each piece has a stable ID (`P<phase>-<sequence>`, for example `P1-03`) and is
 represented by one GitHub sub-issue.
 
 Candidate IDs in a future, not-yet-elaborated phase remain provisional. They
-become stable when progressive elaboration creates their GitHub issues. A
-one-time phase-planning work item uses `PG<phase>-00`; documentation gates use
-the `SG<phase>-<sequence>` form.
+become stable when progressive elaboration creates their GitHub issues.
+Phase-planning work items use `PG<phase>-<sequence>`, beginning at `00`.
+Documentation gates use `SG<phase>-<sequence>`; a nested leaf gate appends one
+uppercase letter to its umbrella ID (for example, `SG4-05A`).
 
 Execution follows `docs/conventions.md` (Git Conventions). The roadmap-specific
 mapping is:
@@ -163,8 +164,11 @@ product/package/CVE boundary as one documentation PR. Reassessment after Phase
 transaction, API, and fetcher contracts into an oversized work unit.
 
 GitHub issue #21 is therefore the `SG4-00` umbrella gate. It closes only after
-all `SG4-01` through `SG4-12` documentation sub-issues merge. Each child owns
-one coherent specification correction and one documentation branch/PR.
+all `SG4-01` through `SG4-12` documentation gates merge. `SG4-05` and
+`SG4-07` are nested umbrella gates because each spans several independently
+implementable contracts; their leaf sub-gates each own one coherent
+specification correction and one documentation branch/PR. Every other SG4
+child remains a directly executable documentation work item.
 
 The approved planning direction for those gates is:
 
@@ -559,9 +563,11 @@ data, and confidential visibility does not consult bugowner caches.
 
 ### Documentation gates
 
-`SG4-00` (#21) is the umbrella. The child gates below are independently
-mergeable documentation work items; each implementation issue records only its
-direct gate blockers.
+`SG4-00` (#21) is the top-level umbrella. `SG4-05` (#335) and `SG4-07`
+(#337) are nested umbrellas whose leaf sub-gates are independently mergeable
+documentation work items. All other child gates are independently mergeable
+directly. Each implementation issue records only its direct leaf-gate
+blockers.
 
 | ID | Gate | Direct blockers | Primary contract |
 |---|---|---|---|
@@ -569,12 +575,20 @@ direct gate blockers.
 | `SG4-02` | Correct Product and repository identity against live SMELT | `SG4-01` | `packages/product-catalog.md`, `data-model.md`, `data-sources.md` |
 | `SG4-03` | Complete Product synchronization, readiness, and read contracts | `SG4-02` | product catalog, configuration, fetcher registry, Product API |
 | `SG4-04` | Complete lifecycle, threshold, and eligibility contracts | `SG4-02` | product catalog/lifecycle, package service, Ticket audit |
-| `SG4-05` | Complete package mutation and orchestration contracts | `SG4-03`, `SG4-04` | package model/service, Ticket audit, package APIs |
+| `SG4-05` | Complete package contracts | Sub-issue roll-up: `SG4-05A` through `SG4-05D` | package model/service, Ticket audit, package APIs |
+| `SG4-05A` | Define package mutation foundations | `SG4-03`, `SG4-04` | package persistence, direct state mutations, locking, audit |
+| `SG4-05B` | Complete exclusion and restoration contracts | `SG4-05A` | hierarchical exclusion, restoration, orphan cleanup |
+| `SG4-05C` | Complete SMELT package orchestration contracts | `SG4-05A` | SMELT resolution, package-add orchestration, typed results |
 | `SG4-06` | Correct Ticket lifecycle, locking, and audit contracts | `SG4-01` | ticket service/mutations/audit, data model |
-| `SG4-07` | Complete Ticket/CVE read, confidentiality, and reference contracts | `SG4-05`, `SG4-06` | Ticket/CVE/reference APIs, RBAC, API/architecture rules |
-| `SG4-08` | Correct CVSS resolution and status-reconciliation contracts | `SG4-04`, `SG4-05`, `SG4-06` | CVSS scoring, ticket mutations, data model |
-| `SG4-09` | Complete CVE ingestion and source-status contracts | `SG4-05`, `SG4-06`, `SG4-08` | CVE service/tracking, ticket service, package dispatch |
+| `SG4-07` | Complete Ticket/CVE access and read contracts | Sub-issue roll-up: `SG4-07A` through `SG4-07D` | Ticket/CVE/reference APIs, RBAC, API/architecture rules |
+| `SG4-07A` | Define confidential Ticket access contracts | `SG4-06` | visibility predicate, explicit grants, accessible-resource resolution |
+| `SG4-05D` | Complete package read contracts | `SG4-05B`, `SG4-07A` | package queries, soft-deletion visibility, response schemas |
+| `SG4-07B` | Complete Ticket and audit read contracts | `SG4-05D` | Ticket list/detail, audit reads, detail assembly |
+| `SG4-07D` | Complete Ticket reference contracts | `SG4-07A` | reference reads/mutations, URL identity, locking, audit |
+| `SG4-08` | Correct CVSS resolution and status-reconciliation contracts | `SG4-05B`, `SG4-06` | CVSS scoring, ticket mutations, data model |
+| `SG4-09` | Complete CVE ingestion and source-status contracts | `SG4-05C`, `SG4-08` | CVE service/tracking, ticket service, package dispatch |
 | `SG4-10` | Complete BaseCVEFetcher, on-demand, and catch-up contracts | `SG4-09` | CVE/generic fetcher infrastructure, CVE service |
+| `SG4-07C` | Complete CVE, CVSS, and source read contracts | `SG4-07A`, `SG4-10` | CVE/CVSS/source queries, confidentiality, response schemas |
 | `SG4-11` | Correct ticket-coupled identity lifecycle contracts | `SG4-06` | user service/management, RBAC, Ticket service/audit |
 | `SG4-12` | Correct settings mutation and CVSS batch contracts | `SG4-08` | system settings, CVSS scoring, transaction/Redis conventions |
 
@@ -584,27 +598,27 @@ direct gate blockers.
 |---|---|---|---|
 | `P4-01` | CVE and CVESource persistence | `SG4-09` | `tickets/cve-service.md`, `data-model.md` |
 | `P4-02` | CVE enrichment persistence and ingestion DTOs | `P4-01` | CVE/CVSS specs, `data-model.md` |
-| `P4-03` | Ticket, audit, access-grant, and reference persistence | `SG4-06`, `SG4-07`, `P4-01` | Ticket specs, `data-model.md` |
+| `P4-03` | Ticket, audit, access-grant, and reference persistence | `SG4-07D`, `P4-01` | Ticket specs, `data-model.md` |
 | `P4-04` | Pure CVSS resolution and vector validation | `SG4-08` | `tickets/cvss-scoring.md` |
 | `P4-05` | CPE mapping loader, cached resolvers, and resource validation | `SG3-01` | `packages/cpe-package-mapping.md` |
 | `P4-06` | Product and ProductRepository persistence | `SG4-02` | `packages/product-catalog.md`, `data-model.md` |
 | `P4-07` | CVE existence and atomic source-status primitives | `P4-01` | `tickets/cve-service.md` |
 | `P4-08` | SMELT Product sync, catalog readiness, and Product API | `SG4-03`, `P4-06`, `P4-09` | `packages/product-catalog.md` |
 | `P4-09` | AIMAAS lifecycle and threshold synchronization | `SG4-04`, `P4-06` | product catalog/lifecycle specs |
-| `P4-10` | Ticket package-tree persistence | `SG4-05`, `P4-03`, `P4-06` | package model/service, `data-model.md` |
+| `P4-10` | Ticket package-tree persistence | `SG4-05A`, `P4-03`, `P4-06` | package model/service, `data-model.md` |
 | `P4-11` | Generic catch-up task and CVE absence signal | `SG4-10` | generic/CVE fetcher infrastructure |
 | `P4-12` | Ticket reconciliation and CVSS recalculation chain | `P4-02`, `P4-03`, `P4-04`, `P4-10`, `P4-11` | ticket mutations, CVSS scoring |
 | `P4-13` | CVSS, manual-severity, and manual-zone mutation services | `P4-12` | ticket mutations, CVSS scoring |
 | `P4-14` | Package record and state mutation services/APIs | `P4-10`, `P4-12` | package model/service |
-| `P4-15` | Package exclusion, restore, and orphan-chain services/APIs | `P4-14` | package model/service, Ticket audit |
-| `P4-16` | SMELT package resolution and package-add API | `P4-08`, `P4-09`, `P4-14` | package model/service |
+| `P4-15` | Package exclusion, restore, and orphan-chain services/APIs | `SG4-05B`, `P4-14` | package model/service, Ticket audit |
+| `P4-16` | SMELT package resolution and package-add API | `SG4-05C`, `P4-08`, `P4-09`, `P4-14` | package model/service |
 | `P4-17` | Product lifecycle evaluator and eligibility sub-task | `P4-09`, `P4-11`, `P4-15` | product lifecycle transitions |
-| `P4-18` | Confidential visibility and explicit access services | `P4-03` | Ticket service, tickets, RBAC |
-| `P4-19` | Ticket reference service | `P4-03`, `P4-12` | `tickets/ticket-references.md` |
+| `P4-18` | Confidential visibility and explicit access services | `SG4-07A`, `P4-03` | Ticket service, tickets, RBAC |
+| `P4-19` | Ticket reference service | `SG4-07D`, `P4-03`, `P4-12` | `tickets/ticket-references.md` |
 | `P4-20` | Ticket creation and CVE-association services | `P4-07`, `P4-12` | `tickets/ticket-service.md` |
 | `P4-21` | Ticket assignment and lifecycle services | `P4-12`, `P4-18` | ticket service/mutations |
-| `P4-22` | Package query services and read APIs | `P4-10`, `P4-18` | package model/service |
-| `P4-23` | Ticket/CVE queries, detail assembly, and audit read APIs | `P4-02`, `P4-18`, `P4-22` | tickets, CVE tracking, Ticket audit |
+| `P4-22` | Package query services and read APIs | `SG4-05D`, `P4-10`, `P4-18` | package model/service |
+| `P4-23` | Ticket/CVE queries, detail assembly, and audit read APIs | `SG4-07B`, `SG4-07C`, `P4-02`, `P4-18`, `P4-22` | tickets, CVE tracking, Ticket audit |
 | `P4-24` | Ticket create and CVE-associate APIs | `P4-20`, `P4-23`, `P4-31` | tickets, CVE service |
 | `P4-25` | CVSS assessment and manual-severity APIs | `P4-13`, `P4-18`, `P4-23` | CVSS scoring, tickets |
 | `P4-26` | Ticket lifecycle and manual-zone APIs | `P4-13`, `P4-21`, `P4-23` | ticket service/mutations, tickets |
@@ -612,7 +626,7 @@ direct gate blockers.
 | `P4-28` | Source-neutral CVE ingestion transaction | `P4-02`, `P4-07`, `P4-13`, `P4-20` | `tickets/cve-service.md` |
 | `P4-29` | Post-ingest package-resolution task | `P4-05`, `P4-16`, `P4-28` | CVE service, package service |
 | `P4-30` | BaseCVEFetcher and CVE source registries | `P4-07`, `P4-11`, `P4-28` | CVE fetcher infrastructure |
-| `P4-31` | On-demand/catch-up orchestration and source/refetch APIs | `P4-18`, `P4-29`, `P4-30` | CVE service/tracking, CVE fetcher infrastructure |
+| `P4-31` | On-demand/catch-up orchestration and source/refetch APIs | `SG4-07C`, `P4-18`, `P4-29`, `P4-30` | CVE service/tracking, CVE fetcher infrastructure |
 | `P4-32` | Active-ticket unassignment primitive and audit | `SG4-11`, `P4-03` | user service, Ticket service/audit |
 | `P4-33` | User role mutation API and CLI | `P4-32` | identity user service/management |
 | `P4-34` | User deactivation impact, API, and CLI | `P4-32` | identity user service/management |
@@ -747,9 +761,13 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   all succeeded.
 - **2026-08-24 — Phase 4 elaboration started.** Replaced the stale
   product/package/CVE umbrella gate and 28 candidate pieces with twelve
-  independently mergeable specification gates and 35 dependency-complete
-  implementation work units. Product catalog synchronization remains in Phase
-  4 because complete package resolution depends on it; WIP IBS bugowner,
-  maintainer, submission, release-detection, and git/SLFO behavior remains in
-  Phase 7+. Source-specific CVE parsing and NVD applicability selection moved
-  to their first real consumers in Phase 5.
+  specification gates and 35 dependency-complete implementation work units.
+  Product catalog synchronization remains in Phase 4 because complete package
+  resolution depends on it; WIP IBS bugowner, maintainer, submission,
+  release-detection, and git/SLFO behavior remains in Phase 7+.
+  Source-specific CVE parsing and NVD applicability selection moved to their
+  first real consumers in Phase 5.
+- **2026-08-24 — Phase 4 gate decomposition refined.** Converted `SG4-05` and
+  `SG4-07` into nested umbrellas with four independently mergeable leaf gates
+  each, then rewired dependent SG4 and P4 work items to their smallest direct
+  specification prerequisites.
