@@ -232,7 +232,7 @@ deployable behavior; that decision is recorded in the phase parent issue.
 | 0 | Infrastructure completion and validation | Completed (2026-07-30) |
 | 1 | Cross-cutting platform foundations and identity roots | Completed (2026-08-03) |
 | 2 | Local identity foundation | Completed (2026-08-14) |
-| 3 | Generic fetcher platform | Documentation gates pending |
+| 3 | Generic fetcher platform | Completed (2026-08-24) |
 | RG-01 | Resolve product/package/CVE contract boundary | Not started — immediate documentation work |
 | 4 | Ticket, CVE, and conditional package domain core | Not started; package orchestration blocked by `RG-01` |
 | 5 | CVE fetcher infrastructure and real ingestion | Blocked by Phase 4 |
@@ -420,6 +420,13 @@ recalculation endpoint, Redis/Celery coordination, mutation transaction and
   audit insertion, and recalculation task remain exclusively in `P4-28`.
 
 ## Phase 3 — Generic Fetcher Platform
+
+**Status: Completed (2026-08-24).** All four documentation gates
+(`SG3-01`-`SG3-04`) and all eleven implementation pieces (`P3-01`-`P3-11`)
+merged, including four bug-fix issues surfaced during implementation
+(queued fetcher run lifecycle, finalization-after-setup-failure,
+stale-detection timeout persistence, prefork worker pool enforcement).
+Released as part of **v0.5.0**.
 
 **Outcome**: non-domain-specific fetchers can register, schedule, run, report
 metrics, and be operated through generic API/CLI surfaces.
@@ -661,3 +668,11 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
   phase, shifting the former candidate `P4-05` through `P4-27` IDs to `P4-06`
   through `P4-28`. `SG3-01` owns the required detachment of CPE validation from
   generic worker startup before Phase 3 implementation begins.
+- **2026-08-24 — Phase 3 completed.** All four documentation gates
+  (`SG3-01`-`SG3-04`) and all eleven implementation pieces (`P3-01`-`P3-11`)
+  merged, including four bug-fix issues surfaced during implementation
+  (queued fetcher run lifecycle, finalization-after-setup-failure,
+  stale-detection timeout persistence, prefork worker pool enforcement).
+  Release checkpoint taken: release-please PR #258 merged, releasing
+  **v0.5.0**; tag, GitHub Release, image build, smoke gate, and publication
+  all succeeded.
