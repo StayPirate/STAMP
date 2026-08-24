@@ -6,9 +6,10 @@ Testing) for the full behavioral contract this test proves: real worker
 and Beat processes, real PostgreSQL and Redis, registration → config
 bootstrap → RedBeat scheduling → broker delivery → worker execution →
 `FetcherRun` finalization → Public API visibility, with no domain-table
-mutation and no `FetcherAuditEvent` for a scheduled run. It also proves
-the fixture's preflight purge of stale residue from an interrupted
-prior invocation (see `_seed_stale_fetcher_artifacts` in `conftest.py`).
+mutation and no `FetcherAuditEvent` for a scheduled run. The fixture
+also guards against a leftover terminal `FetcherRun` from an
+interrupted prior invocation being mistaken for this invocation's own
+dispatch (see `preexisting_run_ids` in `conftest.py`).
 
 This is the ONLY test in this module — the harness fixture
 (`fetcher_pipeline_harness` in `conftest.py`) owns all process spawning
@@ -65,7 +66,7 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
         "fetcher_name": SYSTEM_FETCHER_NAME,
         "triggered_by": "schedule",
     }
-    assert entry.schedule == crontab.from_string("* * * * *")
+    assert entry.schedule == crontab.from_string("0 0 1 1 *")
 
     # 3. Make the existing entry immediately overdue via RedBeat's own
     # public API — Beat still performs the actual dispatch through the
@@ -78,15 +79,9 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
 
     # Stop Beat immediately — before any further assertion — so a
     # second scheduling tick cannot fire another dispatch while this
-    # test still runs (the schedule is "* * * * *"; only one finalized
-    # run must exist for the entire test).
+    # test still runs (the schedule is annual; only one finalized run
+    # must exist for the entire test — see `EvaluateTestPipeline`).
     harness.stop_beat()
-
-    # Proves the fixture's preflight purge actually removed the stale
-    # run it seeded before this test started — otherwise this could be
-    # the leftover row rather than a genuinely new dispatch (see
-    # `_seed_stale_fetcher_artifacts` in conftest.py).
-    assert run.id != harness.stale_run_id
 
     assert run.status == "success", (
         f"expected a successful run, got {run.status!r}: "
@@ -104,6 +99,11 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     assert run.started_at is not None
     assert run.finished_at is not None
     assert run.finished_at >= run.started_at
+    # Proves the effective hard time limit traveled the whole path:
+    # `FetcherConfig.run_timeout` -> RedBeat entry options -> Celery
+    # message time-limit header -> `run_fetcher`'s extraction -> the
+    # finalized `FetcherRun` row.
+    assert run.hard_time_limit_seconds == config.run_timeout
 
     # Exactly one finalized run for the test fetcher — no duplicates
     # from a concurrent/second dispatch.
@@ -142,6 +142,9 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     )
     assert item["registered"] is True
     assert item["last_run"] is not None
+    # Proves the API surfaces exactly the run this invocation produced
+    # — not merely a run with a matching status/fetcher_name.
+    assert item["last_run"]["id"] == str(run.id)
     assert item["last_run"]["status"] == "success"
     assert item["last_run"]["items_created"] == 0
     assert item["last_run"]["triggered_by"] == "schedule"

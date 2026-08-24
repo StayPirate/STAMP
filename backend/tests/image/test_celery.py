@@ -523,10 +523,16 @@ class TestWorkerStartup:
         `inspect registered` lists Celery *task* names, not
         `FETCHER_REGISTRY` classes — a generic `run_fetcher` task being
         present proves nothing about which fetchers are registered
-        behind it. The second assertion queries `FETCHER_REGISTRY`
-        directly, as populated by the shipped image's own production
-        `app.services.fetcher_discovery` import — the actual exclusion
-        this test must prove.
+        behind it, so this assertion is a secondary guard, not the
+        primary proof. The second assertion queries `FETCHER_REGISTRY`
+        directly, after first importing `app.celery_app` — whose import
+        chain pulls in `app.services.fetcher_discovery`, populating the
+        registry with every production fetcher exactly as the shipped
+        image's own entrypoints do. Without that import first, a fresh
+        Python process's `FETCHER_REGISTRY` is empty by construction,
+        which would make the exclusion check pass vacuously regardless
+        of whether production discovery was ever misconfigured to
+        import the test-only module.
         """
         result = compose_exec(
             "worker",
@@ -550,6 +556,7 @@ class TestWorkerStartup:
             "worker",
             "python",
             "-c",
+            "import app.celery_app\n"
             "from app.services.base_fetcher import FETCHER_REGISTRY\n"
             "assert 'evaluate_test_pipeline' not in FETCHER_REGISTRY, "
             "FETCHER_REGISTRY.keys()\n"

@@ -38,7 +38,6 @@ from redbeat import RedBeatSchedulerEntry
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.config import Settings
 from app.database import Base
 from app.models.fetcher_audit_event import FetcherAuditEvent
 from app.models.fetcher_config import FetcherConfig
@@ -82,42 +81,23 @@ _SYSTEM_TEST_JWT_SECRET_KEY = "system-test-jwt-secret-key-not-for-production-32c
 
 # Minimal OS-level context every subprocess needs to actually run
 # (locate the interpreter, resolve locale) — NOT application
-# configuration. Anything not listed here is deliberately absent from
-# the spawned process's environment, so a value can only ever reach
-# `Settings()` through `_FIXED_SAFE_SETTINGS_OVERRIDES` /
-# `build_system_process_env` below (testing-strategy.md, Registration
-# Boundary).
-_INHERITED_OS_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TZ")
-
-# Safe, explicit value for every `Settings` field this suite does NOT
-# need to vary per invocation. Combined in `build_system_process_env`
-# with the per-invocation dynamic values (database/redis URLs, JWT
-# secret). Keyed by the field's Python attribute name — the transform
-# to the upper-snake-case environment variable name (`Settings`'s
-# `case_sensitive=False` model_config) happens in that function.
-_FIXED_SAFE_SETTINGS_OVERRIDES: dict[str, str] = {
-    "app_name": "sentinel-system-test",
-    "debug": "false",
-    "log_level": "INFO",
-    "log_format": "json",
-    "celery_timezone": "UTC",
-    "celery_enable_utc": "true",
-    "cors_origins": "http://localhost",
-    "ibs_api_url": "https://ibs.invalid.example",
-    "ibs_username": "",
-    "ibs_password": "",
-    "ibs_download_base_url": "https://ibs.invalid.example/download",
-    "nvd_api_key": "",
-    "jwt_expiry_hours": "72",
-    "session_max_lifetime_days": "30",
-    "login_max_attempts": "5",
-    "login_lockout_minutes": "10",
-    "suse_ca_cert_path": "certs/SUSE_Trust_Root.crt",
-}
+# configuration. `HOME` is deliberately excluded: it is set explicitly
+# to a per-invocation temporary directory instead (see
+# `build_system_process_env`), so the subprocess never reads dotfiles
+# from the developer's real home directory. Anything not listed here,
+# and not one of the explicit values `build_system_process_env` sets,
+# is deliberately absent from the spawned process's environment
+# (testing-strategy.md, Registration Boundary) — every `Settings`
+# field this suite does not set falls back to its own declared
+# default, which is safe because the spawned process's fetcher
+# registry is pruned to exactly the test fetcher (see
+# `tests/support/system_fetcher_app.py`): no code path in the spawned
+# process ever reads a field this function does not set.
+_INHERITED_OS_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TZ")
 
 
 def build_system_process_env(
-    *, database_url: str, redis_url: str, jwt_secret_key: str
+    *, database_url: str, redis_url: str, jwt_secret_key: str, home_dir: Path
 ) -> dict[str, str]:
     """Build the explicit environment for spawned worker/Beat subprocesses.
 
@@ -128,44 +108,32 @@ def build_system_process_env(
     values.
 
     Built from a minimal OS-level allowlist (`_INHERITED_OS_ENV_KEYS`)
-    — NOT `os.environ.copy()` — plus an explicit, safe value for EVERY
-    `Settings` field, not only the handful this suite cares about. This
-    ensures the subprocess can never observe a developer's shell-exported
-    application configuration value, nor `backend/.env` file content,
-    for any field (pydantic-settings environment variables take
-    precedence over the `.env` file, so supplying every field here is
-    sufficient regardless of `.env` content) — see testing-strategy.md
-    (Registration Boundary): "The subprocess environment MUST NOT
-    inherit application-configured values from the developer's shell or
-    `.env` file." `PYTHONPATH` is set explicitly so `-m celery` module
-    resolution does not depend on `cwd`-derived `sys.path` behavior.
-
-    Raises `AssertionError` if any `Settings` field is missing from the
-    combined override set — a field added to `Settings` without a
-    corresponding safe value here would otherwise silently fall through
-    to the ambient environment, defeating this function's purpose.
+    plus a handful of explicit application values — never
+    `os.environ.copy()`. This ensures the subprocess can never observe a
+    developer's shell-exported application configuration, nor
+    `backend/.env` file content: the spawned process's `cwd` is a
+    per-invocation temporary directory (see `_spawn_celery_process`),
+    not `backend/`, so the relative `.env` path in `Settings`'s
+    `model_config` never resolves to a real file — see
+    testing-strategy.md (Registration Boundary): "The subprocess
+    environment MUST NOT inherit application-configured values from the
+    developer's shell or `.env` file." `PYTHONPATH` is set explicitly so
+    `-m celery` module resolution does not depend on `cwd`.
     """
-    dynamic_overrides = {
-        "database_url": database_url,
-        "redis_url": redis_url,
-        "celery_broker_url": redis_url,
-        "jwt_secret_key": jwt_secret_key,
-    }
-    overrides = {**_FIXED_SAFE_SETTINGS_OVERRIDES, **dynamic_overrides}
-    missing = set(Settings.model_fields) - set(overrides)
-    assert not missing, (
-        f"build_system_process_env: Settings field(s) {sorted(missing)} "
-        "have no safe override defined — add them to "
-        "_FIXED_SAFE_SETTINGS_OVERRIDES or `dynamic_overrides` above."
-    )
     env = {key: os.environ[key] for key in _INHERITED_OS_ENV_KEYS if key in os.environ}
+    env["HOME"] = str(home_dir)
     env["PYTHONPATH"] = str(_BACKEND_DIR)
-    env.update({name.upper(): value for name, value in overrides.items()})
+    env["DATABASE_URL"] = database_url
+    env["REDIS_URL"] = redis_url
+    env["CELERY_BROKER_URL"] = redis_url
+    env["JWT_SECRET_KEY"] = jwt_secret_key
     return env
 
 
 @pytest.fixture
-def system_process_env(_engine: AsyncEngine, _redis_test_url: str) -> dict[str, str]:
+def system_process_env(
+    _engine: AsyncEngine, _redis_test_url: str, tmp_path: Path
+) -> dict[str, str]:
     """Explicit environment for spawned worker/Beat subprocesses — see
     `build_system_process_env` for the full isolation contract.
 
@@ -175,12 +143,15 @@ def system_process_env(_engine: AsyncEngine, _redis_test_url: str) -> dict[str, 
     because `str(engine.url)` masks the password (see
     `test_cross_loop_engine_lifecycle.py` for the identical pattern).
     `CELERY_BROKER_URL`/`REDIS_URL` both point at this pytest worker's
-    dedicated Redis logical database (`_redis_test_url`).
+    dedicated Redis logical database (`_redis_test_url`). `home_dir` is
+    the same per-test temporary directory used as the spawned
+    processes' `cwd` (`fetcher_pipeline_harness`'s `tmp_path`).
     """
     return build_system_process_env(
         database_url=_engine.url.render_as_string(hide_password=False),
         redis_url=_redis_test_url,
         jwt_secret_key=_SYSTEM_TEST_JWT_SECRET_KEY,
+        home_dir=tmp_path,
     )
 
 
@@ -246,7 +217,7 @@ class _SpawnedProcess:
 
 
 def _spawn_celery_process(
-    name: str, args: list[str], env: dict[str, str], log_dir: Path
+    name: str, args: list[str], env: dict[str, str], run_dir: Path
 ) -> _SpawnedProcess:
     """Spawn `python -m celery -A tests.support.system_fetcher_app <args>`.
 
@@ -255,8 +226,15 @@ def _spawn_celery_process(
     (see `tests/support/system_fetcher_app.py`) — production entrypoints
     never see this registration since they only ever import
     `app.celery_app` directly.
+
+    `run_dir` (the harness's `tmp_path`) is used both as the process's
+    `cwd` — so a relative `backend/.env` file is never in scope for
+    `Settings()` to load, see `build_system_process_env` — and as the
+    directory for this process's captured log file. `PYTHONPATH` (set
+    by `build_system_process_env`) makes `-m celery` module resolution
+    independent of `cwd`.
     """
-    log_path = log_dir / f"{name}.log"
+    log_path = run_dir / f"{name}.log"
     log_fh = log_path.open("wb")
     popen = subprocess.Popen(
         [
@@ -267,7 +245,7 @@ def _spawn_celery_process(
             "tests.support.system_fetcher_app",
             *args,
         ],
-        cwd=str(_BACKEND_DIR),
+        cwd=str(run_dir),
         env=env,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
@@ -285,18 +263,22 @@ class FetcherPipelineHarness:
     """
 
     env: dict[str, str]
-    log_dir: Path
+    run_dir: Path
     celery_app: Celery
     session_factory: async_sessionmaker[AsyncSession]
     worker_hostname: str
     worker_process: _SpawnedProcess | None = None
     beat_process: _SpawnedProcess | None = None
-    #: id of the stale `FetcherRun` the fixture seeds (between its two
-    #: preflight purges — see `_seed_stale_fetcher_artifacts` below) to
-    #: simulate residue left by a prior invocation that was interrupted
-    #: before its own teardown could run. The test asserts the run it
-    #: observes is NOT this one.
-    stale_run_id: uuid.UUID | None = None
+    #: ids of `FetcherRun` rows for the test fetcher that already
+    #: existed BEFORE this invocation's preflight purge — captured from
+    #: a prior invocation of this suite that was interrupted before its
+    #: own teardown could run (relevant when `TEST_DATABASE_URL` points
+    #: at a persistent local database — see testing-strategy.md,
+    #: Execution). `wait_finalized_run` and `list_runs` both exclude
+    #: these ids, so a leftover terminal run can never be mistaken for
+    #: evidence of this invocation's own dispatch, independent of
+    #: whether the preflight purge itself succeeded.
+    preexisting_run_ids: frozenset[uuid.UUID] = field(default_factory=frozenset)
 
     # -- Process lifecycle ---------------------------------------------
 
@@ -311,7 +293,7 @@ class FetcherPipelineHarness:
                 "--loglevel=info",
             ],
             self.env,
-            self.log_dir,
+            self.run_dir,
         )
 
     def start_beat(self) -> None:
@@ -319,7 +301,7 @@ class FetcherPipelineHarness:
             "beat",
             ["beat", "--max-interval=5", "--loglevel=info"],
             self.env,
-            self.log_dir,
+            self.run_dir,
         )
 
     def stop_beat(self, timeout: float = _PROCESS_TERM_TIMEOUT) -> None:
@@ -331,40 +313,27 @@ class FetcherPipelineHarness:
         if self.beat_process is not None:
             self.beat_process.terminate(timeout)
 
-    def _run_inspect(self, subcommand: str) -> dict[str, Any] | None:
-        """Run `celery inspect <subcommand> --json --destination
-        <worker_hostname>` and parse the JSON reply, or return `None` on
-        any failure (non-zero exit, timeout, unparsable output) — the
-        caller's polling loop treats `None` as "not ready yet"."""
-        import json
+    def _inspect_worker(self, method: str) -> dict[str, Any] | None:
+        """Call `celery_app.control.inspect().<method>()`, scoped to this
+        harness's worker hostname, and return its reply — or `None` on
+        any failure (broker unreachable, no reply within the timeout) —
+        the caller's polling loop treats `None` as "not ready yet".
 
+        Uses the pytest-host `celery_app` (`celery_test_app`, pointed at
+        the same test broker as the spawned worker — see
+        `system_process_env`) rather than spawning a `celery inspect`
+        subprocess: the control command still round-trips through the
+        real broker to the real spawned worker process, without paying
+        a fresh Python interpreter start on every poll attempt. This is
+        a blocking call (kombu's control API is synchronous) — callers
+        run it via `asyncio.to_thread()`.
+        """
         try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-m",
-                    "celery",
-                    "-A",
-                    "tests.support.system_fetcher_app",
-                    "inspect",
-                    subcommand,
-                    "--json",
-                    "--destination",
-                    self.worker_hostname,
-                ],
-                cwd=str(_BACKEND_DIR),
-                env=self.env,
-                capture_output=True,
-                text=True,
-                timeout=_INSPECT_TIMEOUT,
+            inspector = self.celery_app.control.inspect(
+                destination=[self.worker_hostname], timeout=_INSPECT_TIMEOUT
             )
-        except subprocess.TimeoutExpired:
-            return None
-        if result.returncode != 0:
-            return None
-        try:
-            reply: dict[str, Any] = json.loads(result.stdout)
-        except ValueError:
+            reply: dict[str, Any] | None = getattr(inspector, method)()
+        except Exception:
             return None
         return reply
 
@@ -446,9 +415,11 @@ class FetcherPipelineHarness:
         last_status = "no successful inspect reply yet"
         while time.monotonic() < deadline:
             self.worker_process.assert_alive()
-            ping_reply = self._run_inspect("ping")
+            ping_reply = await asyncio.to_thread(self._inspect_worker, "ping")
             if ping_reply and self.worker_hostname in ping_reply:
-                registered_reply = self._run_inspect("registered")
+                registered_reply = await asyncio.to_thread(
+                    self._inspect_worker, "registered"
+                )
                 registered_tasks = (registered_reply or {}).get(
                     self.worker_hostname
                 ) or []
@@ -491,16 +462,25 @@ class FetcherPipelineHarness:
             f"within {timeout_seconds}s\n{diagnostics}"
         )
 
-    def make_due(self, *, minutes_ago: int = 5) -> None:
+    def make_due(self, *, days_ago: int = 400) -> None:
         """Force the existing redbeat entry to be immediately overdue,
         via RedBeat's own public `reschedule()` API — Beat still performs
         the actual dispatch through the broker on its next tick (bounded
         by `--max-interval=5`); this only removes the wait for a real
         cron boundary. See testing-strategy.md, Behavioral Requirements.
+
+        The default fetcher (`EvaluateTestPipeline.default_schedule`) is
+        an annual cron expression (`0 0 1 1 *`), so `last_run_at` is
+        pushed back far enough (> 366 days) that at least one
+        occurrence of the schedule has necessarily passed since —
+        making the entry due without risking a second occurrence firing
+        before the test tears down Beat (see `EvaluateTestPipeline` for
+        the rationale of using a yearly, rather than a per-minute,
+        schedule here).
         """
         key = RedBeatSchedulerEntry.generate_key(self.celery_app, SYSTEM_FETCHER_NAME)
         entry = RedBeatSchedulerEntry.from_key(key, app=self.celery_app)
-        entry.reschedule(last_run_at=datetime.now(UTC) - timedelta(minutes=minutes_ago))
+        entry.reschedule(last_run_at=datetime.now(UTC) - timedelta(days=days_ago))
 
     # -- PostgreSQL (FetcherConfig / FetcherRun / FetcherAuditEvent) ----
 
@@ -536,7 +516,13 @@ class FetcherPipelineHarness:
         self, timeout_seconds: float = _RUN_FINALIZED_TIMEOUT
     ) -> FetcherRun:
         """Poll until a terminal (`success` or `failure`) `FetcherRun`
-        row exists for the test fetcher."""
+        row exists for the test fetcher, excluding any row already
+        present before this invocation's preflight purge
+        (`preexisting_run_ids`) — see the field's docstring. This
+        guarantees the returned run is evidence of this invocation's
+        own worker/Beat/broker path, independent of whether the
+        preflight purge itself succeeded.
+        """
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             if self.worker_process is not None:
@@ -544,12 +530,15 @@ class FetcherPipelineHarness:
             if self.beat_process is not None:
                 self.beat_process.assert_alive()
             async with self.session_factory() as session:
-                result = await session.execute(
+                query = (
                     select(FetcherRun)
                     .where(FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME)
                     .where(FetcherRun.status.in_(["success", "failure"]))
                     .order_by(FetcherRun.created_at.desc())
                 )
+                if self.preexisting_run_ids:
+                    query = query.where(FetcherRun.id.notin_(self.preexisting_run_ids))
+                result = await session.execute(query)
                 run = result.scalars().first()
             if run is not None:
                 return run
@@ -561,10 +550,17 @@ class FetcherPipelineHarness:
         )
 
     async def list_runs(self) -> list[FetcherRun]:
+        """Return every `FetcherRun` row for the test fetcher created
+        during this invocation — excludes `preexisting_run_ids` (see
+        `wait_finalized_run`).
+        """
         async with self.session_factory() as session:
-            result = await session.execute(
-                select(FetcherRun).where(FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME)
+            query = select(FetcherRun).where(
+                FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME
             )
+            if self.preexisting_run_ids:
+                query = query.where(FetcherRun.id.notin_(self.preexisting_run_ids))
+            result = await session.execute(query)
             return list(result.scalars().all())
 
     async def list_audit_events(self) -> list[FetcherAuditEvent]:
@@ -674,53 +670,6 @@ async def _residual_fetcher_artifacts(
     return residues
 
 
-async def _seed_stale_fetcher_artifacts(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> uuid.UUID:
-    """Commit a stale `FetcherConfig` + terminal `FetcherRun` +
-    `FetcherAuditEvent` for the test fetcher, simulating residue left by
-    a prior invocation of this suite that was interrupted before its
-    own teardown could run (relevant when `TEST_DATABASE_URL` points at
-    a persistent local database rather than an ephemeral per-run
-    container — see testing-strategy.md, Execution).
-
-    Called by `fetcher_pipeline_harness` immediately after its own
-    preflight purge (which must run first — `FetcherConfig.fetcher_name`
-    is a primary key, so seeding before purging a genuine leftover row
-    from that same prior invocation would raise `IntegrityError` instead
-    of exercising the purge) and immediately before a second purge, so
-    every invocation of the suite exercises and proves that purge —
-    without this, a leftover terminal `FetcherRun` could satisfy
-    `wait_finalized_run()` on the very first poll, reporting success
-    without this invocation's own worker/Beat/broker path ever
-    executing.
-
-    Returns the stale run's id so the test can assert the run it
-    eventually observes is a different row.
-    """
-    stale_run_id = uuid.uuid7()
-    now = datetime.now(UTC) - timedelta(hours=1)
-    async with session_factory() as session:
-        session.add(FetcherConfig(fetcher_name=SYSTEM_FETCHER_NAME, enabled=True))
-        session.add(
-            FetcherRun(
-                id=stale_run_id,
-                fetcher_name=SYSTEM_FETCHER_NAME,
-                status="success",
-                triggered_by="schedule",
-                started_at=now,
-                finished_at=now,
-            )
-        )
-        session.add(
-            FetcherAuditEvent(
-                fetcher_name=SYSTEM_FETCHER_NAME, event_type="config_changed"
-            )
-        )
-        await session.commit()
-    return stale_run_id
-
-
 @pytest_asyncio.fixture
 async def fetcher_pipeline_harness(
     tmp_path: Path,
@@ -757,21 +706,26 @@ async def fetcher_pipeline_harness(
     previous_registry_entry = FETCHER_REGISTRY.get(SYSTEM_FETCHER_NAME)
     FETCHER_REGISTRY[SYSTEM_FETCHER_NAME] = fetcher_cls
 
-    # Preflight: purge any genuine residue left by a prior invocation of
-    # this suite that was interrupted before its own teardown could run
-    # (e.g. SIGKILL, OOM, host crash — relevant when `TEST_DATABASE_URL`
-    # points at a persistent local database). This MUST run before
-    # seeding below — `FetcherConfig.fetcher_name` is a primary key, so
-    # seeding first would raise `IntegrityError` against a genuine
-    # leftover row instead of ever reaching the purge that's supposed to
-    # remove it.
-    await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
+    # Baseline: capture any `FetcherRun` ids that already exist for the
+    # test fetcher BEFORE the preflight purge below — residue left by a
+    # prior invocation of this suite that was interrupted before its
+    # own teardown could run (e.g. SIGKILL, OOM, host crash; relevant
+    # when `TEST_DATABASE_URL` points at a persistent local database
+    # rather than an ephemeral per-run container). `wait_finalized_run`
+    # and `list_runs` exclude these ids, so a leftover terminal run can
+    # never be mistaken for evidence of this invocation's own dispatch
+    # — independent of whether the purge below itself succeeds. See
+    # testing-strategy.md, Execution.
+    async with real_session_factory() as baseline_run_session:
+        baseline_run_result = await baseline_run_session.execute(
+            select(FetcherRun.id).where(FetcherRun.fetcher_name == SYSTEM_FETCHER_NAME)
+        )
+        preexisting_run_ids = frozenset(baseline_run_result.scalars().all())
 
-    # Seed synthetic stale residue of the same shape, then immediately
-    # purge it via the same call — proving the purge above actually
-    # works on every invocation, not only when a real prior invocation
-    # happens to have been interrupted. See `_seed_stale_fetcher_artifacts`.
-    stale_run_id = await _seed_stale_fetcher_artifacts(real_session_factory)
+    # Preflight: purge any genuine residue from that same scenario. This
+    # also removes a leftover `FetcherConfig` row that could otherwise
+    # be disabled or hold a stale `schedule_override` from a prior
+    # invocation.
     await _delete_fetcher_artifacts(real_session_factory, {SYSTEM_FETCHER_NAME})
 
     async with real_session_factory() as baseline_session:
@@ -783,11 +737,11 @@ async def fetcher_pipeline_harness(
     worker_hostname = f"systemtest-{uuid.uuid4().hex[:10]}@{socket.gethostname()}"
     harness = FetcherPipelineHarness(
         env=system_process_env,
-        log_dir=tmp_path,
+        run_dir=tmp_path,
         celery_app=celery_test_app,
         session_factory=real_session_factory,
         worker_hostname=worker_hostname,
-        stale_run_id=stale_run_id,
+        preexisting_run_ids=preexisting_run_ids,
     )
 
     cleanup_errors: list[str] = []

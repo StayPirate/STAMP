@@ -44,7 +44,17 @@ class EvaluateTestPipeline(BaseFetcher):
 
     name = SYSTEM_FETCHER_NAME
     description = "Test-only no-op fetcher for local process system validation"
-    default_schedule = "* * * * *"
+    #: An annual cron expression, rather than a per-minute one, is used
+    #: deliberately: the system test forces this schedule due via
+    #: `FetcherPipelineHarness.make_due()` rather than waiting for a
+    #: real cron boundary, then stops Beat immediately after observing
+    #: the finalized run. A per-minute schedule risked a second,
+    #: legitimate dispatch firing if the test happened to straddle a
+    #: minute boundary between `make_due()` and `stop_beat()`, which
+    #: would violate the "exactly one finalized run" assertion. An
+    #: annual schedule makes a second occurrence within a single test's
+    #: runtime impossible.
+    default_schedule = "0 0 1 1 *"
 
     async def execute(self, session: AsyncSession) -> None:
         """No-op: intentionally performs no work of any kind."""
