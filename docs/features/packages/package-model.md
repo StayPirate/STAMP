@@ -182,12 +182,14 @@ directly — it relies on SMELT to resolve these mappings.
 An internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
 that provides:
 
-1. **Product listing** (`GET /api/v1/basic/products/`): paginated list of
+1. **Product listing** (`v1/basic/products/` relative to the configured SMELT
+   API prefix): paginated list of
    all SUSE products with name, version, CPE, and repository project
    names. See `docs/features/packages/product-catalog.md` (SMELT
    Integration) for the product sync specification.
 2. **Per-package maintenance info**
-   (`GET /api/v1/basic/maintainedpackage/`): given a source package name,
+   (`v1/basic/maintainedpackage/` relative to the configured SMELT API prefix):
+   given a source package name,
    returns the list of tracks where the package is maintained and the
    target repositories (which map to products).
 
@@ -924,7 +926,8 @@ the initial addition, calling the function again will add only the new
 records. Existing records (active or soft-deleted) are skipped. The SMELT and
 current-catalog validation gates run before this no-op determination, so a
 repeat call can still fail with `PACKAGE_NOT_FOUND_IN_SMELT`,
-`PACKAGE_TARGETS_UNRESOLVED`, or `SMELT_UNAVAILABLE`.
+`PACKAGE_TARGETS_UNRESOLVED`, `PRODUCT_CATALOG_NOT_READY`, or
+`SMELT_UNAVAILABLE`.
 
 ### Triggers
 
@@ -987,35 +990,63 @@ effectively excluded via the hierarchy.
 When `add_package_to_ticket` resolves a package, it calls:
 
 ```
-GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
+v1/basic/maintainedpackage/?package={name}&include_reactive=1
 ```
 
 **Important implementation notes**:
 
 - The parameter `include_reactive=1` MUST always be included to ensure
   Products in Reactive Support are returned.
-- Results are **paginated**. Sentinel must follow the `next` field and
-  fetch **all pages** to get the complete list of tracks and products.
+- Continuation metadata must preserve the immutable `package={name}`,
+  `include_reactive=1`, and `page_size=100` query parameters; only `page`
+  varies. The package value is compared after URL decoding.
+- Results are **paginated**. Sentinel fetches every page under the shared
+  origin and pagination contract in `product-catalog.md` (SMELT Integration);
+  it never follows `next` as a request destination.
 - Each result contains a `(package, codestream)` pair with a `channel`
-  object. The `channel.targets` array lists the repository project names
-  where the package is shipped.
+  object. The `channel.targets` array contains objects with a string `target`
+  repository project name and a string `status`.
+- A non-empty response row is valid only when `package`, `codestream`, and
+  `channel.status` are non-empty strings, `codestream` fits the persisted
+  track-reference length, `package` exactly and case-sensitively equals the
+  requested source package name, and `channel.targets` is a non-empty array.
+  Every target must be an object containing non-empty string `target` and
+  `status` values, with `target` fitting the persisted repository-name length.
+  An invalid row or target rejects the complete response and raises
+  `SmeltUnavailableError`; rows are never skipped.
+- Live responses contain both `enabled` and `reactive` channel statuses and
+  both `enabled` and `disabled` target statuses. These values do not filter
+  package resolution: all returned target objects participate. In particular,
+  Reactive mappings may have only `disabled` targets.
+- The same `(package, codestream)` may occur in multiple response rows. Union
+  every row's targets by codestream before resolving Products; creating or
+  finding the track for an earlier row MUST NOT skip targets from later rows.
+- Live verification confirmed that the `package` filter is case-sensitive:
+  canonical `kernel-default` returned results, while case variants returned
+  the valid zero-result envelope. Sentinel does not normalize package-name
+  case before the query.
 
 **Processing each result**:
 
-1. Infer `workflow_type` from the track reference (e.g., IBS codestreams
+1. After retrieving and validating all pages, require a ready Product catalog
+   as defined in `product-catalog.md`. If no complete Product snapshot has
+   committed, raise `ProductCatalogNotReadyError` before querying Product
+   mappings or modifying ticket data.
+2. Infer `workflow_type` from the track reference (e.g., IBS codestreams
    match `^(SUSE|openSUSE):.*`).
-2. Create a `TicketPackageTrack` record with the `codestream` value as
+3. Create a `TicketPackageTrack` record with the `codestream` value as
    `reference` and the inferred `workflow_type` (if one does not already
    exist for this package + reference combination, including
    soft-deleted).
-3. Resolve each `target` through `ProductRepository` associations whose
-   `catalog_last_seen_at` equals the latest complete catalog snapshot
-   timestamp. Retained historical associations are excluded.
-4. Include every current Product associated with the target. Repository names
-   are not globally unique, so one target may resolve to multiple Products.
-5. Deduplicate the final Product set per track. Multiple targets, including
+4. Resolve each target object's `target` value through current
+   `ProductRepository` associations as defined in `product-catalog.md`.
+   Retained historical associations are excluded.
+5. Include every Product reached through a current association. Repository
+   names are not globally unique, so one target may resolve to multiple
+   Products.
+6. Deduplicate the final Product set per track. Multiple targets, including
    architecture-specific repositories, may resolve to the same Product.
-6. Ignore a target with no current match and continue processing other
+7. Ignore a target with no current match and continue processing other
    targets. If a track has no resolved Products after this step, omit that
    track. If the complete SMELT response has no resolved Product, fail with
    `PackageTargetsUnresolvedError`; no package-tree record is created.
@@ -1202,7 +1233,7 @@ behavior.
 | `package_name` | string | Yes | Max 255 chars. Pattern: `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$` (min 2 chars). Only alphanumeric, dots, underscores, hyphens, and plus signs allowed. | Source package name |
 
 The `package_name` value is URL-encoded before interpolation in the SMELT
-API query (`GET /api/v1/basic/maintainedpackage/?package={url_encode(name)}`).
+API query (`v1/basic/maintainedpackage/?package={url_encode(name)}`).
 This prevents injection of URL control characters regardless of validation.
 
 **Response** (201 Created):
@@ -1232,7 +1263,8 @@ added, all counts will be zero in the `created` fields.
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
 | 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returned tracks, but none of their targets resolved to a Product in Sentinel's current catalog snapshot |
-| 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
+| 503 | `PRODUCT_CATALOG_NOT_READY` | No complete SMELT Product catalog snapshot has committed yet |
+| 503 | `SMELT_UNAVAILABLE` | SMELT did not produce a valid successful response |
 
 **Idempotency**: safe to call multiple times for the same **active**
 package. If the package is already fully resolved, the response will

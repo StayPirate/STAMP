@@ -671,8 +671,10 @@ attribute it exposes.
   information (which codestreams contain a given package and which target
   repositories it is published to)
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
-  - `GET /api/v1/basic/products/` (paginated) — product listing
-  - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
+  - `v1/basic/products/` relative to the API prefix (paginated) — product
+    listing
+  - `v1/basic/maintainedpackage/?package={name}&include_reactive=1`
+    relative to the API prefix
     (paginated) — current channel-backed codestream and repository mapping for
     a package
   - `GET /api/experimental/v2/maintained/?package={name}` — experimental
@@ -685,6 +687,12 @@ attribute it exposes.
   information on demand when adding packages to tickets. CPE identifiers
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
+- **Contract characteristics**: Both current v1 endpoints use the pagination
+  envelope `count`, `total_pages`, `next`, `previous`, and `results`. SMELT
+  currently serializes continuation metadata with an HTTP URL even for HTTPS
+  requests; Sentinel constructs every page request from the configured HTTPS
+  API prefix and treats continuation URLs only as consistency metadata.
+  Product and maintained-package GET requests require no authentication.
 - **Source semantics**:
   - IBS package resolution originates from declarative `SUSE:Channels`
     records. With Reactive LTSS explicitly requested, SMELT may also expose
@@ -1056,7 +1064,7 @@ feature documentation (not its implementation status):
 | `sync_nvd_cves` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references | [cve-sync-nvd.md](features/tickets/cve-sync-nvd.md#fetcher-definition) | Complete |
 | `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md#fetcher-definition) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, best-effort package names | [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md#fetcher-definition) | Complete |
-| `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product repository backfill when associations become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | TBD |
+| `sync_smelt_products` | SMELT | TBD | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product repository backfill when associations become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Partial |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | TBD |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | TBD |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |

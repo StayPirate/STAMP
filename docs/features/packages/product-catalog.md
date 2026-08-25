@@ -108,23 +108,97 @@ See `docs/data-model.md` for the full column listing.
 
 ---
 
-## SMELT Integration -- Product Sync
+## SMELT Integration
+
+### Origin, Authentication, and Pagination
+
+The configured `SMELT_API_URL` identifies the SMELT API prefix. Its default
+value is `https://smelt.suse.de/api`; endpoint paths such as
+`v1/basic/products/` are appended to that prefix after removing any trailing
+slash (`https://smelt.suse.de/api/v1/basic/products/` for the default). The
+configured URL MUST use HTTPS and MUST NOT contain user information, a query,
+or a fragment. A non-default port is permitted for an explicitly configured
+deployment. At application startup, Sentinel validates these constraints and
+refuses to start with an error naming `SMELT_API_URL` when the value is invalid.
+
+SMELT requests use no authentication. Sentinel sends no credentials and does
+not follow redirects automatically. A future upstream authentication
+requirement is a contract change and requires specification review before the
+integration changes.
+
+HTTPS connections to SMELT use the combined trust store (system CAs + SUSE
+Trust Root CA). See `networking.md`, TLS Trust Store Configuration.
+
+The Product listing and `maintainedpackage` endpoints use the same pagination
+contract:
+
+1. Request pages sequentially, starting at page 1, with an explicit
+   `page_size=100`. Construct every request from the configured HTTPS API
+   prefix and the known endpoint path; never use `next` as a request
+   destination.
+2. Require an object containing integer `count` and `total_pages`, nullable
+   string `next` and `previous`, and array `results` on every page. `count`
+   MUST be non-negative, `total_pages` MUST be positive, and both values MUST
+   remain constant across the retrieval.
+3. Treat `next` and `previous` only as consistency metadata. When present,
+   parse them and require the configured hostname, the expected endpoint path,
+   the fixed page size, the expected adjacent page number, and exactly the
+   endpoint-specific immutable query parameters. An explicitly present port
+   must equal the configured port. When `SMELT_API_URL` includes an explicit
+   port, the metadata must contain the same explicit port; when the setting
+   omits one, the metadata must also omit it. In the latter case, the accepted
+   `http` metadata scheme does not create an implied-port mismatch. An omitted
+   `page` value in `previous` means page 1, matching verified SMELT
+   serialization. User
+   information, fragments, unknown or duplicate query parameters, malformed or
+   repeated page values, a different origin or path, and a non-adjacent page
+   invalidate the response. SMELT currently serializes these metadata URLs
+   with `http`; that known scheme defect is accepted only in the parsed
+   metadata. Every Sentinel request still uses the configured HTTPS origin.
+4. Fetch each page exactly once in increasing order. Every non-final page MUST
+   contain results and a non-null `next`; `previous` MUST be null only on page
+   1 and non-null afterward; the final page MUST have `next = NULL`; and the
+   number of collected results MUST equal `count`. A pagination inconsistency
+   aborts the operation; Sentinel does not restart the sequence within the
+   same operation.
+
+Live verification on 2026-08-25 confirmed this envelope on both endpoints,
+one-based page numbering, an effective maximum page size of 500, and the HTTP
+scheme defect in continuation metadata. An unknown-package query confirmed the
+valid empty `maintainedpackage` shape: `count = 0`, `total_pages = 1`, empty
+`results`, and null continuations. Using the fixed page size and server-provided
+`total_pages` avoids depending on either an inferred default or the requested
+page size being applied unchanged.
+
+### Product Sync
 
 Product data is synced from SMELT's product listing endpoint. See
 `docs/features/packages/package-model.md` (Domain Concepts: SMELT)
 for the general SMELT description.
 
-- **Endpoint**: `GET /api/v1/basic/products/` (paginated)
-- **Base URL**: `https://smelt.suse.de/api`
+- **Endpoint suffix**: `v1/basic/products/`, resolved relative to
+  `SMELT_API_URL`
+- **Pagination query parameters**: immutable `page_size=100`; varying `page`
 - **Response fields used**: `name`, `version`, `cpe`, `friendly_name`, `repos`
 - **Sync behavior**:
-  1. Fetch every page before opening a database transaction. Pagination MUST
-     NOT downgrade HTTPS or send requests or credentials to an untrusted
-     origin. The exact continuation-URL validation and normalization rules
-     remain to be completed.
-  2. Normalize and validate the complete snapshot before publication. Empty,
-     partial, truncated, or inconsistent responses MUST NOT be published.
-     The exact validation criteria remain to be completed.
+  1. Fetch every page under the shared SMELT pagination contract before
+     opening a database transaction.
+  2. Validate the complete snapshot before publication:
+     - `count` MUST be greater than zero.
+     - Every Product MUST contain non-empty strings for `name`, `version`,
+       `cpe`, and `friendly_name`, within the corresponding persisted column
+       lengths.
+     - `repos` MUST be a non-empty array of non-empty strings within the
+       `ProductRepository.repo_name` column length.
+     - Duplicate CPE rows, a repeated repository within one Product, or a
+       duplicate `(CPE, repository)` association invalidates the snapshot. A
+       repository shared by different Products is valid.
+     - Source values are preserved exactly; Sentinel does not trim,
+       case-normalize, or canonicalize CPE or repository identities.
+     - Unknown fields and the ignored `id`, `end_of_life`, `changed`, and
+       `details` fields do not affect validation or persistence. In
+       particular, SMELT `end_of_life` never drives Sentinel lifecycle state.
+     Any invalid row rejects the complete snapshot; rows are never skipped.
   3. Capture one UTC `snapshot_at` value for the complete snapshot.
   4. In the publication transaction, before modifying any catalog row,
      capture the set of `ProductRepository` associations belonging to the
@@ -143,9 +217,9 @@ for the general SMELT description.
   7. Commit once. Any database error rolls back the complete publication.
      Network I/O MUST NOT occur while the transaction is open.
   8. If the committed snapshot contains at least one newly current
-     association, enqueue Product repository backfill after the commit. A new
-     Product without a newly current repository association does not trigger
-     backfill.
+     association, enqueue Product repository backfill after the commit. A
+     snapshot that only re-observes already-current associations does not
+     trigger backfill.
 
 Products and associations not observed in the new snapshot are retained with
 their previous `catalog_last_seen_at`. The applied snapshot is identified by
@@ -153,10 +227,52 @@ their previous `catalog_last_seen_at`. The applied snapshot is identified by
 `catalog_last_seen_at` equals that value. Snapshot identity does not depend on
 `FetcherRun` finalization, which occurs in a separate transaction.
 
+The Product sync persists every valid repository in `repos`; it does not
+filter repository categories or infer inclusion from any SMELT lifecycle or
+status field. A structurally valid snapshot is not rejected solely because
+its Product or association count decreased relative to the prior snapshot.
+No arbitrary count-regression threshold is used. Complete-response
+validation, atomic publication, retained historical rows, and fetcher-run
+observability provide the corruption safeguards.
+
+Any transport, HTTP, pagination, response-schema, row-validation, or database
+failure publishes nothing, dispatches no backfill, and leaves the last
+committed snapshot unchanged. Recovery is the next scheduled or
+operator-triggered complete run. The Product sync adds no in-run restart,
+cursor, or durable recovery state beyond the shared HTTP transport retries and
+fetcher infrastructure.
+
 Failure to enqueue backfill is best-effort: log a warning and retain the
 successfully committed catalog. It does not roll back publication and no
 durable retry state is introduced. The omitted Products remain recoverable by
 a later `add_package_to_ticket()` invocation or a future backfill trigger.
+
+### Catalog Readiness and Freshness
+
+The Product catalog is ready after the first non-empty complete SMELT snapshot
+commits. Readiness is derived from the existence of
+`MAX(Product.catalog_last_seen_at)`; it requires no separate persisted state.
+AIMAAS lifecycle and threshold enrichment is independent and does not
+participate in catalog readiness.
+
+Package target resolution requires catalog readiness. It checks readiness
+after retrieving and validating the complete SMELT `maintainedpackage`
+response but before querying local Product mappings or modifying ticket data.
+This ordering preserves the I/O-then-transaction boundary: the caller-supplied
+database session performs no database operation before the external network
+I/O. If no complete snapshot exists, resolution raises
+`ProductCatalogNotReadyError`; it MUST NOT report
+`PackageNotFoundInSmeltError` or `PackageTargetsUnresolvedError`. Readiness
+failure takes precedence over both the zero-track and zero-resolved-Product
+outcomes because neither can be interpreted against an initialized local
+catalog.
+
+Catalog readiness is a domain-operation gate and is not part of the API
+process `/ready` probe. A committed snapshot has no hard expiry. Failed later
+synchronizations leave the latest complete snapshot usable; its timestamp and
+failed fetcher runs provide freshness and operational visibility without a
+second stale state or freshness setting. Operations that do not require
+current repository target resolution are not blocked.
 
 ### Product Repository Backfill
 
@@ -175,13 +291,10 @@ After dispatch, it:
    audit comment `Product repository backfill`. The mutation boundary re-checks
    the Ticket status while holding its row lock; if the Ticket is no longer
    active, the pair is skipped without mutation or post-commit effects.
-3. Target resolution logs one WARNING-level
-   `package_target_resolution_partial` event when a pair contains unmatched
-   target names or omitted track references. Because resolution precedes the
+3. Target resolution emits the structured partial-resolution warning defined
+   in `package-model.md` when applicable. Because resolution precedes the
    Ticket lock, this warning may also be emitted for a pair subsequently
-   skipped after the active-status re-check. Repository target names and track
-   references are structured fields; no credentials or response payload are
-   logged.
+   skipped after the active-status re-check.
 4. Commits each pair separately. A failure rolls back that pair, logs a
    warning, and continues with the next pair; successful earlier pairs are not
    rolled back.
@@ -207,21 +320,19 @@ unmatched targets were omitted from earlier package resolutions. Backfill
 processes pairs sequentially,
 which bounds SMELT request concurrency without adding another configuration
 surface, correlation table, or targeting index. The resulting sequential
-full-system scan and record-creating post-commit task dispatches are accepted
-because newly current mappings are expected to be rare. Overlapping backfill
-tasks are safe because package creation is idempotent and serialized by the
-Ticket row lock; duplicate external work is accepted. The task has no
-task-level retry after process loss. Recovery remains the next qualifying
-backfill trigger or a later package-addition invocation.
+full-system scan and record-creating post-commit task dispatches are accepted,
+including after the first snapshot when every association is newly current.
+Overlapping backfill tasks are safe because package creation is idempotent and
+serialized by the Ticket row lock; duplicate external work is accepted. The
+task has no task-level retry after process loss. Recovery remains the next
+qualifying backfill trigger or a later package-addition invocation.
 
 ---
 
 ## AIMAAS Integration
 
-HTTPS connections to SMELT (`smelt.suse.de`) and AIMAAS
-(`aimaas.suse.de`) are validated via the combined trust store (system
-CAs + SUSE Trust Root CA). See `networking.md`, TLS Trust
-Store Configuration.
+HTTPS connections to AIMAAS use the combined trust store (system CAs + SUSE
+Trust Root CA). See `networking.md`, TLS Trust Store Configuration.
 
 ### Product Lifecycle Sync (periodic)
 
@@ -345,20 +456,24 @@ contract.
 | Class name | TBD |
 | Schedule | TBD |
 | Source | SMELT (`smelt.suse.de/api`) |
-| Scope | TBD |
-| Auth | TBD (internal) |
-| Custom settings | TBD |
+| Scope | Complete SMELT Product catalog and repository projection on every run; no cursor or incremental mode |
+| Auth | None |
+| Custom settings | No |
 
 #### Algorithm
 
-The approved publication algorithm is defined in [SMELT Integration --
-Product Sync](#smelt-integration----product-sync). Complete response,
-pagination, validation, readiness, and recovery behavior remains to be
-defined.
+The retrieval, validation, publication, readiness, and recovery algorithm is
+defined in [SMELT Integration](#smelt-integration).
 
 #### Error Handling
 
-TBD
+Shared transport retries apply to retryable HTTP failures. After those retries
+are exhausted, any retrieval, non-success HTTP response, pagination,
+response-schema, or snapshot-validation failure aborts the run without
+publication or backfill. A publication failure rolls back the complete
+snapshot. The last committed snapshot remains usable, and recovery is a later
+scheduled or operator-triggered full run. Error messages and logs identify the
+failed page or validation category without retaining full response payloads.
 
 #### Metrics
 
@@ -424,16 +539,18 @@ TBD
   credentials are rejected according to `docs/api-spec.md`.
 - SMELT and AIMAAS base URLs are configured via environment variables
   (`SMELT_API_URL`, `AIMAAS_API_URL`). See [Configuration](#configuration)
-- Authentication requirements for SMELT and AIMAAS are TBD (see
-  `docs/data-sources.md`). When defined, credentials will be provided
-  via environment variables, never in code
+- SMELT uses anonymous HTTPS requests. AIMAAS authentication remains to be
+  defined. Any future credentials are provided through secret configuration,
+  never in code.
 
 ---
 
 ## Configuration
 
-- `SMELT_API_URL`: SMELT API base URL for product catalog sync and
-  package resolution (default: `https://smelt.suse.de/api`)
+- `SMELT_API_URL`: SMELT HTTPS API prefix for product catalog sync and
+  package resolution (default: `https://smelt.suse.de/api`). It must contain
+  no user information, query, or fragment; a non-default port is permitted.
+  Invalid values fail application startup with an error naming the setting.
 - `AIMAAS_API_URL`: AIMAAS API base URL for product lifecycle and CVSS
   threshold sync (default: `https://aimaas.suse.de/api`)
 

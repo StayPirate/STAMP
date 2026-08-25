@@ -201,6 +201,12 @@ No ticket exists in Sentinel for the extracted CVE-ID.
   resolution, manual VA addition, or operator-triggered rerun. This accepted
   limitation is surfaced by the fetcher's failed-item metrics and `partial`
   status.
+- **Product catalog not ready** (during Case B/C package resolution): handle
+  `ProductCatalogNotReadyError` identically to SMELT unavailability. No
+  package-tree records are written. The existing failed-item metric and
+  `partial` run status surface the skipped addition; recovery follows the same
+  later-ingestion, manual-addition, or operator-rerun paths as an unresolved
+  target.
 - **Deduplication** (Case C): if multiple packages in the same run yield
   the same CVE-ID without a ticket, only one `create_ticket_from_detection`
   task is enqueued. Subsequent packages with the same CVE-ID in the same

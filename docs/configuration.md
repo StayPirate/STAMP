@@ -209,12 +209,12 @@ Configuration).
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `SMELT_API_URL` | string | `https://smelt.suse.de/api` | SMELT API base URL for product catalog sync and package resolution | `docs/features/packages/product-catalog.md` |
+| `SMELT_API_URL` | string | `https://smelt.suse.de/api` | SMELT API prefix for product catalog sync and package resolution; must use HTTPS and contain no user information, query, or fragment; invalid values fail startup | `docs/features/packages/product-catalog.md` |
 | `AIMAAS_API_URL` | string | `https://aimaas.suse.de/api` | AIMAAS API base URL for product lifecycle and CVSS threshold sync | `docs/features/packages/product-catalog.md` |
 
-Note: authentication requirements for SMELT and AIMAAS are TBD (see
-`docs/data-sources.md`). When defined, credential env vars will be added
-here.
+SMELT uses no authentication. AIMAAS authentication remains to be defined (see
+`docs/data-sources.md`); credential environment variables will be added if its
+approved contract requires them.
 
 ## External APIs
 

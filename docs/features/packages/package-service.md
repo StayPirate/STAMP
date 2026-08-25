@@ -672,13 +672,20 @@ async def add_package_to_ticket(
 
 1. Query SMELT to resolve all currently maintained tracks and products
    for the given package name (external I/O — no lock held).
-   Resolve returned target names through only current `ProductRepository`
-   associations before the Ticket lock is acquired. Preserve all current
-   Product matches, ignore unmatched targets, omit tracks with no resolved
-   Products, and deduplicate Products per track as specified in
-   `package-model.md`. Historical associations are not used. If resolution is
-   partial, emit the required structured WARNING before mutation.
-2. If SMELT is unreachable or returns a server error (HTTP 4xx/5xx),
+   After the complete response is retrieved and validated, verify that a
+   complete Product catalog snapshot exists; if none exists, raise
+   `ProductCatalogNotReadyError` before querying Product mappings or mutating
+   ticket data. Error precedence is defined in `product-catalog.md` (Catalog
+   Readiness and Freshness). Resolve returned target names through only current
+   `ProductRepository` associations before the Ticket lock is acquired.
+   Preserve every Product reached through a current association, ignore
+   unmatched targets, omit tracks with no resolved Products, and deduplicate
+   Products per track as specified in `package-model.md`. Historical
+   associations are not used. If resolution is partial, emit the required
+   structured WARNING before mutation.
+2. If SMELT is unreachable, returns a non-success HTTP status, or returns a
+   response that fails the shared envelope, pagination, continuation-metadata,
+   or `maintainedpackage` row validation contract,
    raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
    No records are created.
 3. If SMELT returns a successful response but with zero tracks, raise an
@@ -914,7 +921,8 @@ Caught by endpoint handlers and mapped to HTTP responses:
 | `PackageAlreadyExcludedError` | 409 | `PACKAGE_ALREADY_EXCLUDED` | Soft-delete on record with `deleted_at IS NOT NULL` |
 | `PackageNotExcludedError` | 422 | `PACKAGE_NOT_EXCLUDED` | Restore on record with `deleted_at IS NULL` |
 | `PackageRestoreBlockedError` | 422 | `PACKAGE_RESTORE_BLOCKED` | Restore precondition not met (no valid child chain) |
-| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT API unreachable |
+| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT does not produce a valid successful response |
+| `ProductCatalogNotReadyError` | 503 | `PRODUCT_CATALOG_NOT_READY` | No complete SMELT Product catalog snapshot has committed |
 | `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
 | `PackageTargetsUnresolvedError` | 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returns tracks but no target resolves through the current Product catalog snapshot |
 | `TrackFixedStatusRestrictedError` | 403 | `AUTH_INSUFFICIENT_PERMISSION` | VA attempts `status=FIXED` without force |
