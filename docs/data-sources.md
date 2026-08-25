@@ -19,11 +19,12 @@ relevant feature specifications in `docs/features/`.
 | NVD | Public | CVE data, CVSS scores, CPE matches | Specified |
 | MITRE CVE Services | Public | Early CVE assignments | Specified |
 | Red Hat Security Data | Public | CVSS assessments | Specified |
-| IBS | Internal | Source packages, builds, repos (SUSE commercial) | Active |
+| IBS | Internal | Source packages, builds, repos, declarative product channels | Active |
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
 | IBS RabbitMQ | Internal | Real-time build and publish events | Active |
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
-| SMELT | Internal | Product catalog, package-codestream mapping | Active |
+| SMELT | Internal | Aggregated Product catalog and package-target resolution | Active |
+| SCC | Internal | Product registration catalog, architectures, extensions, migrations | Reference only |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
 | SUSE Active Directory | Internal | Employee identity, line manager, groups | Not integrated |
 | SUSE OpenLDAP | Internal | Employee identity, POSIX accounts | Not integrated |
@@ -306,6 +307,19 @@ whether update advisories have been published to product repositories.
   contains advisory details with CVE references and release dates),
   and package bugowner roles (person or group responsible for package
   maintenance)
+- **Product channel projects**:
+  - `SUSE:Channels` contains the current declarative IBS delivery mapping.
+    Each `_channel` file associates source packages and binaries from one or
+    more codestream projects with a target repository project, architecture,
+    and optional package support status.
+  - `SUSE:Channels:EOL` contains historical channel definitions that have
+    left normal maintenance. Channel location is not Product lifecycle
+    authority: these files contain no Product CPE or lifecycle dates.
+  - A target repository is not a globally unique Product identifier. Products
+    commonly have architecture-specific targets, and a target may be linked
+    to more than one Product projection. Consumers need the Product linkage
+    provided by SMELT rather than deriving Product identity from the target
+    name.
 - **Access**: REST API at `api.suse.de` (HTTP Basic Auth or API tokens).
   Download server at `download.suse.de/ibs` for repository data. Key
   endpoints:
@@ -621,19 +635,21 @@ a new development workflow that does not use the traditional maintenance
 update (MU) process via IBS. Instead, package sources are managed directly
 in Git repositories, organized by product and source pool.
 
-- **Relevant data**: Package source repositories for upcoming SUSE
-  products. The platform organizes content into product-specific groups
-  (visible at `src.suse.de/products`) and a shared source pool
-  (`src.suse.de/pool/`)
+- **Relevant data**: Package source repositories, Product catalog YAML,
+  product-compose definitions, and branches for next-generation SUSE
+  products. The platform organizes Product definitions in product-specific
+  groups (visible at `src.suse.de/products`) and package sources in a shared
+  source pool (`src.suse.de/pool/`). Product build reports provide SBOM
+  snapshots that relate binaries back to source packages and Git
+  codestreams.
 - **Access**: Web UI and Git over HTTPS at `src.suse.de`. Authentication
   via SUSE SSO (SAML). Gitea provides a REST API for repository and
   organization management
-- **Integration status**: **Not integrated**. Integration for tracking
-  security updates in these next-generation products will be evaluated in
-  the future as the new workflow matures and the products enter
-  maintenance phases. The tracking mechanism will likely differ
-  significantly from the IBS-based approach due to the different update
-  workflow
+- **Integration status**: **Not integrated directly**. Sentinel does not call
+  Gitea for package resolution. SMELT already imports Git Product definitions
+  and resolves current package-to-Product relationships from released Product
+  SBOM snapshots. Direct Sentinel integration for Git release detection
+  remains unspecified and differs from the IBS checksum/diff workflow.
 - **Documentation**: https://src.suse.de/products,
   https://src.suse.de/pool/
 
@@ -644,10 +660,11 @@ in Git repositories, organized by product and source pool.
 ### SMELT
 
 SMELT is an internal SUSE aggregator service that consolidates data from
-IBS, channel configuration files, and other sources into a unified view of
-the SUSE product and package landscape. It serves as the authoritative
-source of truth for which products are currently maintained, which packages
-belong to which codestreams, and which repositories serve each product.
+IBS, Git Product catalogs, Product build SBOM snapshots, SCC, AIMAAS, and
+other sources into a unified view of the SUSE Product and package landscape.
+It is Sentinel's current integration boundary for Product catalog and
+package-target resolution, but it is not the upstream authority for every
+attribute it exposes.
 
 - **Relevant data**: Product catalog (name, version, CPE identifier,
   associated repository project names) and per-package maintenance
@@ -656,15 +673,64 @@ belong to which codestreams, and which repositories serve each product.
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
   - `GET /api/v1/basic/products/` (paginated) — product listing
   - `GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1`
-    (paginated) — codestream and repository mapping for a package
+    (paginated) — current channel-backed codestream and repository mapping for
+    a package
+  - `GET /api/experimental/v2/maintained/?package={name}` — experimental
+    unified resolver that combines IBS channel records with Git/SLFO Product
+    SBOM records. Its Product definition metadata distinguishes `channel`
+    from `compose` sources. This endpoint is an observed SMELT capability,
+    not part of Sentinel's current feature contract.
 - **Integration status**: **Active**. Sentinel periodically syncs the product
   catalog (`sync_smelt_products` fetcher) and queries package maintenance
   information on demand when adding packages to tickets. CPE identifiers
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
+- **Source semantics**:
+  - IBS package resolution originates from declarative `SUSE:Channels`
+    records. With Reactive LTSS explicitly requested, SMELT may also expose
+    selected records located in `SUSE:Channels:EOL`, but only when the linked
+    Product has an AIMAAS-derived Reactive LTSS status.
+  - Git/SLFO package resolution originates from the latest released Product
+    SBOM snapshot and Product-compose metadata, not from `SUSE:Channels`.
+  - Absence from one upstream catalog is not evidence that a Product is EOL,
+    deleted, or ineligible. Catalog presence and lifecycle are independent.
 - **Documentation**: https://smelt.suse.de (internal)
 - **See also**: `docs/features/packages/product-catalog.md` (product
   sync), `docs/features/packages/package-model.md` (package query)
+
+### SCC (SUSE Customer Center)
+
+SCC maintains the Product registration and repository catalog presented to
+SUSE customers and registration proxies. It models Products at a finer
+granularity than Sentinel's Product catalog, including architecture-specific
+records and Product extension/module relationships.
+
+- **Relevant data**: SCC Product ID, identifier and former identifier, name,
+  version, architecture, CPE when assigned, Product family and type
+  (the public schema documents `base`, `extension`, and `module`; live
+  responses also contain `saas` records), release stage (`alpha`, `beta`, or
+  `released`), recommended extensions, migration predecessors, and
+  customer-facing repositories
+- **Access**: SUSE Connect API at `scc.suse.com/connect`. Organization-level
+  endpoints use HTTP Basic authentication with mirroring credentials. Key
+  endpoints:
+  - `GET /organizations/products/unscoped` — all Products available through
+    the SCC catalog, independent of the organization's subscriptions
+  - `GET /organizations/products` — entitlement-scoped Product subset for
+    the authenticated organization
+  - `GET /organizations/repositories` — entitlement-scoped repositories
+- **Contract characteristics**: SCC Product records are not one-to-one with
+  Sentinel Products. A CPE can occur in multiple architecture records, and
+  released historical records may have no CPE. Repository URLs can contain
+  organization-specific access tokens and must never be retained as fixtures
+  or documentation examples. The scoped Product endpoint is not a complete
+  SUSE catalog because its result depends on organization entitlements.
+- **Integration status**: **Reference only**. SMELT consumes SCC for Product
+  structure and release-stage metadata. Sentinel does not need a direct SCC
+  integration for its currently specified SMELT-backed catalog. SCC could
+  support future architecture, extension, or migration enrichment, but it
+  cannot replace AIMAAS lifecycle data or IBS/Git package-target resolution.
+- **Documentation**: https://scc.suse.com/connect/v4/swagger.json
 
 ### AIMAAS
 
@@ -678,8 +744,10 @@ security update.
 - **Relevant data**: Product lifecycle dates (`fcs`, `end_of_gs`,
   `end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`) and CVSS
   thresholds per product (approximately 24 entries for products in
-  LTSS/ESPOS phases). Products are matched to Sentinel's local records via
-  CPE identifiers (identical between SMELT and AIMAAS)
+  LTSS/ESPOS phases). Products are matched to Sentinel's local records by
+  exact CPE. Catalog coverage differs between AIMAAS and SMELT, so an
+  unmatched Product is expected and must not be joined heuristically by name
+  or version
 - **Access**: REST API at `aimaas.suse.de/api`. Key endpoints:
   - `GET /api/entity/products/{slug}` — individual product lifecycle dates
   - `GET /api/entity/cvss-threshold` (paginated) — CVSS thresholds
@@ -697,6 +765,26 @@ security update.
 - **See also**: `docs/features/packages/product-catalog.md`,
   `docs/features/tickets/cvss-scoring.md`,
   `docs/features/packages/cpe-package-mapping.md`
+
+### Product Data Authority by Attribute
+
+No single service is authoritative for every aspect of a SUSE Product. The
+following ownership boundaries prevent catalog presence, lifecycle, and
+delivery topology from being conflated:
+
+| Data | Upstream authority | Sentinel integration boundary |
+|---|---|---|
+| Product projection used by the current catalog | IBS and Git Product definitions, aggregated by SMELT | SMELT Product API |
+| Product lifecycle dates and CVSS thresholds | AIMAAS | AIMAAS API |
+| IBS package/codestream-to-target mapping | IBS `SUSE:Channels` | SMELT channel resolver |
+| Historical IBS channel location | IBS `SUSE:Channels:EOL` | SMELT, only when explicitly relevant |
+| Git package/codestream-to-Product mapping | Released Product SBOM and Product-compose data | Experimental SMELT SBOM resolver; not a current Sentinel contract |
+| Architecture, extension/module, release-stage, and migration structure | SCC | SMELT today; possible future direct enrichment |
+
+CPE is the cross-source Product reconciliation key when present. Exact CPE
+sets are not identical between the services, and some SCC records have no
+CPE, so absence or non-match is preserved as missing enrichment rather than
+interpreted as a lifecycle transition.
 
 ---
 
