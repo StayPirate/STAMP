@@ -193,6 +193,14 @@ No ticket exists in Sentinel for the extracted CVE-ID.
   not re-trigger it (MD5 already cached). The `items_failed` counter and
   `partial` run status surface the condition on the fetcher dashboard for
   operator attention.
+- **SMELT targets unresolved** (during Case B/C package resolution): handle
+  `PackageTargetsUnresolvedError` identically to SMELT unavailability: log
+  WARNING, call `record_failed()`, and skip package addition. No
+  `TicketPackage` exists for Product repository backfill to discover, and the
+  MD5 is already cached, so recovery requires a later CVE-ingestion package
+  resolution, manual VA addition, or operator-triggered rerun. This accepted
+  limitation is surfaced by the fetcher's failed-item metrics and `partial`
+  status.
 - **Deduplication** (Case C): if multiple packages in the same run yield
   the same CVE-ID without a ticket, only one `create_ticket_from_detection`
   task is enqueued. Subsequent packages with the same CVE-ID in the same

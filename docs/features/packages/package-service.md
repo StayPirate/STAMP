@@ -139,6 +139,8 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
+- When `active_ticket_only` is true, an inactive locked Ticket returns a no-op
+  result instead of raising an exception.
 - Track must exist
 - Status must be a valid `PackageStatus` value
 
@@ -373,6 +375,8 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 | `package_name` | `str` | Yes | Source package name |
 | `tracks` | `list[TrackData]` | Yes | Track/product data from SMELT resolution |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `audit_comment` | `str \| None` | No | System-generated context for `package_added`; `NULL` for user actions |
+| `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product repository backfill |
 
 **Preconditions**:
 
@@ -381,14 +385,21 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `ensure_ticket_operable(ticket)`
-3. Call `auto_assign_actor()`
-4. Validate preconditions
-4. Create or skip `TicketPackage` (idempotent — skip if exists)
-5. For each track in `tracks`:
+2. If `active_ticket_only` is true and the locked Ticket status is not `New`,
+   `Analysis`, or `Analyzed`, return a no-op result before assignment,
+   reconciliation, or audit creation.
+3. Call `ensure_ticket_operable(ticket)`
+4. Validate preconditions and determine which package, track, and Product
+   records are missing under the lock.
+5. If no record is missing, return a no-op result before auto-assignment,
+   reconciliation, or audit creation.
+6. Call `auto_assign_actor()`
+7. Create or skip `TicketPackage` (idempotent — skip if exists)
+8. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
      including soft-deleted records)
-   - Initial status: `ANALYSIS`, delivery_status: `PENDING`
+   - If newly created, initial status: `ANALYSIS`, delivery_status:
+     `PENDING`. An existing track retains both values unchanged.
    - For each product under the track:
      - Create or skip `TicketPackageProduct` (idempotent — skip if
        exists, including soft-deleted records)
@@ -405,9 +416,9 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 > Hygiene Rules, even when creating dozens of products in a single
 > `add_package_records()` call.
 
-6. Create `TicketAuditEvent` (`package_added`)
-7. Call `reconcile_ticket_status()`
-8. Return created records
+9. Create one `TicketAuditEvent` (`package_added`) using `audit_comment`.
+10. Call `reconcile_ticket_status()`
+11. Return created records
 
 **TicketAuditEvent**: `package_added`
 
@@ -415,7 +426,8 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 record already exists for the given combination (including soft-deleted
 records), it is skipped without modification. Only missing records are
 created. This ensures re-running `add_package_to_ticket` after a
-partial failure does not produce duplicate records.
+partial failure does not produce duplicate records. A fully no-op invocation
+does not auto-assign or reconcile the Ticket and creates no audit event.
 
 ---
 
@@ -650,6 +662,8 @@ async def add_package_to_ticket(
     ticket_id: UUID,
     package_name: str,
     acting_user_id: UUID | None = None,
+    audit_comment: str | None = None,
+    active_ticket_only: bool = False,
 ) -> AddPackageResult:
 ```
 
@@ -657,39 +671,51 @@ async def add_package_to_ticket(
 
 1. Query SMELT to resolve all currently maintained tracks and products
    for the given package name (external I/O — no lock held).
-   Resolve returned target names through `ProductRepository` before the
-   Ticket lock is acquired. Repository names are not globally unique, so the
-    resolution result must preserve the multiplicity of candidate Products.
-    The still-open current/historical, candidate-selection, deduplication, and
-    unmatched-target rules are owned by `product-catalog.md` and
-    `package-model.md`; this operation MUST NOT assume that one target maps to
-    one Product or pass unresolved candidates to the mutation phase.
+   Resolve returned target names through only current `ProductRepository`
+   associations before the Ticket lock is acquired. Preserve all current
+   Product matches, ignore unmatched targets, omit tracks with no resolved
+   Products, and deduplicate Products per track as specified in
+   `package-model.md`. Historical associations are not used. If resolution is
+   partial, emit the required structured WARNING before mutation.
 2. If SMELT is unreachable or returns a server error (HTTP 4xx/5xx),
    raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
    No records are created.
 3. If SMELT returns a successful response but with zero tracks, raise an
    application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
    No records are created.
-4. Infer `workflow_type` for each resolved track.
-5. Delegate all record creation to `add_package_records()` — this is where
+4. If SMELT returned tracks but no Product resolves across the complete
+   response, raise `PackageTargetsUnresolvedError`. No records are created.
+5. Infer `workflow_type` for each resolved track.
+6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-6. Register the following best-effort post-commit effects with the workflow
-   owner: resolve and cache the IBS bugowner, then enqueue
+7. If step 6 created at least one package, track, or Product record, register
+   the following best-effort post-commit effects with the workflow owner:
+   resolve and cache the IBS bugowner, then enqueue
    `discover_submissions_for_ticket_package()` for retroactive SR/RR
-   discovery. Neither effect executes before the database commit succeeds.
-7. Return an `AddPackageResult` with creation/skip counts.
+   discovery. A fully no-op or `active_ticket_only` skip registers no effects.
+   Neither effect executes before the database commit succeeds.
+8. Return an `AddPackageResult` with creation/skip counts.
+
+`audit_comment` is internal system context for `package_added`. API callers
+always pass `NULL`. Product repository backfill passes
+`Product repository backfill`. Other automatic callers pass the contextual
+comment defined by their owning workflow.
+
+`active_ticket_only` is false for normal API and automatic callers. Product
+repository backfill sets it to true so a Ticket that became inactive after
+batch selection is skipped under the Ticket row lock.
 
 **Error handling**:
 
-- **Steps 1–3 (validation gate)**: blocking. If any of these steps fails,
+- **Steps 1–4 (validation gate)**: blocking. If any of these steps fails,
   the function raises without side effects (no database writes occur). The
   endpoint handler translates service-layer exceptions to the corresponding
   HTTP error codes defined in `package-model.md`.
-- **Steps 4–5 (record creation)**: transactional. Record creation occurs
+- **Steps 5–6 (record creation)**: transactional. Record creation occurs
   under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
   failure occurs during these steps, the transaction is rolled back and no
   records are persisted.
-- **Step 6 (post-commit effects)**: best-effort. The API transaction
+- **Step 7 (post-commit effects)**: best-effort. The API transaction
   dependency or other workflow owner executes these effects only after its
   caller-owned transaction commits. Failures do not roll back the created
   records.
@@ -703,8 +729,8 @@ async def add_package_to_ticket(
     `SyncIbsRequests` (catch-up every 24h at 02:30 UTC) ensures
     eventual consistency.
 
-**Auto-assignment**: applied by `add_package_records()` (the function
-that acquires the lock), NOT by `add_package_to_ticket()`.
+**Auto-assignment**: applied by `add_package_records()` after it confirms that
+at least one record is missing. `add_package_to_ticket()` does not apply it.
 
 ## Query Operations
 
@@ -889,6 +915,7 @@ Caught by endpoint handlers and mapped to HTTP responses:
 | `PackageRestoreBlockedError` | 422 | `PACKAGE_RESTORE_BLOCKED` | Restore precondition not met (no valid child chain) |
 | `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT API unreachable |
 | `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
+| `PackageTargetsUnresolvedError` | 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returns tracks but no target resolves through the current Product catalog snapshot |
 | `TrackFixedStatusRestrictedError` | 403 | `AUTH_INSUFFICIENT_PERMISSION` | VA attempts `status=FIXED` without force |
 
 † Shared exception — inherits from `ServiceError`, not from
@@ -967,6 +994,8 @@ transitions. The test must cover:
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
+- `docs/features/packages/product-catalog.md` — current repository mappings
+  and Product repository backfill
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/packages/package-model.md` — track/product concepts,

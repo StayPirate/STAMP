@@ -53,10 +53,12 @@ Sentinel derives one of five lifecycle phases from the AIMAAS projection:
 | `eol` | The Product has reached end of life |
 
 Sentinel does not distinguish LTSS from ESPOS because they have equivalent
-platform behavior. The exact boundary inclusivity, precedence, and outcome
-for missing or inconsistent lifecycle dates are not yet defined. Until that
-contract is completed, missing lifecycle data MUST NOT be interpreted as
-`eol`.
+platform behavior. If the available AIMAAS fields are insufficient to derive
+one of these phases, the lifecycle phase is unavailable and represented as
+`NULL`; it is not treated as General Support, Reactive Support, or EOL. The
+exact boundary inclusivity, precedence, and treatment of inconsistent
+lifecycle dates remain to be defined. Missing or inconsistent lifecycle data
+MUST NOT be interpreted as `eol`.
 
 For automated actions triggered by lifecycle phase transitions (Reactive
 Support eligibility changes, EOL Product removal), see
@@ -96,6 +98,12 @@ Repository names are not globally unique. An association is unique by
 snapshot are retained because existing ticket records may still require them
 for Product-level release detection.
 
+An association is **current** when its `catalog_last_seen_at` equals the
+timestamp of the latest complete Product catalog snapshot; otherwise it is
+historical. Package target resolution uses current associations only.
+Historical associations remain available for historical lookup and
+Product-level release detection.
+
 See `docs/data-model.md` for the full column listing.
 
 ---
@@ -118,20 +126,93 @@ for the general SMELT description.
      partial, truncated, or inconsistent responses MUST NOT be published.
      The exact validation criteria remain to be completed.
   3. Capture one UTC `snapshot_at` value for the complete snapshot.
-  4. In one database transaction, upsert Products by exact CPE and
+  4. In the publication transaction, before modifying any catalog row,
+     capture the set of `ProductRepository` associations belonging to the
+     previously applied snapshot. If no previous complete snapshot exists,
+     use the empty set.
+  5. Upsert Products by exact CPE and
      ProductRepository associations by `(product_id, repo_name)`. Assign the
      same `snapshot_at` to every observed row's `catalog_last_seen_at`.
      The Product upsert modifies only the SMELT-owned descriptive fields
      (`name`, `version`, `display_name`) and `catalog_last_seen_at`; it MUST
      NOT clear or overwrite AIMAAS-owned lifecycle or threshold fields.
-  5. Commit once. Any database error rolls back the complete publication.
+  6. Compare the new association set with the captured previous set and retain
+     whether at least one association is newly current. A newly current
+     association is either a new `(product_id, repo_name)` row or a retained
+     historical row observed again in the new snapshot.
+  7. Commit once. Any database error rolls back the complete publication.
      Network I/O MUST NOT occur while the transaction is open.
+  8. If the committed snapshot contains at least one newly current
+     association, enqueue Product repository backfill after the commit. A new
+     Product without a newly current repository association does not trigger
+     backfill.
 
 Products and associations not observed in the new snapshot are retained with
 their previous `catalog_last_seen_at`. The applied snapshot is identified by
 `MAX(Product.catalog_last_seen_at)`; a row belongs to that snapshot when its
 `catalog_last_seen_at` equals that value. Snapshot identity does not depend on
 `FetcherRun` finalization, which occurs in a separate transaction.
+
+Failure to enqueue backfill is best-effort: log a warning and retain the
+successfully committed catalog. It does not roll back publication and no
+durable retry state is introduced. The omitted Products remain recoverable by
+a later `add_package_to_ticket()` invocation or a future backfill trigger.
+
+### Product Repository Backfill
+
+Product repository backfill is an on-demand Celery sub-operation of
+`sync_smelt_products`, not an independently scheduled `BaseFetcher`. It is
+unrelated to the reserved `BaseFetcher.catch_up(ticket_id, session)` mechanism
+used when an inactive ticket becomes active.
+
+After dispatch, it:
+
+1. Selects every distinct `(ticket_id, package_name)` whose Ticket is active
+   (`New`, `Analysis`, or `Analyzed`) and whose `TicketPackage` has
+   `deleted_at IS NULL`.
+2. Processes each pair independently by calling `add_package_to_ticket()`
+   in active-ticket-only mode, with `acting_user_id = None` and the system
+   audit comment `Product repository backfill`. The mutation boundary re-checks
+   the Ticket status while holding its row lock; if the Ticket is no longer
+   active, the pair is skipped without mutation or post-commit effects.
+3. Target resolution logs one WARNING-level
+   `package_target_resolution_partial` event when a pair contains unmatched
+   target names or omitted track references. Because resolution precedes the
+   Ticket lock, this warning may also be emitted for a pair subsequently
+   skipped after the active-status re-check. Repository target names and track
+   references are structured fields; no credentials or response payload are
+   logged.
+4. Commits each pair separately. A failure rolls back that pair, logs a
+   warning, and continues with the next pair; successful earlier pairs are not
+   rolled back.
+
+The workflow is idempotent. Existing package-tree records are skipped, and a
+completely no-op pair creates no `package_added` event. Existing tracks retain
+their affectedness and delivery states. Backfill may add missing Products
+beneath existing tracks and may create a previously omitted track; a new track
+starts in `ANALYSIS`/`PENDING`, and normal status reconciliation may regress
+an `Analyzed` Ticket to `Analysis`. The normal `add_package_to_ticket()`
+post-commit effects apply only when at least one package-tree record is
+created. A package-tree no-op performs no post-commit effects.
+
+Backfill completes only package trees represented by an existing active
+`TicketPackage`. A package addition that previously failed with
+`PACKAGE_TARGETS_UNRESOLVED` created no such row and is not discoverable by
+this workflow; it is retried only by a later manual or automatic caller. This
+is an accepted limitation and no durable failed-addition registry is
+introduced.
+
+The system-wide scan is deliberate because Sentinel does not persist which
+unmatched targets were omitted from earlier package resolutions. Backfill
+processes pairs sequentially,
+which bounds SMELT request concurrency without adding another configuration
+surface, correlation table, or targeting index. The resulting sequential
+full-system scan and record-creating post-commit task dispatches are accepted
+because newly current mappings are expected to be rare. Overlapping backfill
+tasks are safe because package creation is idempotent and serialized by the
+Ticket row lock; duplicate external work is accepted. The task has no
+task-level retry after process loss. Recovery remains the next qualifying
+backfill trigger or a later package-addition invocation.
 
 ---
 
@@ -164,6 +245,13 @@ The lifecycle synchronization modifies only the four lifecycle date columns;
 it does not modify SMELT-owned descriptive or catalog-observation fields, or
 `cvss_threshold`.
 
+A Product without sufficient AIMAAS lifecycle data remains usable for package
+resolution. Its derived `lifecycle_phase` is `NULL`, and no lifecycle
+exclusion is applied. When later synchronization supplies sufficient data,
+the lifecycle evaluator exposes the derived phase and
+`evaluate_lifecycle_transitions` applies Reactive Support or EOL behavior
+when applicable.
+
 The Product discovery/detail strategy, complete-snapshot behavior, clearing
 rules, and freshness semantics remain to be completed.
 
@@ -184,6 +272,9 @@ rules, and freshness semantics remain to be completed.
      defined in `product-lifecycle-transitions.md`.
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
+  A later change from `NULL` to an explicit threshold is a threshold change
+  and triggers automatic eligibility re-evaluation for non-overridden
+  `TicketPackageProduct` records.
 
 ---
 
@@ -206,7 +297,7 @@ List all products synced from SMELT. Paginated.
 | `sort_by` | string | `name` | Sort field. Valid values: `name`, `version`, `cpe`, `created_at` |
 | `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
 | `search` | string | -- | Filter by name (case-insensitive substring match) |
-| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `extended_support`, `reactive_support`, `eol`. Multiple values use OR semantics |
+| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `extended_support`, `reactive_support`, `eol`. Multiple values use OR semantics. Products whose phase is `NULL` do not match this filter. Invalid values follow `docs/api-spec.md` (Enum Filter Validation). |
 
 **Response** (200 OK):
 
@@ -234,6 +325,13 @@ List all products synced from SMELT. Paginated.
 
 **`Access: Public`**
 **`Authentication: Optional`**
+
+`lifecycle_phase` is a nullable string. It is `NULL` when AIMAAS data is
+absent or insufficient to derive a phase safely.
+
+Whether this endpoint returns all retained Products or only Products in the
+current catalog snapshot remains to be completed with the Product read service
+contract.
 
 ---
 
@@ -349,6 +447,8 @@ TBD
   ProductRepository tables)
 - `docs/features/packages/package-model.md` -- package affectedness
   model; eligibility rules consume product lifecycle and threshold data
+- `docs/features/packages/package-service.md` -- package-tree creation used by
+  Product repository backfill
 - `docs/features/packages/product-lifecycle-transitions.md` -- EOL and
   Reactive Support automated actions
 - `docs/features/tickets/cvss-scoring.md` -- CVSS resolution cascade

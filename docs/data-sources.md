@@ -749,6 +749,8 @@ security update.
   unmatched Product is expected and must not be joined heuristically by name
   or version
 - **Access**: REST API at `aimaas.suse.de/api`. Key endpoints:
+  - `GET /api/entity/products?size={size}&page={page}` — paginated Product
+    discovery
   - `GET /api/entity/products/{slug}` — individual product lifecycle dates
   - `GET /api/entity/cvss-threshold` (paginated) — CVSS thresholds
   - `GET /api/entity/cpe-map` (paginated) — complete CPE 2.3 names and
@@ -1054,7 +1056,7 @@ feature documentation (not its implementation status):
 | `sync_nvd_cves` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references | [cve-sync-nvd.md](features/tickets/cve-sync-nvd.md#fetcher-definition) | Complete |
 | `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md#fetcher-definition) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, best-effort package names | [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md#fetcher-definition) | Complete |
-| `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog (name, version, CPE, repositories) | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | TBD |
+| `sync_smelt_products` | SMELT | TBD | TBD (internal) | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product repository backfill when associations become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | TBD |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | TBD |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | TBD |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |

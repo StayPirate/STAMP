@@ -25,8 +25,9 @@ children.
 The authoritative criterion for whether a Product is EOL is exclusively the
 lifecycle evaluator over AIMAAS-derived fields. Absence from a SMELT catalog
 snapshot does not trigger EOL handling. The exact date-boundary and
-unavailable-data rules remain to be completed; missing or inconsistent
-lifecycle data MUST NOT produce `eol` accidentally.
+inconsistent-data rules remain to be completed. Insufficient lifecycle data
+produces an unavailable (`NULL`) phase, applies no lifecycle exclusion, and
+MUST NOT produce `eol` accidentally.
 
 ## Lifecycle Phase Detection
 
@@ -107,11 +108,17 @@ triggered by parent fetchers, with no independent schedule).
 For all `TicketPackageProduct` records referencing this product in active
 tickets with `eligible = true` and `is_eligible_override = false`:
 
-- Call `package_service.set_product_eligibility(record, eligible=false)`
+- Recalculate through the automatic `package_service` eligibility mutation
+  boundary, setting `eligible = false` without setting
+  `is_eligible_override`.
 
 Only the `eligible` flag is changed. Records with
 `is_eligible_override = true` are not modified (already filtered out by
 the query).
+
+The exact automatic service entry point is not yet specified. It MUST NOT use
+the boolean override path of `set_product_eligibility()`, which is reserved for
+VA overrides.
 
 #### Reason: `eol`
 
@@ -132,7 +139,9 @@ Products under tracks with a final status (`NOT_AFFECTED`, `FIXED`,
 
 For all `TicketPackageProduct` records referencing this product in active
 tickets: re-evaluate eligibility based on the new threshold value.
-Existing behavior as specified in `docs/features/packages/package-model.md`.
+Use the same automatic `package_service` mutation boundary and the eligibility
+rules in `docs/features/packages/package-model.md`; skip records with
+`is_eligible_override = true` and never create a manual override.
 
 **Note — CVSS-triggered eligibility recalculation**: changes to CVSS
 assessments or the default CVSS version do NOT use this sub-task.

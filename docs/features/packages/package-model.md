@@ -871,30 +871,34 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 
 **Behavior**:
 
-1. Create a `TicketPackage` record for the package if one does not
-   already exist. If a record already exists (active or soft-deleted),
-   skip creation and proceed to step 2.
-2. Query SMELT to resolve all currently maintained tracks and products
+1. Query SMELT to resolve all currently maintained tracks and products
    for the given package (see
    [SMELT Query](#smelt-query-for-package-resolution) below).
-3. Infer `workflow_type` for each resolved track (see Design
+2. Resolve SMELT targets against only the current Product catalog
+   associations. Ignore unmatched targets and omit any track left with no
+   resolved Products. If no Product is resolved across the complete response,
+   reject the operation without database writes.
+3. Create a `TicketPackage` record for the package if one does not already
+   exist. If a record already exists (active or soft-deleted), skip creation.
+4. Infer `workflow_type` for each resolved track (see Design
    Decision 5).
-4. For each resolved track, delegate `TicketPackageTrack` record
+5. For each resolved track, delegate `TicketPackageTrack` record
    creation to `package_service` (if a record does not already exist,
    including soft-deleted).
-5. For each resolved product under each track, delegate
+6. For each resolved Product under each track, delegate
    `TicketPackageProduct` record creation to `package_service` (if a
    record does not already exist, including soft-deleted).
-6. Resolve and cache the IBS bugowner for the package. If a
-   `PackageBugowner` record already exists for this `package_name`,
-   update it with fresh data from IBS. If it does not exist, create it.
-   See `docs/features/packages/package-bugowner.md` for the resolution
-   algorithm.
-7. Enqueue
-   `discover_submissions_for_ticket_package(ticket_id, package_name)` to
-   retroactively discover IBS submission requests (SRs) and release
-   requests (RRs) for the ticket's CVE created within the last 14 days.
-   See `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
+7. If at least one package, track, or Product record was created, register
+   these best-effort post-commit effects:
+   - Resolve and cache the IBS bugowner. If a `PackageBugowner` record already
+     exists for this `package_name`, update it with fresh data from IBS; if it
+     does not exist, create it. See
+     `docs/features/packages/package-bugowner.md`.
+   - Enqueue `discover_submissions_for_ticket_package(ticket_id,
+     package_name)` to discover IBS submission requests (SRs) and release
+     requests (RRs) for the ticket's CVE created within the last 14 days. See
+     `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
+   A fully no-op invocation registers neither effect.
 8. Return an `AddPackageResult` containing:
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
@@ -908,10 +912,19 @@ or track is soft-deleted, these records are automatically **effectively
 excluded** via the hierarchy — no special handling is needed. See
 [Hierarchical Exclusion Model](#hierarchical-exclusion-model).
 
+When a Product is added beneath an existing track, the track retains its
+current affectedness and delivery statuses. The Product therefore inherits
+the track's affectedness through the hierarchy. Its eligibility is calculated
+independently at creation time, and its Product-level `released_at` starts as
+`NULL`.
+
 **Idempotency**: the function is safe to call multiple times for the
 same package. If SMELT adds new tracks or products for a package after
 the initial addition, calling the function again will add only the new
-records. Existing records (active or soft-deleted) are skipped.
+records. Existing records (active or soft-deleted) are skipped. The SMELT and
+current-catalog validation gates run before this no-op determination, so a
+repeat call can still fail with `PACKAGE_NOT_FOUND_IN_SMELT`,
+`PACKAGE_TARGETS_UNRESOLVED`, or `SMELT_UNAVAILABLE`.
 
 ### Triggers
 
@@ -941,6 +954,11 @@ The following scenarios invoke `add_package_to_ticket`:
    appeared on SMELT since the deletion are picked up by subsequent
    automatic calls to `add_package_to_ticket` (CVE ingestion, release
    detection Case B) — no explicit call is needed at restore time.
+6. **Product repository backfill**: after a successful SMELT Product catalog
+   sync makes at least one repository association newly current, a system
+   workflow calls `add_package_to_ticket` for each active, non-soft-deleted
+   package on active tickets. See `product-catalog.md` (Product Repository
+   Backfill).
 
 ### Package Management Constraints
 
@@ -990,15 +1008,31 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
    `reference` and the inferred `workflow_type` (if one does not already
    exist for this package + reference combination, including
    soft-deleted).
-3. Resolve each `target` through `ProductRepository` without collapsing the
-   candidates to one Product. Repository names are not globally unique, so
-   one target can produce multiple candidate Products.
-4. The exact rules for current-versus-historical associations, selecting from
-   multiple candidate Products, unmatched targets, partially matched results,
-   and final Product deduplication remain to be completed in the Product
-   catalog contract. Package resolution MUST NOT assume a
-   one-target-to-one-Product relationship or create records before that
-   selection policy has been applied.
+3. Resolve each `target` through `ProductRepository` associations whose
+   `catalog_last_seen_at` equals the latest complete catalog snapshot
+   timestamp. Retained historical associations are excluded.
+4. Include every current Product associated with the target. Repository names
+   are not globally unique, so one target may resolve to multiple Products.
+5. Deduplicate the final Product set per track. Multiple targets, including
+   architecture-specific repositories, may resolve to the same Product.
+6. Ignore a target with no current match and continue processing other
+   targets. If a track has no resolved Products after this step, omit that
+   track. If the complete SMELT response has no resolved Product, fail with
+   `PackageTargetsUnresolvedError`; no package-tree record is created.
+
+When at least one target or track is omitted from an otherwise successful
+resolution, log a WARNING-level `package_target_resolution_partial` event with
+the package name, unmatched target names, and omitted track references. This
+accepted partial result does not change the API response shape.
+
+For a package tree that is created partially, a newly introduced target may be
+omitted until the Product catalog sync publishes its repository association
+and invokes Product repository backfill. A zero-resolution failure creates no
+`TicketPackage` and therefore cannot be discovered by backfill; recovery
+requires a later manual or automatic invocation. A target that remains absent
+from the current Product catalog is intentionally ignored on every invocation.
+Sentinel never creates a Product from a target string or falls back to
+name/version matching.
 
 ---
 
@@ -1010,8 +1044,8 @@ types are defined:
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
-| VA adds package | `package_added` | VA user | `package_name` |
-| Package auto-added (CVE ingestion or Case B) | `package_added` | `NULL` | `package_name`, contextual `comment` |
+| VA adds or completes package tree | `package_added` | VA user | `package_name` |
+| Package auto-added or completed (CVE ingestion, release detection, or Product repository backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
 | VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
@@ -1028,6 +1062,10 @@ types are defined:
   `package_added`, this distinguishes manual additions (VA user) from
   automatic ones (CVE ingestion, release detection). The `comment` field
   provides context for automatic additions.
+- Exactly one `package_added` event is created when an invocation creates at
+  least one package, track, or Product record. A completely no-op invocation
+  creates no `package_added` event. Product repository backfill uses the fixed
+  comment `Product repository backfill`.
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
   `old_value`, `new_value`, and `comment` fields as strings. See
@@ -1146,9 +1184,10 @@ POST /api/v1/tickets/{ticket_id}/packages
 Add a source package to a ticket. Sentinel queries SMELT to resolve all
 maintained tracks and products for the package, creates `TicketPackage`,
 `TicketPackageTrack`, and `TicketPackageProduct` records via
-`package_service`, resolves the IBS bugowner, and enqueues submission
-discovery. See [Adding Packages to a Ticket](#adding-packages-to-a-ticket)
-for the full behavior.
+`package_service`, and, when at least one record is created, performs the
+documented post-commit bugowner resolution and submission-discovery dispatch.
+See [Adding Packages to a Ticket](#adding-packages-to-a-ticket) for the full
+behavior.
 
 **Request body**:
 
@@ -1192,13 +1231,16 @@ added, all counts will be zero in the `created` fields.
 |--------|------|-----------|
 | 409 | `PACKAGE_ALREADY_EXCLUDED` | Package exists on this ticket but is soft-deleted — use the restore endpoint |
 | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returned no results for the given package name |
+| 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returned tracks, but none of their targets resolved to a Product in Sentinel's current catalog snapshot |
 | 503 | `SMELT_UNAVAILABLE` | SMELT is unreachable or returned a server error |
 
 **Idempotency**: safe to call multiple times for the same **active**
 package. If the package is already fully resolved, the response will
 report zero created records. If the package is soft-deleted, the endpoint
 returns 409 `PACKAGE_ALREADY_EXCLUDED` — the VA must use the restore
-endpoint to re-include it.
+endpoint to re-include it. The request still performs SMELT and current-catalog
+validation before determining that the package tree is complete, so the
+documented SMELT/catalog errors may be returned on a repeat call.
 
 ---
 
