@@ -99,7 +99,7 @@ version bumps.
   management, API keys, identity audit trail
 - [x] **Platform Infrastructure** — health endpoints, logging, HTTP client,
   system settings, CLI framework, audit trail base
-- [x] **Fetcher Infrastructure** *(partial)* — BaseFetcher lifecycle, registry,
+- [x] **Fetcher Infrastructure** — BaseFetcher lifecycle, registry,
   bootstrap, generic run_fetcher task; BaseCVEFetcher and BaseGitFetcher pending
 - [ ] **Tickets & CVE Tracking** — ticket lifecycle, CVE ingestion from 8
   sources, CVSS scoring, severity resolution
