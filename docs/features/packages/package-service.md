@@ -139,8 +139,6 @@ Sets the affectedness status of a `TicketPackageTrack` record.
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
-- When `active_ticket_only` is true, an inactive locked Ticket returns a no-op
-  result instead of raising an exception.
 - Track must exist
 - Status must be a valid `PackageStatus` value
 
@@ -380,7 +378,10 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 
 **Preconditions**:
 
-- Parent ticket must be operable (`ensure_ticket_operable`)
+- When `active_ticket_only` is false, the parent Ticket must be operable
+  (`ensure_ticket_operable`).
+- When `active_ticket_only` is true, only an active parent Ticket is eligible;
+  an inactive locked Ticket returns a no-op before the operability guard.
 
 **Behavior**:
 
