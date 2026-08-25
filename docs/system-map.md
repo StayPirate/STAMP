@@ -216,17 +216,22 @@ erDiagram
 
     Product {
         UUID id PK
-        INTEGER smelt_id UK
         VARCHAR cpe UK
         VARCHAR name
         VARCHAR version
         DECIMAL cvss_threshold "nullable"
+        DATE first_customer_ship_date "nullable"
+        DATE general_support_end_date "nullable"
+        DATE extended_support_end_date "nullable"
+        DATE reactive_support_end_date "nullable"
+        TIMESTAMPTZ catalog_last_seen_at
     }
 
     ProductRepository {
         UUID id PK
         UUID product_id FK
-        VARCHAR repo_name UK
+        VARCHAR repo_name
+        TIMESTAMPTZ catalog_last_seen_at
     }
 
     User {

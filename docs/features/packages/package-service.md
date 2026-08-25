@@ -334,7 +334,10 @@ If `eligible` is `None` (reset to automatic):
 4. Validate preconditions
 4. If `is_eligible_override == false`, return (no-op — already automatic)
 5. Set `TicketPackageProduct.is_eligible_override = false`
-6. Recalculate eligibility using `cvss.resolve_eligibility_score()` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) → compare against product threshold from AIMAAS
+6. Recalculate eligibility using all automatic rules in
+   `docs/features/packages/package-model.md` (Axis 2: Eligibility), including
+   the Reactive Support rule and the threshold comparison based on
+   `cvss.resolve_eligibility_score()`.
 7. Update `TicketPackageProduct.eligible` to the calculated value
 8. Create `TicketAuditEvent` (`product_eligibility_changed`)
 9. Call `reconcile_ticket_status()`
@@ -654,22 +657,27 @@ async def add_package_to_ticket(
 
 1. Query SMELT to resolve all currently maintained tracks and products
    for the given package name (external I/O — no lock held).
+   Resolve returned target names through `ProductRepository` before the
+   Ticket lock is acquired. Repository names are not globally unique, so the
+    resolution result must preserve the multiplicity of candidate Products.
+    The still-open current/historical, candidate-selection, deduplication, and
+    unmatched-target rules are owned by `product-catalog.md` and
+    `package-model.md`; this operation MUST NOT assume that one target maps to
+    one Product or pass unresolved candidates to the mutation phase.
 2. If SMELT is unreachable or returns a server error (HTTP 4xx/5xx),
    raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
    No records are created.
 3. If SMELT returns a successful response but with zero tracks, raise an
    application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
    No records are created.
-4. Create a `TicketPackage` record for the package if one does not
-   already exist. If a record already exists (active or soft-deleted),
-   skip creation and proceed.
-5. Infer `workflow_type` for each resolved track.
-6. Delegate record creation to `add_package_records()` — this is where
+4. Infer `workflow_type` for each resolved track.
+5. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-7. Resolve and cache the IBS bugowner for the package.
-8. Enqueue `discover_submissions_for_ticket_package()` for retroactive
-   SR/RR discovery.
-9. Return an `AddPackageResult` with creation/skip counts.
+6. Register the following best-effort post-commit effects with the workflow
+   owner: resolve and cache the IBS bugowner, then enqueue
+   `discover_submissions_for_ticket_package()` for retroactive SR/RR
+   discovery. Neither effect executes before the database commit succeeds.
+7. Return an `AddPackageResult` with creation/skip counts.
 
 **Error handling**:
 
@@ -677,19 +685,20 @@ async def add_package_to_ticket(
   the function raises without side effects (no database writes occur). The
   endpoint handler translates service-layer exceptions to the corresponding
   HTTP error codes defined in `package-model.md`.
-- **Steps 4–6 (record creation)**: transactional. Record creation occurs
+- **Steps 4–5 (record creation)**: transactional. Record creation occurs
   under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
   failure occurs during these steps, the transaction is rolled back and no
   records are persisted.
-- **Steps 7–8 (post-record-creation)**: best-effort. These steps execute
-  after the transaction from steps 4–6 has committed successfully. Failures
-  do not roll back the created records.
-  - **Step 7 (bugowner resolution)**: if bugowner resolution fails (IBS
+- **Step 6 (post-commit effects)**: best-effort. The API transaction
+  dependency or other workflow owner executes these effects only after its
+  caller-owned transaction commits. Failures do not roll back the created
+  records.
+  - **Bugowner resolution**: if bugowner resolution fails (IBS
     unreachable, API error, timeout), log a warning and continue. The
     package addition is not rolled back. See
     `docs/features/packages/package-bugowner.md`: "Package addition to the
     ticket MUST NOT fail due to a bugowner resolution failure."
-  - **Step 8 (submission discovery enqueue)**: if the task enqueue fails
+  - **Submission discovery enqueue**: if the task enqueue fails
     (e.g., Redis unavailable), log a warning and continue. The periodic
     `SyncIbsRequests` (catch-up every 24h at 02:30 UTC) ensures
     eventual consistency.

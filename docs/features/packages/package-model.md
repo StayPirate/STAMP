@@ -334,7 +334,7 @@ regardless of the current affectedness status.
 | Eligible | Meaning |
 |----------|---------|
 | `true` | Product meets the CVSS threshold and lifecycle criteria for receiving the update |
-| `false` | Product does not meet the criteria (CVSS below threshold or Reactive LTSS phase) |
+| `false` | Product does not meet the criteria (CVSS below threshold or Reactive Support phase) |
 
 Eligibility is evaluated for all products regardless of affectedness
 status. It represents whether the product meets the CVSS threshold and
@@ -351,11 +351,11 @@ visible and correctable; silent omission of eligible products is not.
 
 **Eligibility rules** (evaluated in order):
 
-1. **Reactive LTSS override**: if the product is currently in the
-   Reactive LTSS phase (`end_of_ltss < today < end_of_reactive_ltss`),
+1. **Reactive Support override**: if the Product is currently in the
+   `reactive_support` lifecycle phase,
    `eligible = false` regardless of CVSS score.
-2. **Check CVSS threshold**: look up the product's `cvss_threshold` from
-   AIMAAS. If no entry exists, the threshold is implicitly 0 (all CVEs
+2. **Check CVSS threshold**: read `Product.cvss_threshold`, which is
+   synchronized from AIMAAS. NULL means an implicit threshold of 0 (all CVEs
    eligible).
 3. **Resolve the CVSS score**: via the Eligibility Score Resolution (see
    `docs/features/tickets/cvss-scoring.md`). Only the SUSE assessment of
@@ -975,7 +975,7 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
 **Important implementation notes**:
 
 - The parameter `include_reactive=1` MUST always be included to ensure
-  products in Reactive LTSS phase are returned.
+  Products in Reactive Support are returned.
 - Results are **paginated**. Sentinel must follow the `next` field and
   fetch **all pages** to get the complete list of tracks and products.
 - Each result contains a `(package, codestream)` pair with a `channel`
@@ -990,17 +990,15 @@ GET /api/v1/basic/maintainedpackage/?package={name}&include_reactive=1
    `reference` and the inferred `workflow_type` (if one does not already
    exist for this package + reference combination, including
    soft-deleted).
-3. For each `target` in `channel.targets`:
-   a. Look up the target in the `ProductRepository` table to find the
-      corresponding `Product`.
-   b. If a matching product is found, create a `TicketPackageProduct`
-      record linked to the `TicketPackageTrack` (if one does not already
-      exist, including soft-deleted).
-   c. Deduplicate by product: multiple targets from the same result may
-      map to the same product (one per architecture). Only one
-      `TicketPackageProduct` record per product per track is needed.
-4. If no matching product is found for a target, log a warning but do
-   not fail — the product may not yet be synced from SMELT.
+3. Resolve each `target` through `ProductRepository` without collapsing the
+   candidates to one Product. Repository names are not globally unique, so
+   one target can produce multiple candidate Products.
+4. The exact rules for current-versus-historical associations, selecting from
+   multiple candidate Products, unmatched targets, partially matched results,
+   and final Product deduplication remain to be completed in the Product
+   catalog contract. Package resolution MUST NOT assume a
+   one-target-to-one-Product relationship or create records before that
+   selection policy has been applied.
 
 ---
 
@@ -1105,7 +1103,7 @@ The following concerns are identical regardless of `workflow_type`:
 - `package_service` module — operates on `TicketPackageTrack` and
   `TicketPackageProduct`
 - Ticket status gates (Analysis → Analyzed → Resolved)
-- Product eligibility (CVSS threshold, Reactive LTSS phase)
+- Product eligibility (CVSS threshold, Reactive Support phase)
 - Soft-deletion and restore
 - UI — VA sees packages → tracks → products with no workflow distinction
 - Bugowner — `PackageBugowner` cache keyed by `package_name`; joined via
@@ -1583,7 +1581,7 @@ reverts to automatic:
   phase). The recalculation uses the Eligibility Score Resolution: only the
   SUSE assessment of the default CVSS version is considered. If not resolvable
   (including tickets without an associated CVE), the 10.0 fallback applies —
-  making the product eligible unless the Reactive LTSS override applies.
+   making the Product eligible unless the Reactive Support override applies.
 
 Both override and reset operations follow the same post-modification flow:
 
@@ -1779,9 +1777,9 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
 - `evaluate_lifecycle_transitions`: periodic task (daily at 04:00
-  UTC) that detects products currently in Reactive LTSS or EOL phase
+  UTC) that detects Products currently in Reactive Support or EOL phase
   with actionable `TicketPackageProduct` records and enqueues
-  re-evaluation. With the new model: Reactive LTSS sets
+  re-evaluation. Reactive Support sets
   `eligible = false` (status stays `AFFECTED`); EOL with `AFFECTED`
   status removes the product (soft-delete with system TicketAuditEvent); EOL
   with `ANALYSIS` status removes the product. Idempotent — operates on
@@ -1861,7 +1859,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — real-time
   IBS event consumption
 - `docs/features/packages/product-lifecycle-transitions.md` — EOL and
-  Reactive LTSS handling
+  Reactive Support handling
 - `docs/features/packages/package-bugowner.md` — bugowner resolution
 - `docs/features/platform/system-settings.md` — default CVSS version configuration
 - `docs/data-model.md` — full database schema

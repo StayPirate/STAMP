@@ -101,7 +101,6 @@ affected:
 
 - User lifecycle: `User.active` field, "inactive user", "active status"
   as a boolean attribute (identity domain)
-- Product lifecycle: `Product.active` field (product domain)
 - Assignee state: "inactive assignee" = user whose `active` field is
   `false` (ticket-mutations domain)
 - IBS request states: "open", "accepted", "declined" (IBS domain)

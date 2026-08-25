@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Define the automated behavior when a product transitions to the Reactive
-LTSS phase or reaches End of Life (EOL) while it has non-final
+Define the automated behavior when a Product transitions to the Reactive
+Support phase or reaches End of Life (EOL) while it has non-final
 `TicketPackageProduct` records in active tickets. This specification
 relies on the soft-deletion mechanism and track orphan cleanup invariants
 in `package_service` (defined in `docs/features/packages/package-service.md`
@@ -15,21 +15,18 @@ children.
 
 | Term | Definition |
 |------|------------|
-| **Lifecycle phase transition** | A product crossing a lifecycle date boundary (e.g., `today` exceeds `end_of_ltss`, moving from LTSS to Reactive LTSS) |
-| **EOL** | End of Life — a product that has passed all applicable lifecycle dates. Determined exclusively by AIMAAS lifecycle dates, NOT by the `active` flag from SMELT |
+| **Lifecycle phase transition** | A Product moving between the lifecycle phases derived from its AIMAAS date projection |
+| **EOL** | End of Life — the `eol` result of the lifecycle evaluator. Determined exclusively by AIMAAS lifecycle data, never by SMELT catalog presence |
 | **Orphan track** | A `TicketPackageTrack` with zero remaining active (non-soft-deleted) `TicketPackageProduct` records |
 | **Orphan package** | A `TicketPackage` with zero remaining active (non-soft-deleted) `TicketPackageTrack` records |
 
 ## EOL Determination
 
-The authoritative criterion for whether a product is EOL is **exclusively
-the lifecycle dates synced from AIMAAS**. A product is EOL when `today`
-has surpassed all applicable (non-null) lifecycle end dates (`end_of_gs`,
-`end_of_ltss`, `end_of_espos`, `end_of_reactive_ltss`).
-
-The `active = false` flag (set by `sync_smelt_products` when a product is
-no longer reported by SMELT) does NOT trigger EOL handling. That flag may
-reflect temporary SMELT data issues and is not a reliable EOL signal.
+The authoritative criterion for whether a Product is EOL is exclusively the
+lifecycle evaluator over AIMAAS-derived fields. Absence from a SMELT catalog
+snapshot does not trigger EOL handling. The exact date-boundary and
+unavailable-data rules remain to be completed; missing or inconsistent
+lifecycle data MUST NOT produce `eol` accidentally.
 
 ## Lifecycle Phase Detection
 
@@ -41,7 +38,7 @@ reflect temporary SMELT data issues and is not a reliable EOL signal.
 | Class name | `EvaluateLifecycleTransitions` |
 | Schedule | Daily at 04:00 UTC (`0 4 * * *`) |
 | Source | Local (no external source) |
-| Scope | Products in Reactive LTSS or EOL phase with actionable `TicketPackageProduct` records in active tickets |
+| Scope | Products in Reactive Support or EOL phase with actionable `TicketPackageProduct` records in active tickets |
 | Auth | N/A |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
@@ -51,17 +48,17 @@ Recommended to run after `sync_aimaas_lifecycle` and
 
 **Algorithm** (idempotent — no state, no cache):
 
-1. Find all products currently in **Reactive LTSS** phase
-   (`end_of_ltss < today < end_of_reactive_ltss`)
+1. Find all Products for which the lifecycle evaluator returns
+   `reactive_support`
    - For each: query `TicketPackageProduct` records with `eligible = true`
       and `is_eligible_override = false` in active tickets (status New,
       Analysis, or Analyzed)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
-2. Find all products currently in **EOL** phase (past all applicable
-   lifecycle dates)
+2. Find all Products for which the lifecycle evaluator returns `eol`
    - For each: query `TicketPackageProduct` records whose parent
-      `TicketPackageTrack` has status `AFFECTED` or `ANALYSIS` in active
+      `TicketPackageTrack` has status `AFFECTED` or `ANALYSIS` and
+      `deleted_at IS NULL`, and whose own `deleted_at IS NULL`, in active
       tickets (status New, Analysis, or Analyzed)
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
@@ -90,8 +87,8 @@ contract.
 
 **Scope**: extracts the ticket's `TicketPackageProduct` records and
 re-evaluates lifecycle phase and eligibility for each product. While
-the ticket was inactive, products may have transitioned between
-lifecycle phases (e.g., entered LTSS or reached end-of-life),
+the ticket was inactive, Products may have transitioned between lifecycle
+phases (e.g., entered Extended Support or reached end-of-life),
 affecting eligibility thresholds.
 
 **Detailed specification**: to be defined during implementation.
@@ -120,16 +117,18 @@ the query).
 
 For all `TicketPackageProduct` records referencing this product in active
 tickets whose parent `TicketPackageTrack` has a non-final status
-(`AFFECTED` or `ANALYSIS`):
+(`AFFECTED` or `ANALYSIS`) and `deleted_at IS NULL`, and whose own
+`deleted_at IS NULL`:
 
 - Soft-delete the product: call
   `package_service.soft_delete_ticket_package_product(record)` with a
-  `TicketAuditEvent` (`user_id = NULL`, `comment` includes `eol` reason)
+  `TicketAuditEvent` with `user_id = NULL`, `comment = NULL`, and `eol` in
+  the structured `detail.reason` field
 
 Products under tracks with a final status (`NOT_AFFECTED`, `FIXED`,
 `WONT_FIX`) are not modified.
 
-#### Reason: `threshold_change`
+#### Reason: `threshold`
 
 For all `TicketPackageProduct` records referencing this product in active
 tickets: re-evaluate eligibility based on the new threshold value.
@@ -141,7 +140,7 @@ CVSS-triggered eligibility recalculation is executed synchronously and
 inline by `ticket_mutations` within the CVSS mutation transaction. See
 [`cvss-scoring.md`](../tickets/cvss-scoring.md) (Recalculation Chain,
 step 2) for details. This sub-task handles exclusively
-lifecycle-triggered re-evaluation (`reactive_ltss`, `threshold_change`,
+lifecycle-triggered re-evaluation (`reactive_ltss`, `threshold`,
 `eol`).
 
 ## Orphan Cleanup
@@ -166,13 +165,16 @@ effectively excluded via the hierarchical exclusion model (see
 All automated transitions and soft-deletions produce `TicketAuditEvent`
 records with `user_id = NULL` (system action).
 
-| Action | `event_type` | `old_value` | `new_value` | `comment` |
-|--------|--------------|-------------|-------------|-----------|
-| Product eligibility set to false (Reactive LTSS) | `product_eligibility_changed` | `true` | `false` | `track_name package_name product_id reactive_ltss` |
-| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | Product display name | `NULL` | `track_name package_name product_id eol` |
-| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | Product display name | `NULL` | `track_name package_name product_id eol` |
-| Track soft-deleted (orphan) | `track_excluded` | Track reference | `NULL` | `track_name package_name no_products_remaining` |
-| Package soft-deleted (orphan) | `package_excluded` | Package name | `NULL` | `package_name no_tracks_remaining` |
+| Action | `event_type` | `old_value` | `new_value` | `detail.reason` |
+|--------|--------------|-------------|-------------|-----------------|
+| Product eligibility set to false (Reactive Support) | `product_eligibility_changed` | `true` | `false` | `reactive_ltss` |
+| Product soft-deleted (AFFECTED, EOL) | `product_excluded` | Product display name | `NULL` | `eol` |
+| Product soft-deleted (ANALYSIS, EOL) | `product_excluded` | Product display name | `NULL` | `eol` |
+| Track soft-deleted (orphan) | `track_excluded` | Track reference | `NULL` | `orphan_cleanup` |
+| Package soft-deleted (orphan) | `package_excluded` | Package name | `NULL` | `no_tracks_remaining` |
+
+The `comment` field is NULL for these events. Other required keys in
+`detail` follow `docs/features/tickets/ticket-audit-log.md`.
 
 **Event types used**: `product_eligibility_changed` (existing),
 `product_excluded`, `track_excluded`, and `package_excluded` (existing
@@ -186,8 +188,8 @@ the field contract.
 
 ### `sync_aimaas_thresholds`
 
-Existing behavior unchanged: when a product's threshold changes, enqueue
-`re_evaluate_product_eligibility(product_id, reason="threshold_change")`.
+When a Product's threshold changes, enqueue
+`re_evaluate_product_eligibility(product_id, reason="threshold")`.
 
 ### `sync_aimaas_lifecycle`
 

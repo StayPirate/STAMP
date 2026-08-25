@@ -15,9 +15,10 @@ detection across all tickets.
 A SUSE product with its own repositories from which end users receive
 updates via the package manager. Products include base products (e.g.,
 SLES 15 SP6), LTSS variants (e.g., SLES-LTSS 15-SP4), ESPOS variants
-(e.g., HPC ESPOS 15-SP5), and SAP variants. Each variant is a
-**separate product** in both SMELT and AIMAAS, with its own CPE
-identifier.
+(e.g., HPC ESPOS 15-SP5), and SAP variants. Each variant exposed by
+SMELT is a separate Sentinel Product identified by its CPE. AIMAAS
+coverage is independent: absence from AIMAAS does not remove, deactivate,
+or otherwise change the SMELT-backed Product identity.
 
 A product receives binary packages from one or more tracks. The same
 track can feed multiple products. The mapping between a track's packages
@@ -41,25 +42,24 @@ provides:
 
 ### Product Lifecycle Phases
 
-Products go through different support phases. The applicable phase
-depends on the product type:
+Sentinel derives one of five lifecycle phases from the AIMAAS projection:
 
-| Phase | Determined by | Description |
-|-------|--------------|-------------|
-| **Pre-release** | `today < fcs` | Not yet shipped to customers |
-| **General Support** | `fcs <= today < end_of_gs` | Full support, all CVEs eligible |
-| **ESPOS** | `end_of_gs <= today < end_of_espos` | Extended Service Pack Overlap Support |
-| **LTSS** | `end_of_gs <= today < end_of_ltss` | Long Term Service Pack Support |
-| **Reactive LTSS** | `end_of_ltss <= today < end_of_reactive_ltss` | On-demand support only |
-| **EOL** | Past all applicable dates | End of life, no updates |
+| Value | Description |
+|-------|-------------|
+| `pre_release` | The Product has not reached first customer shipment |
+| `general_support` | The Product is in General Support |
+| `extended_support` | The Product is in LTSS, ESPOS, or their overlapping interval |
+| `reactive_support` | The Product is in Reactive LTSS |
+| `eol` | The Product has reached end of life |
 
-Not all products go through all phases. Some products have ESPOS but no
-LTSS (e.g., SAP Application modules), some have both (e.g., HPC), some
-have neither. LTSS variants (separate products) may have a Reactive LTSS
-phase after their LTSS phase ends.
+Sentinel does not distinguish LTSS from ESPOS because they have equivalent
+platform behavior. The exact boundary inclusivity, precedence, and outcome
+for missing or inconsistent lifecycle dates are not yet defined. Until that
+contract is completed, missing lifecycle data MUST NOT be interpreted as
+`eol`.
 
 For automated actions triggered by lifecycle phase transitions (Reactive
-LTSS eligibility changes, EOL product removal), see
+Support eligibility changes, EOL Product removal), see
 `docs/features/packages/product-lifecycle-transitions.md`.
 
 ---
@@ -75,6 +75,12 @@ Represents a SUSE product (base products, LTSS variants, ESPOS variants,
 etc.). Each variant is a separate product with its own CPE. Synced from
 SMELT and enriched with lifecycle data from AIMAAS.
 
+The internal UUIDv7 `id` is the database primary key. CPE is the canonical
+Product identity and is unique and non-null. SMELT IDs are not persisted;
+`name`, `version`, and `display_name` are descriptive attributes and are not
+identity constraints. A Product absent from a later complete SMELT snapshot
+is retained. Catalog presence and lifecycle are independent.
+
 See `docs/data-model.md` for the full column listing.
 
 ### ProductRepository
@@ -84,6 +90,11 @@ Maps SMELT repository project names to products. Used to resolve the
 local Product records. A single product typically has multiple repository
 entries (one per architecture, plus separate entries for
 `SUSE:Products:*` and `SUSE:Updates:*` namespaces).
+
+Repository names are not globally unique. An association is unique by
+`(product_id, repo_name)`. Associations absent from a later complete catalog
+snapshot are retained because existing ticket records may still require them
+for Product-level release detection.
 
 See `docs/data-model.md` for the full column listing.
 
@@ -97,16 +108,30 @@ for the general SMELT description.
 
 - **Endpoint**: `GET /api/v1/basic/products/` (paginated)
 - **Base URL**: `https://smelt.suse.de/api`
-- **Response fields used**: `id`, `name`, `version`, `cpe`, `friendly_name`, `repos`
+- **Response fields used**: `name`, `version`, `cpe`, `friendly_name`, `repos`
 - **Sync behavior**:
-  1. Iterate all pages of the products endpoint
-  2. For each product, upsert a `Product` record using `smelt_id` as the
-     match key, setting `name`, `version`, `cpe`, and `display_name`
-     (from SMELT's `friendly_name` field)
-  3. For each product, replace the `ProductRepository` entries with the
-     current `repos` list from SMELT
-  4. Products no longer reported by SMELT are marked `active = false`
-  5. Update `smelt_synced_at` timestamp on each synced product
+  1. Fetch every page before opening a database transaction. Pagination MUST
+     NOT downgrade HTTPS or send requests or credentials to an untrusted
+     origin. The exact continuation-URL validation and normalization rules
+     remain to be completed.
+  2. Normalize and validate the complete snapshot before publication. Empty,
+     partial, truncated, or inconsistent responses MUST NOT be published.
+     The exact validation criteria remain to be completed.
+  3. Capture one UTC `snapshot_at` value for the complete snapshot.
+  4. In one database transaction, upsert Products by exact CPE and
+     ProductRepository associations by `(product_id, repo_name)`. Assign the
+     same `snapshot_at` to every observed row's `catalog_last_seen_at`.
+     The Product upsert modifies only the SMELT-owned descriptive fields
+     (`name`, `version`, `display_name`) and `catalog_last_seen_at`; it MUST
+     NOT clear or overwrite AIMAAS-owned lifecycle or threshold fields.
+  5. Commit once. Any database error rolls back the complete publication.
+     Network I/O MUST NOT occur while the transaction is open.
+
+Products and associations not observed in the new snapshot are retained with
+their previous `catalog_last_seen_at`. The applied snapshot is identified by
+`MAX(Product.catalog_last_seen_at)`; a row belongs to that snapshot when its
+`catalog_last_seen_at` equals that value. Snapshot identity does not depend on
+`FetcherRun` finalization, which occurs in a separate transaction.
 
 ---
 
@@ -119,21 +144,28 @@ Store Configuration.
 
 ### Product Lifecycle Sync (periodic)
 
-- **Endpoint**: `GET /api/entity/products/{slug}` (individual product)
-  or `GET /api/entity/products?limit=100&page={n}` (paginated list)
+- **Endpoint**: `GET /api/entity/products/{slug}` (individual Product)
+  or `GET /api/entity/products?size=100&page={n}` (paginated list)
 - **Base URL**: `https://aimaas.suse.de/api`
-- **Matching**: AIMAAS products are matched to local `Product` records
-  via `cpe`. Both SMELT and AIMAAS use identical CPE identifiers.
+- **Matching**: AIMAAS products are matched to local `Product` records by
+  exact CPE. The two catalogs have different coverage; unmatched Products are
+  expected and MUST NOT be matched heuristically by name or version.
 - **Response fields used**: `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`,
   `end_of_espos`, `end_of_reactive_ltss`
-- **Note**: the list endpoint returns a subset of fields (no `cpe`, no
-  lifecycle dates). To get full details, fetch each product individually
-  by slug, or use the list endpoint to discover slugs and then fetch
-  details.
 - **Sync behavior**:
-  1. For each local `Product` with a known CPE, find the matching
-     AIMAAS product and update lifecycle date fields
-  2. Update `aimaas_synced_at` timestamp
+  1. Resolve AIMAAS Product details to an exact CPE match.
+  2. Set `first_customer_ship_date` from `fcs` and
+     `general_support_end_date` from `end_of_gs`.
+  3. Set `extended_support_end_date` to the latest non-null value of
+     `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
+  4. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
+
+The lifecycle synchronization modifies only the four lifecycle date columns;
+it does not modify SMELT-owned descriptive or catalog-observation fields, or
+`cvss_threshold`.
+
+The Product discovery/detail strategy, complete-snapshot behavior, clearing
+rules, and freshness semantics remain to be completed.
 
 ### CVSS Threshold Sync (periodic)
 
@@ -146,9 +178,10 @@ Store Configuration.
   1. Fetch all cvss-threshold entries
   2. For each entry, resolve the `product` ID to a CPE (via AIMAAS
      products endpoint)
-  3. Update the corresponding local `Product.cvss_threshold`
-  4. If a product's threshold changes, re-evaluate eligibility for all
-     active tickets referencing that product
+  3. Update only the corresponding local `Product.cvss_threshold`; do not
+     modify catalog-observation, descriptive, or lifecycle date fields.
+  4. If a Product's threshold changes, trigger the eligibility re-evaluation
+     defined in `product-lifecycle-transitions.md`.
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
 
@@ -173,8 +206,7 @@ List all products synced from SMELT. Paginated.
 | `sort_by` | string | `name` | Sort field. Valid values: `name`, `version`, `cpe`, `created_at` |
 | `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
 | `search` | string | -- | Filter by name (case-insensitive substring match) |
-| `active` | boolean | -- | Filter by active status. If omitted, returns all products |
-| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `espos`, `ltss`, `reactive_ltss`, `eol`. Multiple values use OR semantics (e.g., `?lifecycle_phase=general_support&lifecycle_phase=ltss`) |
+| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `extended_support`, `reactive_support`, `eol`. Multiple values use OR semantics |
 
 **Response** (200 OK):
 
@@ -187,11 +219,9 @@ List all products synced from SMELT. Paginated.
       "version": "15 SP6",
       "cpe": "cpe:/o:suse:sles:15:sp6",
       "display_name": "SLES 15 SP6",
-      "active": true,
       "lifecycle_phase": "general_support",
       "cvss_threshold": null,
-      "smelt_synced_at": "2025-01-15T02:00:00Z",
-      "aimaas_synced_at": "2025-01-15T03:00:00Z"
+      "catalog_last_seen_at": "2025-01-15T02:00:00Z"
     }
   ],
   "meta": {
@@ -223,7 +253,10 @@ List all products synced from SMELT. Paginated.
 
 #### Algorithm
 
-TBD
+The approved publication algorithm is defined in [SMELT Integration --
+Product Sync](#smelt-integration----product-sync). Complete response,
+pagination, validation, readiness, and recovery behavior remains to be
+defined.
 
 #### Error Handling
 
@@ -247,7 +280,9 @@ TBD
 
 #### Algorithm
 
-TBD
+The approved field projection is defined in [Product Lifecycle Sync
+(periodic)](#product-lifecycle-sync-periodic). Discovery, clearing,
+freshness, publication, and recovery behavior remains to be defined.
 
 #### Error Handling
 
@@ -271,7 +306,9 @@ TBD
 
 #### Algorithm
 
-TBD
+The approved matching and column-ownership behavior is defined in [CVSS
+Threshold Sync (periodic)](#cvss-threshold-sync-periodic). Complete snapshot,
+clearing, recalculation, and recovery behavior remains to be defined.
 
 #### Error Handling
 
@@ -285,7 +322,8 @@ TBD
 
 ## Security
 
-- Listing products is publicly accessible (no authentication required)
+- Listing Products is public with optional authentication. Selected invalid
+  credentials are rejected according to `docs/api-spec.md`.
 - SMELT and AIMAAS base URLs are configured via environment variables
   (`SMELT_API_URL`, `AIMAAS_API_URL`). See [Configuration](#configuration)
 - Authentication requirements for SMELT and AIMAAS are TBD (see
@@ -305,13 +343,16 @@ TBD
 
 - `docs/api-spec.md` -- global API conventions (envelope format, error
   codes, pagination, shared 422 responses)
+- `docs/data-sources.md` -- Product source authority and external-service
+  access details
 - `docs/data-model.md` -- full database schema (Product,
   ProductRepository tables)
 - `docs/features/packages/package-model.md` -- package affectedness
   model; eligibility rules consume product lifecycle and threshold data
 - `docs/features/packages/product-lifecycle-transitions.md` -- EOL and
-  Reactive LTSS automated actions
+  Reactive Support automated actions
 - `docs/features/tickets/cvss-scoring.md` -- CVSS resolution cascade
   used for threshold comparison
 - `docs/features/platform/system-settings.md` -- default CVSS version
   configuration
+- `docs/features/platform/networking.md` -- HTTP client and TLS trust store

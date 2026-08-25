@@ -40,7 +40,7 @@ Index of all feature specification domains.
 - [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
 - [git-track-release-detection.md](packages/git-track-release-detection.md) — Git track-level release detection
 - [git-product-release-detection.md](packages/git-product-release-detection.md) — Git product-level release detection
-- [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive LTSS / EOL automation
+- [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive Support / EOL automation
 - [product-catalog.md](packages/product-catalog.md) — Product/ProductRepository, SMELT/AIMAAS sync
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync
 - [package-bugowner.md](packages/package-bugowner.md) — IBS bugowner resolution and cache

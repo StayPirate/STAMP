@@ -667,7 +667,7 @@ change (see `docs/features/platform/system-settings.md`).
 5. Re-evaluate `eligible` for each `TicketPackageProduct` linked to the
    ticket (including soft-deleted products — see `package-model.md` Design Decision 8) using the eligibility score:
    - Products with `is_eligible_override = true` are not modified
-   - Products in Reactive LTSS phase remain `eligible = false` regardless
+    - Products in Reactive Support remain `eligible = false` regardless
 6. Create `TicketAuditEvent` records for each change:
     - `severity_changed` if severity changed AND
       `suppress_severity_event` is `False`
