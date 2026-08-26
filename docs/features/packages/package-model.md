@@ -183,17 +183,19 @@ An internal SUSE aggregator service (REST API at `smelt.suse.de/api`)
 that provides:
 
 1. **Product listing** (`v1/basic/products/` relative to the configured SMELT
-   API prefix): paginated list of
-   all SUSE products with name, version, CPE, and repository project
-   names. See `docs/features/packages/product-catalog.md` (SMELT
-   Integration) for the product sync specification.
+   API prefix): paginated list of all SUSE products with name, version,
+   CPE, and repository project names. See
+   `docs/features/packages/product-catalog.md` (SMELT Integration) for the
+   product sync specification.
 2. **Per-package maintenance info**
-   (`v1/basic/maintainedpackage/` relative to the configured SMELT API prefix):
-   given a source package name,
-   returns the list of tracks where the package is maintained and the
-   target repositories (which map to products).
+   (`experimental/v2/maintained/` relative to the configured SMELT API
+   prefix): given a source package name, returns the list of codestreams
+   where the package is maintained and the Products it is shipped to,
+   with direct CPE identification and workflow type
+   (`product_definition.type`: `channel` for IBS, `compose` for git).
 
-SMELT reads from IBS, channel files, and other sources internally.
+SMELT reads from IBS, Git Product catalogs, Product build SBOM snapshots,
+and other sources internally.
 
 ### AIMAAS
 
@@ -256,7 +258,7 @@ by the system based on IBS SR/RR tracking data.
 
 The track is identified by `reference` (a string), not by a foreign key.
 Tracks are not maintained as a separate table — they are discovered
-per-package via the SMELT `maintainedpackage` endpoint.
+per-package via the SMELT v2 maintained-package endpoint.
 
 ### TicketPackageProduct
 
@@ -957,10 +959,10 @@ The following scenarios invoke `add_package_to_ticket`:
    appeared on SMELT since the deletion are picked up by subsequent
    automatic calls to `add_package_to_ticket` (CVE ingestion, release
    detection Case B) — no explicit call is needed at restore time.
-6. **Product repository backfill**: after a successful SMELT Product catalog
-   sync makes at least one repository association newly current, a system
-   workflow calls `add_package_to_ticket` for each active, non-soft-deleted
-   package on active tickets. See `product-catalog.md` (Product Repository
+6. **Product catalog backfill**: after a successful SMELT Product catalog
+   sync makes at least one Product newly current, a system workflow calls
+   `add_package_to_ticket` for each active, non-soft-deleted package on
+   active tickets. See `product-catalog.md` (Product Catalog
    Backfill).
 
 ### Package Management Constraints
@@ -987,82 +989,102 @@ effectively excluded via the hierarchy.
 
 ### SMELT Query for Package Resolution
 
-When `add_package_to_ticket` resolves a package, it calls:
+When `add_package_to_ticket` resolves a package, it calls the SMELT v2
+maintained-package endpoint:
 
 ```
-v1/basic/maintainedpackage/?package={name}&include_reactive=1
+experimental/v2/maintained/?package={url_encode(name)}&include_reactive_ltss=true
 ```
 
-**Important implementation notes**:
+The `package` value is URL-encoded before interpolation. The response is a
+single non-paginated JSend envelope.
 
-- The parameter `include_reactive=1` MUST always be included to ensure
-  Products in Reactive Support are returned.
-- Continuation metadata must preserve the immutable `package={name}`,
-  `include_reactive=1`, and `page_size=100` query parameters; only `page`
-  varies. The package value is compared after URL decoding.
-- Results are **paginated**. Sentinel fetches every page under the shared
-  origin and pagination contract in `product-catalog.md` (SMELT Integration);
-  it never follows `next` as a request destination.
-- Each result contains a `(package, codestream)` pair with a `channel`
-  object. The `channel.targets` array contains objects with a string `target`
-  repository project name and a string `status`.
-- A non-empty response row is valid only when `package`, `codestream`, and
-  `channel.status` are non-empty strings, `codestream` fits the persisted
-  track-reference length, `package` exactly and case-sensitively equals the
-  requested source package name, and `channel.targets` is a non-empty array.
-  Every target must be an object containing non-empty string `target` and
-  `status` values, with `target` fitting the persisted repository-name length.
-  An invalid row or target rejects the complete response and raises
-  `SmeltUnavailableError`; rows are never skipped.
-- Live responses contain both `enabled` and `reactive` channel statuses and
-  both `enabled` and `disabled` target statuses. These values do not filter
-  package resolution: all returned target objects participate. In particular,
-  Reactive mappings may have only `disabled` targets.
-- The same `(package, codestream)` may occur in multiple response rows. Union
-  every row's targets by codestream before resolving Products; creating or
-  finding the track for an earlier row MUST NOT skip targets from later rows.
+**Envelope and error handling**:
+
+- A successful response has `{"status": "success", "data": [...]}` where
+  `data` is an array of codestream entries.
+- A package-not-found response has `{"status": "error", "data": "Package X
+  not found"}`. This is semantically equivalent to zero results and maps to
+  `PackageNotFoundInSmeltError`.
+- Any non-200 HTTP status, non-JSON body, or response where `status` is not
+  `"success"` or `"error"` maps to `SmeltUnavailableError`.
 - Live verification confirmed that the `package` filter is case-sensitive:
   canonical `kernel-default` returned results, while case variants returned
-  the valid zero-result envelope. Sentinel does not normalize package-name
-  case before the query.
+  the error envelope. Sentinel does not normalize package-name case before
+  the query.
 
-**Processing each result**:
+**Entry validation**:
 
-1. After retrieving and validating all pages, require a ready Product catalog
-   as defined in `product-catalog.md`. If no complete Product snapshot has
-   committed, raise `ProductCatalogNotReadyError` before querying Product
-   mappings or modifying ticket data.
-2. Infer `workflow_type` from the track reference (e.g., IBS codestreams
-   match `^(SUSE|openSUSE):.*`).
-3. Create a `TicketPackageTrack` record with the `codestream` value as
-   `reference` and the inferred `workflow_type` (if one does not already
-   exist for this package + reference combination, including
-   soft-deleted).
-4. Resolve each target object's `target` value through current
-   `ProductRepository` associations as defined in `product-catalog.md`.
-   Retained historical associations are excluded.
-5. Include every Product reached through a current association. Repository
-   names are not globally unique, so one target may resolve to multiple
-   Products.
-6. Deduplicate the final Product set per track. Multiple targets, including
-   architecture-specific repositories, may resolve to the same Product.
-7. Ignore a target with no current match and continue processing other
-   targets. If a track has no resolved Products after this step, omit that
-   track. If the complete SMELT response has no resolved Product, fail with
+- The `include_reactive_ltss=true` parameter MUST always be included to
+  ensure Products in Reactive LTSS are returned.
+- Each entry in `data` must have a `codestream` object with a non-empty
+  string `name` that fits the persisted track-reference column length, and a
+  non-empty `targets` array.
+- Each target must have `product.cpe` as a non-empty string,
+  `product.friendly_name` as a non-empty string, and
+  `product_definition.type` with a value of `"channel"` or `"compose"`.
+- An invalid entry or target rejects the complete response and raises
+  `SmeltUnavailableError`; entries are never skipped.
+
+**Consumed fields** (minimal integration):
+
+| Field | Purpose |
+|-------|---------|
+| `data[].codestream.name` | Track reference (`TicketPackageTrack.reference`) |
+| `data[].targets[].product.cpe` | Product match key against local `Product.cpe` |
+| `data[].targets[].product_definition.type` | Workflow type: `channel` → `ibs`, `compose` → `git` |
+| `data[].targets[].product.friendly_name` | Logging and warning messages |
+
+All other response fields (`codestream.url`, `product.id`,
+`product.support_status`, `product_definition.name`, `product_definition.url`,
+`binary_packages`, `repository`) are not consumed by Sentinel.
+
+**Deduplication**:
+
+The v2 endpoint aggregates results from both IBS channel records and
+Git/SLFO compose records. During a transitional period, some Products may
+appear under two different codestreams: once via a synthetic channel file
+and once via the real compose resolution. When the same Product CPE appears
+in targets under both a `channel` and `compose` entry, the `channel` entry
+for that Product is discarded and only the `compose` entry is retained. This
+deduplication is a no-op once the transitional synthetic channel files are
+removed by SMELT.
+
+**Processing**:
+
+1. Retrieve and validate the complete response as described above.
+2. Require a ready Product catalog as defined in `product-catalog.md`. If no
+   complete Product snapshot has committed, raise
+   `ProductCatalogNotReadyError` before matching Product CPEs or modifying
+   ticket data.
+3. Collect all `(codestream.name, product.cpe, product_definition.type)`
+   triples from the response. Apply the deduplication rule above.
+4. For each remaining triple:
+   a. Look up the Product by exact `Product.cpe` match in the local catalog.
+      If no local Product matches, ignore this triple and continue.
+   b. Determine `workflow_type` from `product_definition.type`: `"channel"`
+      → `ibs`, `"compose"` → `git`.
+   c. Create or find a `TicketPackageTrack` with `reference =
+      codestream.name` and the determined `workflow_type` (if one does not
+      already exist for this package + reference combination, including
+      soft-deleted).
+   d. Create a `TicketPackageProduct` linking the track to the matched
+      Product (if one does not already exist).
+5. If no Product was resolved across the entire response, fail with
    `PackageTargetsUnresolvedError`; no package-tree record is created.
 
-When at least one target or track is omitted from an otherwise successful
+When at least one Product CPE has no local match in an otherwise successful
 resolution, log a WARNING-level `package_target_resolution_partial` event with
-the package name, unmatched target names, and omitted track references. This
-accepted partial result does not change the API response shape.
+the package name and unmatched CPEs. This accepted partial result does not
+change the API response shape.
 
-For a package tree that is created partially, a newly introduced target may be
-omitted until the Product catalog sync publishes its repository association
-and invokes Product repository backfill. A zero-resolution failure creates no
+For a package tree that is created partially, a newly introduced Product may
+be omitted until the Product catalog sync adds the corresponding `Product` row
+and invokes Product catalog backfill. A zero-resolution failure creates no
 `TicketPackage` and therefore cannot be discovered by backfill; recovery
-requires a later manual or automatic invocation. A target that remains absent
-from the current Product catalog is intentionally ignored on every invocation.
-Sentinel never creates a Product from a target string or falls back to
+requires a later manual or automatic invocation. A CPE that remains absent
+from the local Product catalog is intentionally ignored on every invocation.
+Sentinel never creates a Product from a CPE string or falls back to
 name/version matching.
 
 ---
@@ -1076,7 +1098,7 @@ types are defined:
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | VA adds or completes package tree | `package_added` | VA user | `package_name` |
-| Package auto-added or completed (CVE ingestion, release detection, or Product repository backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
+| Package auto-added or completed (CVE ingestion, release detection, or Product catalog backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
 | VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
@@ -1095,8 +1117,8 @@ types are defined:
   provides context for automatic additions.
 - Exactly one `package_added` event is created when an invocation creates at
   least one package, track, or Product record. A completely no-op invocation
-  creates no `package_added` event. Product repository backfill uses the fixed
-  comment `Product repository backfill`.
+  creates no `package_added` event. Product catalog backfill uses the fixed
+  comment `Product catalog backfill`.
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
   `old_value`, `new_value`, and `comment` fields as strings. See
@@ -1182,7 +1204,7 @@ The following concerns are workflow-specific (service layer only):
 
 | Concern | IBS (`ibs`) | Git (`git`) |
 |---------|-------------|-------------|
-| Track + product resolution | SMELT `maintainedpackage` | SMELT (same API, future) |
+| Track + product resolution | SMELT v2 `maintained` (same endpoint) | SMELT v2 `maintained` (same endpoint) |
 | Source retrieval for analysis | IBS API | src.suse.de git API |
 | Release detection (track) | IBS MD5 diff | TBD |
 | Release detection (product) | updateinfo.xml | TBD |
@@ -1233,7 +1255,7 @@ behavior.
 | `package_name` | string | Yes | Max 255 chars. Pattern: `^[a-zA-Z0-9][a-zA-Z0-9._+\-]{0,253}[a-zA-Z0-9]$` (min 2 chars). Only alphanumeric, dots, underscores, hyphens, and plus signs allowed. | Source package name |
 
 The `package_name` value is URL-encoded before interpolation in the SMELT
-API query (`v1/basic/maintainedpackage/?package={url_encode(name)}`).
+API query (`experimental/v2/maintained/?package={url_encode(name)}`).
 This prevents injection of URL control characters regardless of validation.
 
 **Response** (201 Created):
@@ -1901,10 +1923,12 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
       product-level)
 - [ ] Bugowner resolution for git workflow (CODEOWNERS? maintainer file?)
 - [ ] Real-time event source for git workflow (webhook? polling?)
-- [ ] SMELT API evolution — confirm that `maintainedpackage` will return
-      git branches alongside codestreams
-- [ ] Inference heuristic for workflow_type — define the exact pattern
-      matching rules
+- [x] SMELT API evolution — the v2 `maintained` endpoint returns both IBS
+      channel and Git/SLFO compose records with `product_definition.type`
+      distinguishing the two workflows
+- [x] Inference heuristic for workflow_type — resolved: use
+      `product_definition.type` from SMELT v2 (`channel` → `ibs`,
+      `compose` → `git`)
 - [ ] Submission tracking (SR/RR) equivalent for git workflow, if any
 
 ---

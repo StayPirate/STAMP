@@ -374,7 +374,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 | `tracks` | `list[TrackData]` | Yes | Track/product data from SMELT resolution |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 | `audit_comment` | `str \| None` | No | System-generated context for `package_added`; `NULL` for user actions |
-| `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product repository backfill |
+| `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product catalog backfill |
 
 **Preconditions**:
 
@@ -670,30 +670,29 @@ async def add_package_to_ticket(
 
 **Behavior**:
 
-1. Query SMELT to resolve all currently maintained tracks and products
-   for the given package name (external I/O — no lock held).
-   After the complete response is retrieved and validated, verify that a
-   complete Product catalog snapshot exists; if none exists, raise
-   `ProductCatalogNotReadyError` before querying Product mappings or mutating
-   ticket data. Error precedence is defined in `product-catalog.md` (Catalog
-   Readiness and Freshness). Resolve returned target names through only current
-   `ProductRepository` associations before the Ticket lock is acquired.
-   Preserve every Product reached through a current association, ignore
-   unmatched targets, omit tracks with no resolved Products, and deduplicate
-   Products per track as specified in `package-model.md`. Historical
-   associations are not used. If resolution is partial, emit the required
-   structured WARNING before mutation.
-2. If SMELT is unreachable, returns a non-success HTTP status, or returns a
-   response that fails the shared envelope, pagination, continuation-metadata,
-   or `maintainedpackage` row validation contract,
+1. Query the SMELT v2 maintained-package endpoint to resolve all currently
+   maintained tracks and products for the given package name (external I/O —
+   no lock held). After the complete response is retrieved and validated,
+   verify that a complete Product catalog snapshot exists; if none exists,
+   raise `ProductCatalogNotReadyError` before matching Product CPEs or
+   mutating ticket data. Error precedence is defined in `product-catalog.md`
+   (Catalog Readiness and Freshness). Match returned product CPEs directly
+   against local `Product.cpe` before the Ticket lock is acquired. Ignore
+   CPEs with no local match, apply the compose-over-channel deduplication
+   rule, and determine `workflow_type` from `product_definition.type` as
+   specified in `package-model.md` (SMELT Query for Package Resolution). If
+   resolution is partial, emit the required structured WARNING before
+   mutation.
+2. If SMELT is unreachable, returns a non-200 HTTP status, or returns a
+   response that fails the v2 envelope or entry validation contract,
    raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
    No records are created.
-3. If SMELT returns a successful response but with zero tracks, raise an
+3. If SMELT returns a package-not-found error (`status = "error"`), raise an
    application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
    No records are created.
-4. If SMELT returned tracks but no Product resolves across the complete
-   response, raise `PackageTargetsUnresolvedError`. No records are created.
-5. Infer `workflow_type` for each resolved track.
+4. If SMELT returned entries but no Product CPE resolves to a local Product
+   across the complete response, raise `PackageTargetsUnresolvedError`. No
+   records are created.
 6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
 7. If step 6 created at least one package, track, or Product record, register
@@ -705,12 +704,12 @@ async def add_package_to_ticket(
 8. Return an `AddPackageResult` with creation/skip counts.
 
 `audit_comment` is internal system context for `package_added`. API callers
-always pass `NULL`. Product repository backfill passes
-`Product repository backfill`. Other automatic callers pass the contextual
+always pass `NULL`. Product catalog backfill passes
+`Product catalog backfill`. Other automatic callers pass the contextual
 comment defined by their owning workflow.
 
 `active_ticket_only` is false for normal API and automatic callers. Product
-repository backfill sets it to true so a Ticket that became inactive after
+catalog backfill sets it to true so a Ticket that became inactive after
 batch selection is skipped under the Ticket row lock.
 
 **Error handling**:
@@ -1004,7 +1003,7 @@ transitions. The test must cover:
   conditions, confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
 - `docs/features/packages/product-catalog.md` — current repository mappings
-  and Product repository backfill
+  and Product catalog backfill
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
 - `docs/features/packages/package-model.md` — track/product concepts,

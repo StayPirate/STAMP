@@ -196,7 +196,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 - **SMELT targets unresolved** (during Case B/C package resolution): handle
   `PackageTargetsUnresolvedError` identically to SMELT unavailability: log
   WARNING, call `record_failed()`, and skip package addition. No
-  `TicketPackage` exists for Product repository backfill to discover, and the
+  `TicketPackage` exists for Product catalog backfill to discover, and the
   MD5 is already cached, so recovery requires a later CVE-ingestion package
   resolution, manual VA addition, or operator-triggered rerun. This accepted
   limitation is surfaced by the fetcher's failed-item metrics and `partial`

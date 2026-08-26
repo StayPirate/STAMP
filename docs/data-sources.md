@@ -565,7 +565,7 @@ specification at `/openapi.json` and interactive documentation at `/docs`.
 |---|---|
 | `embedded` | embedded-code-wg-data Git repository (see above) — provides the embedded library mapping |
 | `channels` | `SUSE:Channels` IBS project — channel metadata (`_channel` files) |
-| `smelt` | SMELT `/maintainedpackage/` API — maintained package catalog |
+| `smelt` | SMELT `/maintained/` API (v2) — maintained package and product resolution |
 | `buildfiles` | OBS/IBS `_buildinfo` and `_buildenv` files — build-time dependency data |
 | `project` | Direct IBS/OBS project tracking (e.g., `SUSE:SLE-15-SP6:Update`, `SUSE:SLFO:Main`, `openSUSE:Factory`) |
 
@@ -668,36 +668,37 @@ attribute it exposes.
 
 - **Relevant data**: Product catalog (name, version, CPE identifier,
   associated repository project names) and per-package maintenance
-  information (which codestreams contain a given package and which target
-  repositories it is published to)
+  information (which codestreams contain a given package and which
+  Products it is shipped to, with direct CPE identification)
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
   - `v1/basic/products/` relative to the API prefix (paginated) — product
     listing
-  - `v1/basic/maintainedpackage/?package={name}&include_reactive=1`
-    relative to the API prefix
-    (paginated) — current channel-backed codestream and repository mapping for
-    a package
-  - `GET /api/experimental/v2/maintained/?package={name}` — experimental
-    unified resolver that combines IBS channel records with Git/SLFO Product
-    SBOM records. Its Product definition metadata distinguishes `channel`
-    from `compose` sources. This endpoint is an observed SMELT capability,
-    not part of Sentinel's current feature contract.
+  - `experimental/v2/maintained/?package={name}&include_reactive_ltss=true`
+    relative to the API prefix (non-paginated) — unified resolver that
+    combines IBS channel records with Git/SLFO Product SBOM records. Returns
+    codestream-grouped entries with direct Product CPE, workflow type
+    (`product_definition.type`: `channel` or `compose`), and aggregated
+    targets. Sentinel consumes only the fields required for package
+    resolution (see `package-model.md`, SMELT Query for Package Resolution)
 - **Integration status**: **Active**. Sentinel periodically syncs the product
   catalog (`sync_smelt_products` fetcher) and queries package maintenance
   information on demand when adding packages to tickets. CPE identifiers
   from SMELT are the primary join key between Sentinel's product records and
   AIMAAS lifecycle data
-- **Contract characteristics**: Both current v1 endpoints use the pagination
-  envelope `count`, `total_pages`, `next`, `previous`, and `results`. SMELT
-  currently serializes continuation metadata with an HTTP URL even for HTTPS
-  requests; Sentinel constructs every page request from the configured HTTPS
-  API prefix and treats continuation URLs only as consistency metadata.
-  Product and maintained-package GET requests require no authentication.
+- **Contract characteristics**: The Product listing endpoint (`v1/basic/products/`)
+  uses the paginated envelope `count`, `total_pages`, `next`, `previous`, and
+  `results`; SMELT currently serializes continuation metadata with an HTTP URL
+  even for HTTPS requests; Sentinel constructs every page request from the
+  configured HTTPS API prefix and treats continuation URLs only as consistency
+  metadata. The maintained-package endpoint (`experimental/v2/maintained/`)
+  uses a JSend envelope `{status, data}` and returns all results in a single
+  non-paginated response. Both endpoints require no authentication.
 - **Source semantics**:
   - IBS package resolution originates from declarative `SUSE:Channels`
-    records. With Reactive LTSS explicitly requested, SMELT may also expose
-    selected records located in `SUSE:Channels:EOL`, but only when the linked
-    Product has an AIMAAS-derived Reactive LTSS status.
+    records. With Reactive LTSS explicitly requested
+    (`include_reactive_ltss=true`), SMELT also exposes selected records
+    located in `SUSE:Channels:EOL`, but only when the linked Product has an
+    AIMAAS-derived Reactive LTSS status.
   - Git/SLFO package resolution originates from the latest released Product
     SBOM snapshot and Product-compose metadata, not from `SUSE:Channels`.
   - Absence from one upstream catalog is not evidence that a Product is EOL,
@@ -1064,7 +1065,7 @@ feature documentation (not its implementation status):
 | `sync_nvd_cves` | NVD | Every 6 hours | API key (free, optional) | Without key: 5 req/30s; with key: 50 req/30s | CVE records, CVSS (NVD Primary + CNA Secondary), CWE, CPE applicability statements, references | [cve-sync-nvd.md](features/tickets/cve-sync-nvd.md#fetcher-definition) | Complete |
 | `sync_mitre_cves` | MITRE cvelistV5 (Git) | Every 6 hours | None | None (bare clone + fetch) | CVE records, all ADP data (affected versions, CVSS), CISA-specific (SSVC, KEV, CWE), references | [cve-sync-mitre.md](features/tickets/cve-sync-mitre.md#fetcher-definition) | Complete |
 | `sync_redhat_cves` | Red Hat Security Data | Daily at 03:00 UTC | None | Undocumented; Sentinel uses 2s delay between requests | CVSS Red Hat, CWE, references, best-effort package names | [cve-sync-redhat.md](features/tickets/cve-sync-redhat.md#fetcher-definition) | Complete |
-| `sync_smelt_products` | SMELT | TBD | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product repository backfill when associations become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Partial |
+| `sync_smelt_products` | SMELT | TBD | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product catalog backfill when Products become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Partial |
 | `sync_aimaas_lifecycle` | AIMAAS | TBD | TBD (internal) | N/A (internal) | Product lifecycle dates | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | TBD |
 | `sync_aimaas_thresholds` | AIMAAS | TBD | TBD (internal) | N/A (internal) | CVSS thresholds per product | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | TBD |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |

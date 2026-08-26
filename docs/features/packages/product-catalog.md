@@ -87,11 +87,15 @@ See `docs/data-model.md` for the full column listing.
 
 ### ProductRepository
 
-Maps SMELT repository project names to products. Used to resolve the
-`target` values returned by SMELT's `maintainedpackage` endpoint to
-local Product records. A single product typically has multiple repository
-entries (one per architecture, plus separate entries for
-`SUSE:Products:*` and `SUSE:Updates:*` namespaces).
+Maps SMELT repository project names to products. Used by the Product
+catalog synchronization and by release detection to resolve IBS target
+repository names to local Product records. Package resolution (adding
+packages to tickets) matches products directly by CPE from the SMELT
+v2 maintained-package response and does not use `ProductRepository`.
+
+A single product typically has multiple repository entries (one per
+architecture, plus separate entries for `SUSE:Products:*` and
+`SUSE:Updates:*` namespaces).
 
 Repository names are not globally unique. An association is unique by
 `(product_id, repo_name)`. Associations absent from a later complete catalog
@@ -129,8 +133,8 @@ integration changes.
 HTTPS connections to SMELT use the combined trust store (system CAs + SUSE
 Trust Root CA). See `networking.md`, TLS Trust Store Configuration.
 
-The Product listing and `maintainedpackage` endpoints use the same pagination
-contract:
+The Product listing endpoint (`v1/basic/products/`) uses the following
+pagination contract:
 
 1. Request pages sequentially, starting at page 1, with an explicit
    `page_size=100`. Construct every request from the configured HTTPS API
@@ -162,13 +166,16 @@ contract:
    aborts the operation; Sentinel does not restart the sequence within the
    same operation.
 
-Live verification on 2026-08-25 confirmed this envelope on both endpoints,
-one-based page numbering, an effective maximum page size of 500, and the HTTP
-scheme defect in continuation metadata. An unknown-package query confirmed the
-valid empty `maintainedpackage` shape: `count = 0`, `total_pages = 1`, empty
-`results`, and null continuations. Using the fixed page size and server-provided
-`total_pages` avoids depending on either an inferred default or the requested
-page size being applied unchanged.
+Live verification on 2026-08-25 confirmed this envelope on the Product listing
+endpoint, one-based page numbering, an effective maximum page size of 500, and
+the HTTP scheme defect in continuation metadata. Using the fixed page size and
+server-provided `total_pages` avoids depending on either an inferred default or
+the requested page size being applied unchanged.
+
+The maintained-package endpoint (`experimental/v2/maintained/`) is not
+paginated; it returns all results in a single JSend response. Its envelope and
+processing contract are defined in `package-model.md` (SMELT Query for Package
+Resolution).
 
 ### Product Sync
 
@@ -200,26 +207,26 @@ for the general SMELT description.
        particular, SMELT `end_of_life` never drives Sentinel lifecycle state.
      Any invalid row rejects the complete snapshot; rows are never skipped.
   3. Capture one UTC `snapshot_at` value for the complete snapshot.
-  4. In the publication transaction, before modifying any catalog row,
-     capture the set of `ProductRepository` associations belonging to the
-     previously applied snapshot. If no previous complete snapshot exists,
-     use the empty set.
+   4. In the publication transaction, before modifying any catalog row,
+     capture the set of Product CPEs belonging to the previously applied
+     snapshot and the set of `ProductRepository` associations belonging to
+     it. If no previous complete snapshot exists, use the empty set for
+     both.
   5. Upsert Products by exact CPE and
      ProductRepository associations by `(product_id, repo_name)`. Assign the
      same `snapshot_at` to every observed row's `catalog_last_seen_at`.
      The Product upsert modifies only the SMELT-owned descriptive fields
      (`name`, `version`, `display_name`) and `catalog_last_seen_at`; it MUST
      NOT clear or overwrite AIMAAS-owned lifecycle or threshold fields.
-  6. Compare the new association set with the captured previous set and retain
-     whether at least one association is newly current. A newly current
-     association is either a new `(product_id, repo_name)` row or a retained
-     historical row observed again in the new snapshot.
+  6. Compare the new Product CPE set with the captured previous set and
+     retain whether at least one Product is newly current. A newly current
+     Product is a CPE that was not present in the previous snapshot
+     (including the first snapshot, where the previous set is empty).
   7. Commit once. Any database error rolls back the complete publication.
      Network I/O MUST NOT occur while the transaction is open.
-  8. If the committed snapshot contains at least one newly current
-     association, enqueue Product repository backfill after the commit. A
-     snapshot that only re-observes already-current associations does not
-     trigger backfill.
+  8. If the committed snapshot contains at least one newly current Product,
+     enqueue Product catalog backfill after the commit. A snapshot that
+     only re-observes already-current Products does not trigger backfill.
 
 Products and associations not observed in the new snapshot are retained with
 their previous `catalog_last_seen_at`. The applied snapshot is identified by
@@ -255,31 +262,36 @@ commits. Readiness is derived from the existence of
 AIMAAS lifecycle and threshold enrichment is independent and does not
 participate in catalog readiness.
 
-Package target resolution requires catalog readiness. It checks readiness
-after retrieving and validating the complete SMELT `maintainedpackage`
-response but before querying local Product mappings or modifying ticket data.
-This ordering preserves the I/O-then-transaction boundary: the caller-supplied
-database session performs no database operation before the external network
-I/O. If no complete snapshot exists, resolution raises
-`ProductCatalogNotReadyError`; it MUST NOT report
-`PackageNotFoundInSmeltError` or `PackageTargetsUnresolvedError`. Readiness
-failure takes precedence over both the zero-track and zero-resolved-Product
-outcomes because neither can be interpreted against an initialized local
-catalog.
+Package resolution requires catalog readiness. It checks readiness after
+retrieving and validating the complete SMELT v2 maintained-package response
+but before matching Product CPEs or modifying ticket data. This ordering
+preserves the I/O-then-transaction boundary: the caller-supplied database
+session performs no database operation before the external network I/O. If no
+complete snapshot exists, resolution raises `ProductCatalogNotReadyError`; it
+MUST NOT report `PackageNotFoundInSmeltError` or
+`PackageTargetsUnresolvedError`. Readiness failure takes precedence over both
+the zero-track and zero-resolved-Product outcomes because neither can be
+interpreted against an initialized local catalog.
 
 Catalog readiness is a domain-operation gate and is not part of the API
 process `/ready` probe. A committed snapshot has no hard expiry. Failed later
 synchronizations leave the latest complete snapshot usable; its timestamp and
 failed fetcher runs provide freshness and operational visibility without a
 second stale state or freshness setting. Operations that do not require
-current repository target resolution are not blocked.
+current Product CPE resolution are not blocked.
 
-### Product Repository Backfill
+### Product Catalog Backfill
 
-Product repository backfill is an on-demand Celery sub-operation of
+Product catalog backfill is an on-demand Celery sub-operation of
 `sync_smelt_products`, not an independently scheduled `BaseFetcher`. It is
 unrelated to the reserved `BaseFetcher.catch_up(ticket_id, session)` mechanism
 used when an inactive ticket becomes active.
+
+Backfill is triggered when the Product catalog snapshot introduces at least
+one newly current Product (a CPE that was not present in the previous
+snapshot). A newly current Product may now match CPEs returned by the SMELT
+v2 maintained-package endpoint for packages already tracked by active tickets;
+backfill re-runs resolution to pick up these previously unresolvable matches.
 
 After dispatch, it:
 
@@ -288,10 +300,10 @@ After dispatch, it:
    `deleted_at IS NULL`.
 2. Processes each pair independently by calling `add_package_to_ticket()`
    in active-ticket-only mode, with `acting_user_id = None` and the system
-   audit comment `Product repository backfill`. The mutation boundary re-checks
+   audit comment `Product catalog backfill`. The mutation boundary re-checks
    the Ticket status while holding its row lock; if the Ticket is no longer
    active, the pair is skipped without mutation or post-commit effects.
-3. Target resolution emits the structured partial-resolution warning defined
+3. Product resolution emits the structured partial-resolution warning defined
    in `package-model.md` when applicable. Because resolution precedes the
    Ticket lock, this warning may also be emitted for a pair subsequently
    skipped after the active-status re-check.
@@ -316,12 +328,12 @@ is an accepted limitation and no durable failed-addition registry is
 introduced.
 
 The system-wide scan is deliberate because Sentinel does not persist which
-unmatched targets were omitted from earlier package resolutions. Backfill
+unmatched CPEs were omitted from earlier package resolutions. Backfill
 processes pairs sequentially,
 which bounds SMELT request concurrency without adding another configuration
 surface, correlation table, or targeting index. The resulting sequential
 full-system scan and record-creating post-commit task dispatches are accepted,
-including after the first snapshot when every association is newly current.
+including after the first snapshot when every Product is newly current.
 Overlapping backfill tasks are safe because package creation is idempotent and
 serialized by the Ticket row lock; duplicate external work is accepted. The
 task has no task-level retry after process loss. Recovery remains the next
@@ -565,7 +577,7 @@ TBD
 - `docs/features/packages/package-model.md` -- package affectedness
   model; eligibility rules consume product lifecycle and threshold data
 - `docs/features/packages/package-service.md` -- package-tree creation used by
-  Product repository backfill
+  Product catalog backfill
 - `docs/features/packages/product-lifecycle-transitions.md` -- EOL and
   Reactive Support automated actions
 - `docs/features/tickets/cvss-scoring.md` -- CVSS resolution cascade
