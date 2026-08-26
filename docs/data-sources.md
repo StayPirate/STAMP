@@ -783,9 +783,11 @@ security update.
   Sentinel uses the default behavior
 - **Integration status**: **Active**. Sentinel periodically syncs lifecycle
   dates (`sync_aimaas_lifecycle` fetcher) and CVSS thresholds
-  (`sync_aimaas_thresholds` fetcher). When thresholds or lifecycle dates
-  change, Sentinel re-evaluates eligibility for all active tickets
-  referencing the affected products. The CPE map endpoint is not consumed
+  (`sync_aimaas_thresholds` fetcher). When thresholds change,
+  `sync_aimaas_thresholds` triggers immediate eligibility re-evaluation.
+  When lifecycle dates change, the separate `evaluate_lifecycle_transitions`
+  fetcher detects the resulting phase transition on its next scheduled run
+  and triggers re-evaluation then. The CPE map endpoint is not consumed
   at runtime; it may serve only as an out-of-band input to reviewed updates
   of `backend/app/data/cpe-package-mapping.json`, whose canonical contract
   is defined in `docs/features/packages/cpe-package-mapping.md`

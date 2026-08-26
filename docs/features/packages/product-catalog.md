@@ -31,10 +31,11 @@ Package Resolution).
 An internal SUSE service (REST API at `aimaas.suse.de/api`) that
 provides:
 
-1. **Product lifecycle data** (`GET /api/entity/products/{slug}`): dates
-   for each lifecycle phase -- `fcs` (first customer shipment),
+1. **Product lifecycle data** (`GET /api/entity/products?all_fields=true`):
+   dates for each lifecycle phase -- `fcs` (first customer shipment),
    `end_of_gs` (end of General Support), `end_of_ltss`, `end_of_espos`,
-   and `end_of_reactive_ltss`.
+   and `end_of_reactive_ltss`. Sentinel uses the paginated list endpoint
+   with `all_fields=true`; see [Product Lifecycle Sync](#product-lifecycle-sync-periodic).
 2. **CVSS thresholds** (`GET /api/entity/cvss-threshold`): the minimum
    CVSS score for which a product is eligible to receive a security
    update. Only products with a non-zero threshold have an entry
@@ -606,7 +607,7 @@ TBD
 | Property | Value |
 |----------|-------|
 | Fetcher name | `sync_aimaas_lifecycle` |
-| Class name | TBD |
+| Class name | `SyncAimaasLifecycle` |
 | Schedule | TBD |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list with `all_fields=true` on every run; no cursor or incremental mode |
@@ -639,7 +640,7 @@ TBD
 | Property | Value |
 |----------|-------|
 | Fetcher name | `sync_aimaas_thresholds` |
-| Class name | TBD |
+| Class name | `SyncAimaasThresholds` |
 | Schedule | TBD |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list (for CPE resolution) and complete threshold list on every run; in-memory join; no cursor or incremental mode |
