@@ -5,7 +5,7 @@ description: >
   Use this agent after creating or modifying feature specs, data-model.md,
   or api-spec.md. Read-only: does not modify files.
 mode: subagent
-model: google-vertex/claude-sonnet-5@default
+model: github-copilot/claude-opus-4.6
 variant: high
 permission:
   edit: deny
