@@ -4,7 +4,7 @@ description: >
   Use this agent after adding or modifying API endpoints, feature specs,
   models, or architecture docs. Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-sonnet-5
+model: google-vertex/claude-sonnet-5@default
 variant: xhigh
 permission:
   edit: deny
