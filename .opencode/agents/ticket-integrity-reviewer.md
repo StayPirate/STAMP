@@ -9,7 +9,7 @@ description: >
   or tasks that mutate tickets, or after creating/modifying feature specs
   that describe ticket operations. Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-sonnet-5
+model: google-vertex/claude-sonnet-5@default
 variant: xhigh
 permission:
   edit: deny
