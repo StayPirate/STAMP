@@ -90,7 +90,7 @@ default; any future subagent added without a `model` field falls back to it.
 
 | Tier | Model | Agents |
 |------|-------|--------|
-| 1 (pinned) | `google-vertex/claude-sonnet-5@default`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
+| 1 (pinned) | `google-vertex/claude-opus-5@default`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
 | 2 (pinned) | `google-vertex/claude-sonnet-5@default`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@design-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@spec-conformance-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
 | 3 (inherited, no current members) | Invoking primary agent's model | — |
 
