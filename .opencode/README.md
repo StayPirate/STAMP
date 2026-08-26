@@ -85,12 +85,12 @@ performing structured or checklist-like verification (architectural judgment
 against stated criteria, diff-vs-issue conformance), are pinned to a mid-tier
 model with a high reasoning-effort preset, so their analytical depth is
 consistent regardless of the invoking primary agent, at lower cost/latency
-than the Opus 5 tier. No subagent currently relies on the inherited-model
+than the Opus tier. No subagent currently relies on the inherited-model
 default; any future subagent added without a `model` field falls back to it.
 
 | Tier | Model | Agents |
 |------|-------|--------|
-| 1 (pinned) | `github-copilot/claude-opus-5`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
+| 1 (pinned) | `github-copilot/claude-opus-4.6`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
 | 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@design-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@spec-conformance-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
 | 3 (inherited, no current members) | Invoking primary agent's model | — |
 
