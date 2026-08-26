@@ -55,10 +55,12 @@ system (IBS codestream project name or git branch name). Both are
 human-readable. For git, the full repository URL is derivable from
 `package_name` (convention: `src.suse.de/pool/{package_name}`).
 
-SMELT will serve both IBS and git tracks but will not provide an explicit
-workflow type indicator. Sentinel infers `workflow_type` at ingestion time
-(e.g., IBS codestreams match `^(SUSE|openSUSE):.*`). Both workflows can
-coexist under the same package.
+The SMELT v2 maintained-package endpoint provides an explicit workflow
+type indicator (`product_definition.type`: `channel` for IBS, `compose`
+for git). Sentinel maps this directly to `workflow_type` at ingestion
+time. Both workflows can coexist under the same package. See
+[SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
+for the full resolution contract.
 
 ### 3. Eligibility as a separate dimension
 
@@ -875,24 +877,21 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 
 **Behavior**:
 
-1. Query SMELT to resolve all currently maintained tracks and products
-   for the given package (see
-   [SMELT Query](#smelt-query-for-package-resolution) below).
-2. Resolve SMELT targets against only the current Product catalog
-   associations. Ignore unmatched targets and omit any track left with no
-   resolved Products. If no Product is resolved across the complete response,
-   reject the operation without database writes.
-3. Create a `TicketPackage` record for the package if one does not already
+1. Query SMELT and resolve products as specified in
+   [SMELT Query for Package Resolution](#smelt-query-for-package-resolution):
+   external I/O, envelope validation, catalog readiness check, CPE matching,
+   compose-over-channel deduplication, and `workflow_type` determination from
+   `product_definition.type`. If no Product is resolved across the complete
+   response, reject the operation without database writes.
+2. Create a `TicketPackage` record for the package if one does not already
    exist. If a record already exists (active or soft-deleted), skip creation.
-4. Infer `workflow_type` for each resolved track (see Design
-   Decision 5).
-5. For each resolved track, delegate `TicketPackageTrack` record
+3. For each resolved track, delegate `TicketPackageTrack` record
    creation to `package_service` (if a record does not already exist,
    including soft-deleted).
-6. For each resolved Product under each track, delegate
+4. For each resolved Product under each track, delegate
    `TicketPackageProduct` record creation to `package_service` (if a
    record does not already exist, including soft-deleted).
-7. If at least one package, track, or Product record was created, register
+5. If at least one package, track, or Product record was created, register
    these best-effort post-commit effects:
    - Resolve and cache the IBS bugowner. If a `PackageBugowner` record already
      exists for this `package_name`, update it with fresh data from IBS; if it
@@ -903,7 +902,7 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
      requests (RRs) for the ticket's CVE created within the last 14 days. See
      `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
    A fully no-op invocation registers neither effect.
-8. Return an `AddPackageResult` containing:
+6. Return an `AddPackageResult` containing:
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
 
@@ -1001,13 +1000,22 @@ single non-paginated JSend envelope.
 
 **Envelope and error handling**:
 
-- A successful response has `{"status": "success", "data": [...]}` where
-  `data` is an array of codestream entries.
-- A package-not-found response has `{"status": "error", "data": "Package X
-  not found"}`. This is semantically equivalent to zero results and maps to
-  `PackageNotFoundInSmeltError`.
-- Any non-200 HTTP status, non-JSON body, or response where `status` is not
-  `"success"` or `"error"` maps to `SmeltUnavailableError`.
+- A successful response has HTTP status 200 and body
+  `{"status": "success", "data": [...]}` where `data` is a non-empty array
+  of codestream entries.
+- A successful response with an empty `data` array (`{"status": "success",
+  "data": []}`) is treated as package-not-found. This covers packages known
+  to SMELT but currently maintained in zero codestreams.
+- A package-not-found response arrives with HTTP status 404 and body
+  `{"status": "error", "data": "Package X not found"}`.
+- Both package-not-found cases map to `PackageNotFoundInSmeltError`.
+- Sentinel MUST parse the JSON body regardless of HTTP status and check the
+  JSend `status` field before applying the catch-all rule below. A 404 with
+  a valid `status: "error"` body is a package-not-found, not an availability
+  failure.
+- Any response that cannot be parsed as JSON, whose `status` field is not
+  `"success"` or `"error"`, or that fails entry validation maps to
+  `SmeltUnavailableError`.
 - Live verification confirmed that the `package` filter is case-sensitive:
   canonical `kernel-default` returned results, while case variants returned
   the error envelope. Sentinel does not normalize package-name case before
@@ -1020,11 +1028,13 @@ single non-paginated JSend envelope.
 - Each entry in `data` must have a `codestream` object with a non-empty
   string `name` that fits the persisted track-reference column length, and a
   non-empty `targets` array.
-- Each target must have `product.cpe` as a non-empty string,
-  `product.friendly_name` as a non-empty string, and
+- Each target must have `product.cpe` as a non-empty string and
   `product_definition.type` with a value of `"channel"` or `"compose"`.
-- An invalid entry or target rejects the complete response and raises
+  An invalid entry or target rejects the complete response and raises
   `SmeltUnavailableError`; entries are never skipped.
+- `product.friendly_name` is used only for logging and warning messages.
+  If absent or empty, the `product.cpe` value is used as a fallback in
+  log messages. A missing `friendly_name` does not reject the response.
 
 **Consumed fields** (minimal integration):
 
@@ -1052,14 +1062,20 @@ removed by SMELT.
 
 **Processing**:
 
-1. Retrieve and validate the complete response as described above.
+1. Retrieve the response and validate the JSON envelope structure (parseable
+   JSON with a `status` field). If validation fails, raise
+   `SmeltUnavailableError`.
 2. Require a ready Product catalog as defined in `product-catalog.md`. If no
    complete Product snapshot has committed, raise
-   `ProductCatalogNotReadyError` before matching Product CPEs or modifying
-   ticket data.
-3. Collect all `(codestream.name, product.cpe, product_definition.type)`
+   `ProductCatalogNotReadyError` before interpreting the response content.
+   Readiness failure takes precedence over both package-not-found and
+   targets-unresolved outcomes.
+3. If `status` is `"error"`, or `status` is `"success"` with an empty `data`
+   array, raise `PackageNotFoundInSmeltError`.
+4. Validate all entries and targets per the entry validation rules above.
+5. Collect all `(codestream.name, product.cpe, product_definition.type)`
    triples from the response. Apply the deduplication rule above.
-4. For each remaining triple:
+6. For each remaining triple:
    a. Look up the Product by exact `Product.cpe` match in the local catalog.
       If no local Product matches, ignore this triple and continue.
    b. Determine `workflow_type` from `product_definition.type`: `"channel"`
@@ -1070,7 +1086,7 @@ removed by SMELT.
       soft-deleted).
    d. Create a `TicketPackageProduct` linking the track to the matched
       Product (if one does not already exist).
-5. If no Product was resolved across the entire response, fail with
+7. If no Product was resolved across the entire response, fail with
    `PackageTargetsUnresolvedError`; no package-tree record is created.
 
 When at least one Product CPE has no local match in an otherwise successful

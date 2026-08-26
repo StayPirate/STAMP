@@ -1166,10 +1166,10 @@ lifecycle state.
 
 Maps SMELT repository project names to products. Synced from SMELT
 alongside products. Used by the Product catalog synchronization and by
-release detection to resolve IBS target repository names to local Product
-records. Package resolution (adding packages to tickets) matches products
-directly by CPE from the SMELT v2 maintained-package response and does not
-use this table.
+release detection to enumerate a Product's known update repositories.
+Package resolution (adding packages to tickets) matches products directly
+by CPE from the SMELT v2 maintained-package response and does not use this
+table.
 
 | Column | Type | Constraints | Description |
 |---|---|---|---|

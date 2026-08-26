@@ -395,7 +395,11 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 5. If no record is missing, return a no-op result before auto-assignment,
    reconciliation, or audit creation.
 6. Call `auto_assign_actor()`
-7. Create or skip `TicketPackage` (idempotent — skip if exists)
+7. Create or skip `TicketPackage` (idempotent — skip if exists). When
+   `active_ticket_only` is true and the found `TicketPackage` has
+   `deleted_at` set (soft-deleted between batch selection and lock
+   acquisition), return a no-op result — new tracks and products are not
+   created beneath a soft-deleted parent during backfill.
 8. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
      including soft-deleted records)
@@ -672,27 +676,28 @@ async def add_package_to_ticket(
 
 1. Query the SMELT v2 maintained-package endpoint to resolve all currently
    maintained tracks and products for the given package name (external I/O —
-   no lock held). After the complete response is retrieved and validated,
-   verify that a complete Product catalog snapshot exists; if none exists,
-   raise `ProductCatalogNotReadyError` before matching Product CPEs or
-   mutating ticket data. Error precedence is defined in `product-catalog.md`
-   (Catalog Readiness and Freshness). Match returned product CPEs directly
-   against local `Product.cpe` before the Ticket lock is acquired. Ignore
-   CPEs with no local match, apply the compose-over-channel deduplication
-   rule, and determine `workflow_type` from `product_definition.type` as
-   specified in `package-model.md` (SMELT Query for Package Resolution). If
-   resolution is partial, emit the required structured WARNING before
-   mutation.
-2. If SMELT is unreachable, returns a non-200 HTTP status, or returns a
-   response that fails the v2 envelope or entry validation contract,
-   raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
-   No records are created.
-3. If SMELT returns a package-not-found error (`status = "error"`), raise an
-   application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
-   No records are created.
-4. If SMELT returned entries but no Product CPE resolves to a local Product
-   across the complete response, raise `PackageTargetsUnresolvedError`. No
-   records are created.
+   no lock held). Parse the response body regardless of HTTP status and
+   validate the JSend envelope structure.
+2. If the response cannot be parsed as JSON or has no recognized JSend
+   `status` value, raise an application error corresponding to
+   `503 SMELT_UNAVAILABLE`. No records are created.
+3. Verify that a complete Product catalog snapshot exists; if none exists,
+   raise `ProductCatalogNotReadyError` before interpreting the response
+   content. Readiness failure takes precedence over both package-not-found
+   and targets-unresolved outcomes. Error precedence is defined in
+   `product-catalog.md` (Catalog Readiness and Freshness).
+4. If SMELT returns a package-not-found response (`status = "error"`, or
+   `status = "success"` with an empty `data` array), raise an application
+   error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are
+   created.
+5. Match returned product CPEs directly against local `Product.cpe` before
+   the Ticket lock is acquired. Ignore CPEs with no local match, apply the
+   compose-over-channel deduplication rule, and determine `workflow_type`
+   from `product_definition.type` as specified in `package-model.md`
+   (SMELT Query for Package Resolution). If resolution is partial, emit
+   the required structured WARNING before mutation. If no Product CPE
+   resolves to a local Product across the complete response, raise
+   `PackageTargetsUnresolvedError`. No records are created.
 6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
 7. If step 6 created at least one package, track, or Product record, register
@@ -714,13 +719,13 @@ batch selection is skipped under the Ticket row lock.
 
 **Error handling**:
 
-- **Steps 1–4 (validation gate)**: blocking. If any of these steps fails,
+- **Steps 1–5 (validation gate)**: blocking. If any of these steps fails,
   the function raises without side effects (no database writes occur). The
   endpoint handler translates service-layer exceptions to the corresponding
   HTTP error codes defined in `package-model.md`.
-- **Steps 5–6 (record creation)**: transactional. Record creation occurs
+- **Step 6 (record creation)**: transactional. Record creation occurs
   under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
-  failure occurs during these steps, the transaction is rolled back and no
+  failure occurs during this step, the transaction is rolled back and no
   records are persisted.
 - **Step 7 (post-commit effects)**: best-effort. The API transaction
   dependency or other workflow owner executes these effects only after its

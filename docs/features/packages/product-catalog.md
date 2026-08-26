@@ -88,10 +88,10 @@ See `docs/data-model.md` for the full column listing.
 ### ProductRepository
 
 Maps SMELT repository project names to products. Used by the Product
-catalog synchronization and by release detection to resolve IBS target
-repository names to local Product records. Package resolution (adding
-packages to tickets) matches products directly by CPE from the SMELT
-v2 maintained-package response and does not use `ProductRepository`.
+catalog synchronization and by release detection to enumerate a Product's
+known update repositories. Package resolution (adding packages to tickets)
+matches products directly by CPE from the SMELT v2 maintained-package
+response and does not use `ProductRepository`.
 
 A single product typically has multiple repository entries (one per
 architecture, plus separate entries for `SUSE:Products:*` and
@@ -104,9 +104,8 @@ for Product-level release detection.
 
 An association is **current** when its `catalog_last_seen_at` equals the
 timestamp of the latest complete Product catalog snapshot; otherwise it is
-historical. Package target resolution uses current associations only.
-Historical associations remain available for historical lookup and
-Product-level release detection.
+historical. Historical associations remain available for historical lookup
+and Product-level release detection.
 
 See `docs/data-model.md` for the full column listing.
 
@@ -207,7 +206,7 @@ for the general SMELT description.
        particular, SMELT `end_of_life` never drives Sentinel lifecycle state.
      Any invalid row rejects the complete snapshot; rows are never skipped.
   3. Capture one UTC `snapshot_at` value for the complete snapshot.
-   4. In the publication transaction, before modifying any catalog row,
+  4. In the publication transaction, before modifying any catalog row,
      capture the set of Product CPEs belonging to the previously applied
      snapshot and the set of `ProductRepository` associations belonging to
      it. If no previous complete snapshot exists, use the empty set for
@@ -303,6 +302,9 @@ After dispatch, it:
    audit comment `Product catalog backfill`. The mutation boundary re-checks
    the Ticket status while holding its row lock; if the Ticket is no longer
    active, the pair is skipped without mutation or post-commit effects.
+   Similarly, if the `TicketPackage` has been soft-deleted between batch
+   selection and the lock acquisition, the pair is skipped — new tracks and
+   products are not created beneath a soft-deleted parent.
 3. Product resolution emits the structured partial-resolution warning defined
    in `package-model.md` when applicable. Because resolution precedes the
    Ticket lock, this warning may also be emitted for a pair subsequently
