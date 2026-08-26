@@ -302,9 +302,6 @@ After dispatch, it:
    audit comment `Product catalog backfill`. The mutation boundary re-checks
    the Ticket status while holding its row lock; if the Ticket is no longer
    active, the pair is skipped without mutation or post-commit effects.
-   Similarly, if the `TicketPackage` has been soft-deleted between batch
-   selection and the lock acquisition, the pair is skipped — new tracks and
-   products are not created beneath a soft-deleted parent.
 3. Product resolution emits the structured partial-resolution warning defined
    in `package-model.md` when applicable. Because resolution precedes the
    Ticket lock, this warning may also be emitted for a pair subsequently

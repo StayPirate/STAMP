@@ -395,11 +395,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 5. If no record is missing, return a no-op result before auto-assignment,
    reconciliation, or audit creation.
 6. Call `auto_assign_actor()`
-7. Create or skip `TicketPackage` (idempotent — skip if exists). When
-   `active_ticket_only` is true and the found `TicketPackage` has
-   `deleted_at` set (soft-deleted between batch selection and lock
-   acquisition), return a no-op result — new tracks and products are not
-   created beneath a soft-deleted parent during backfill.
+7. Create or skip `TicketPackage` (idempotent — skip if exists)
 8. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
      including soft-deleted records)
