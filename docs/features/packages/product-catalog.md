@@ -54,12 +54,73 @@ Sentinel derives one of five lifecycle phases from the AIMAAS projection:
 | `eol` | The Product has reached end of life |
 
 Sentinel does not distinguish LTSS from ESPOS because they have equivalent
-platform behavior. If the available AIMAAS fields are insufficient to derive
-one of these phases, the lifecycle phase is unavailable and represented as
-`NULL`; it is not treated as General Support, Reactive Support, or EOL. The
-exact boundary inclusivity, precedence, and treatment of inconsistent
-lifecycle dates remain to be defined. Missing or inconsistent lifecycle data
-MUST NOT be interpreted as `eol`.
+platform behavior. The lifecycle evaluator below defines the exact phase,
+boundary, missing-data, and inconsistent-data behavior. If it returns `NULL`,
+the lifecycle phase is unavailable; `NULL` is not treated as General Support,
+Reactive Support, or EOL and applies no lifecycle exclusion.
+
+#### Lifecycle Evaluator
+
+`evaluate_product_lifecycle_phase()` is a pure function with the following
+inputs:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `evaluation_date` | `date` | UTC calendar date for which to evaluate the Product |
+| `first_customer_ship_date` | `date \| None` | AIMAAS `fcs` projection |
+| `general_support_end_date` | `date \| None` | Inclusive end of General Support |
+| `extended_support_end_date` | `date \| None` | Inclusive end of the collapsed LTSS/ESPOS phase |
+| `reactive_support_end_date` | `date \| None` | Inclusive end of Reactive LTSS |
+
+It returns `LifecyclePhase | None`, where `None` is exposed as `NULL` in API
+responses. It performs no I/O, mutation, or logging and raises no domain
+exception. Syntactically invalid upstream date values are response-schema
+failures handled by `sync_aimaas_lifecycle`; they never reach this function.
+
+All phase-end dates are inclusive, and a following phase begins on the next
+calendar day. Equal adjacent boundaries are valid; the later phase then has
+an empty interval. Date-time or timezone conversion is not involved because
+all inputs are calendar dates and `evaluation_date` is derived from the
+current UTC date.
+
+Before selecting a phase, the evaluator validates the available dates:
+
+- `extended_support_end_date` requires `general_support_end_date`;
+- `reactive_support_end_date` requires `extended_support_end_date`;
+- when both are present, `first_customer_ship_date` MUST be no later than
+  `general_support_end_date`;
+- when present, `general_support_end_date` MUST be no later than
+  `extended_support_end_date`; and
+- when present, `extended_support_end_date` MUST be no later than
+  `reactive_support_end_date`.
+
+Any violation makes the complete date set inconsistent. The evaluator returns
+`None` for every `evaluation_date`; it never derives `eol` from an inconsistent
+set.
+
+For a consistent date set, evaluate in this order:
+
+1. If `first_customer_ship_date` exists and `evaluation_date` is earlier,
+   return `pre_release`.
+2. If `general_support_end_date` exists and `evaluation_date` is no later,
+   return `general_support`. A missing `first_customer_ship_date` does not
+   prevent this result.
+3. If `extended_support_end_date` exists and `evaluation_date` is after
+   `general_support_end_date` but no later than
+   `extended_support_end_date`, return `extended_support`.
+4. If `reactive_support_end_date` exists and `evaluation_date` is after
+   `extended_support_end_date` but no later than
+   `reactive_support_end_date`, return `reactive_support`.
+5. If `evaluation_date` is later than the last available end date in the
+   valid continuous chain, return `eol`. Thus a General Support end date is
+   sufficient to establish EOL on the following day when no later phase is
+   present, even when `first_customer_ship_date` is missing.
+6. Otherwise, return `None`. In particular, an FCS date without any support
+   end date produces `pre_release` before FCS and `None` from FCS onward; all
+   four dates absent also produces `None`.
+
+The evaluator depends only on these inputs. SMELT catalog presence, ticket
+state, eligibility, and any previously derived phase do not affect its result.
 
 For automated actions triggered by lifecycle phase transitions (Reactive
 Support eligibility changes, EOL Product removal), see
@@ -449,14 +510,36 @@ detail requests.
      from the current field values; a field becoming NULL may change the
      computed `lifecycle_phase`.
 
+The fetcher persists every syntactically valid source date faithfully. A
+structurally missing but non-contradictory date set is valid input and does not
+make the Product row fail synchronization. For each matched local Product with
+an inconsistent date set under the Lifecycle Evaluator rules, emit one
+`product_lifecycle_dates_inconsistent` WARNING for each violated rule. Every
+warning includes `product_cpe` and one of these stable `reason` values:
+
+| `reason` | Violation |
+|---|---|
+| `missing_general_support_end_date` | Extended Support end exists without General Support end |
+| `missing_extended_support_end_date` | Reactive Support end exists without Extended Support end |
+| `first_customer_ship_after_general_support_end` | FCS is later than General Support end |
+| `general_support_end_after_extended_support_end` | General Support end is later than Extended Support end |
+| `extended_support_end_after_reactive_support_end` | Extended Support end is later than Reactive Support end |
+
+The warning does not include the full upstream record. Inconsistency returns a
+`NULL` lifecycle phase but does not reject the row, abort the complete run, or
+increment `record_failed`; synchronization continues with the remaining
+Products. A non-contradictory incomplete date set, or an AIMAAS Product with no
+local CPE match, does not emit this warning.
+
 The lifecycle synchronization modifies only the four lifecycle date columns;
 it does not modify SMELT-owned descriptive or catalog-observation fields, or
 `cvss_threshold`.
 
-A Product without sufficient AIMAAS lifecycle data remains usable for package
-resolution. Its derived `lifecycle_phase` is `NULL`, and no lifecycle
-exclusion is applied. When later synchronization supplies sufficient data,
-the lifecycle evaluator exposes the derived phase and
+A Product whose lifecycle evaluator returns `NULL` remains usable for package
+resolution, and no lifecycle exclusion is applied. The Reactive Support
+eligibility rule also does not apply, while independent CVSS threshold
+evaluation still does. When later synchronization changes the evaluator
+result to a phase, the evaluator exposes that phase and
 `evaluate_lifecycle_transitions` applies Reactive Support or EOL behavior
 when applicable.
 
@@ -560,8 +643,9 @@ List all products synced from SMELT. Paginated.
 **`Access: Public`**
 **`Authentication: Optional`**
 
-`lifecycle_phase` is a nullable string. It is `NULL` when AIMAAS data is
-absent or insufficient to derive a phase safely.
+`lifecycle_phase` is a nullable string. It is `NULL` when the Lifecycle
+Evaluator returns `None`, including when AIMAAS data is absent or the date set
+is inconsistent or does not establish a current phase or EOL boundary.
 
 Whether this endpoint returns all retained Products or only Products in the
 current catalog snapshot remains to be completed with the Product read service
@@ -633,7 +717,8 @@ or validation category without retaining full response payloads.
 
 #### Metrics
 
-TBD
+Lifecycle-date inconsistency warnings do not increment `record_failed`.
+The remaining created, updated, and failed metric semantics are TBD.
 
 ### Fetcher: `sync_aimaas_thresholds`
 

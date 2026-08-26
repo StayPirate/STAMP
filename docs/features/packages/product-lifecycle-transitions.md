@@ -3,13 +3,13 @@
 ## Purpose
 
 Define the automated behavior when a Product transitions to the Reactive
-Support phase or reaches End of Life (EOL) while it has non-final
-`TicketPackageProduct` records in active tickets. This specification
-relies on the soft-deletion mechanism and track orphan cleanup invariants
-in `package_service` (defined in `docs/features/packages/package-service.md`
-and `docs/features/packages/package-model.md`) that ensure tracks and
-packages are automatically soft-deleted when they no longer have active
-children.
+Support phase, or reaches End of Life (EOL) while it has actionable
+`TicketPackageProduct` records under non-final tracks. Only records in active
+tickets are processed. This specification relies on the soft-deletion
+mechanism and track orphan cleanup invariants in `package_service` (defined in
+`docs/features/packages/package-service.md` and
+`docs/features/packages/package-model.md`) that ensure tracks and packages are
+automatically soft-deleted when they no longer have active children.
 
 ## Terminology
 
@@ -24,10 +24,13 @@ children.
 
 The authoritative criterion for whether a Product is EOL is exclusively the
 lifecycle evaluator over AIMAAS-derived fields. Absence from a SMELT catalog
-snapshot does not trigger EOL handling. The exact date-boundary and
-inconsistent-data rules remain to be completed. Insufficient lifecycle data
-produces an unavailable (`NULL`) phase, applies no lifecycle exclusion, and
-MUST NOT produce `eol` accidentally.
+snapshot does not trigger EOL handling. The complete evaluator, including
+inclusive date boundaries and missing or inconsistent data, is defined in
+`docs/features/packages/product-catalog.md` (Lifecycle Evaluator).
+An inconsistent date set produces an unavailable (`NULL`) phase and MUST NOT
+produce `eol` accidentally. Other partial date sets follow the evaluator;
+notably, a General Support end date can establish EOL even when FCS and later
+phase dates are absent.
 
 ## Lifecycle Phase Detection
 
@@ -64,6 +67,11 @@ Recommended to run after `sync_aimaas_lifecycle` and
    - If any exist: enqueue
      `re_evaluate_product_eligibility(product_id, reason="eol")`
 3. If no actionable records found for a product, no sub-task is enqueued
+
+Products whose evaluator result is `NULL`, `pre_release`, `general_support`,
+or `extended_support` are outside both action queries. In particular, missing
+or inconsistent dates cannot enqueue Reactive Support or EOL work when they
+cause the evaluator to return `NULL`.
 
 **Idempotency**: if the task runs multiple times, subsequent executions
 find no actionable records (already transitioned/removed) and enqueue
@@ -162,7 +170,8 @@ with `deleted_at IS NULL` (not directly excluded), the track itself is
 soft-deleted (`deleted_at` set on the track record only), and if the parent
 package has zero remaining tracks with `deleted_at IS NULL`, the package
 itself is soft-deleted. Each step produces a `TicketAuditEvent` (with
-`user_id = NULL`) and calls `reconcile_ticket_status`.
+`user_id = NULL`). `reconcile_ticket_status()` is called once after the entire
+orphan chain completes, as defined by `package_service`.
 
 This is an upward chain only — child records are never modified. Each
 soft-deletion sets `deleted_at` on the targeted record; descendants become

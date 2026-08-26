@@ -360,6 +360,9 @@ visible and correctable; silent omission of eligible products is not.
 1. **Reactive Support override**: if the Product is currently in the
    `reactive_support` lifecycle phase,
    `eligible = false` regardless of CVSS score.
+   A `NULL` lifecycle phase means that lifecycle is unavailable; it does not
+   activate this override and does not otherwise force either eligibility
+   value. The remaining CVSS threshold rules still apply.
 2. **Check CVSS threshold**: read `Product.cvss_threshold`, which is
    synchronized from AIMAAS. NULL means an implicit threshold of 0 (all CVEs
    eligible).
@@ -818,9 +821,8 @@ requested by the VA). The total number of `TicketAuditEvent` records
 created by a soft-delete operation is `1 + len(orphan_cleanup)`: one for the
 directly excluded record (with the VA's `user_id`) plus one for each
 ancestor chained by orphan cleanup (with `user_id = NULL`). Ticket
-status re-evaluation occurs after each chain step (up to 3 times
-for a full product → track → package chain — see
-`docs/features/packages/package-service.md`, Chain Composition).
+status re-evaluation occurs once after the complete orphan chain — see
+`docs/features/packages/package-service.md`, Chain Composition.
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
