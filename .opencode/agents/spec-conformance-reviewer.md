@@ -7,7 +7,7 @@ description: >
   opening or updating a pull request, or on demand with an explicit pull
   request reference. Read-only: does not modify files.
 mode: subagent
-model: google-vertex/claude-sonnet-5@default
+model: github-copilot/claude-sonnet-5
 variant: xhigh
 permission:
   edit: deny

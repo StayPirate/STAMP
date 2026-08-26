@@ -7,7 +7,7 @@ description: >
   Use this agent after adding or modifying any of those artifacts.
   Read-only: does not modify files.
 mode: subagent
-model: google-vertex/claude-sonnet-5@default
+model: github-copilot/claude-sonnet-5
 variant: xhigh
 permission:
   edit: deny

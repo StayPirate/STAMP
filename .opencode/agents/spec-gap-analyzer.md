@@ -7,7 +7,7 @@ description: >
   cross-cutting documents for context. Use this agent after creating or
   substantially modifying a feature spec. Read-only: does not modify files.
 mode: subagent
-model: google-vertex/claude-opus-5@default
+model: github-copilot/claude-opus-5
 variant: high
 permission:
   edit: deny
