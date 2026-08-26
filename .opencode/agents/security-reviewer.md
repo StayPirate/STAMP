@@ -5,7 +5,7 @@ description: >
   endpoints, authentication/authorization logic, input handling, or secret
   management. Read-only: does not modify files.
 mode: subagent
-model: google-vertex/claude-opus-5@default
+model: google-vertex/claude-sonnet-5@default
 variant: high
 permission:
   edit: deny
