@@ -342,26 +342,111 @@ qualifying backfill trigger or a later package-addition invocation.
 
 ## AIMAAS Integration
 
+### Origin, Authentication, and Pagination
+
+The configured `AIMAAS_API_URL` identifies the AIMAAS API prefix. Its default
+value is `https://aimaas.suse.de/api`; endpoint paths such as
+`entity/products` are appended to that prefix after removing any trailing
+slash. The configured URL MUST use HTTPS and MUST NOT contain user
+information, a query, or a fragment. A non-default port is permitted for an
+explicitly configured deployment. At application startup, Sentinel validates
+these constraints and refuses to start with an error naming `AIMAAS_API_URL`
+when the value is invalid.
+
+AIMAAS requests use no authentication. Sentinel sends no credentials. A
+future upstream authentication requirement for GET requests is a contract
+change and requires specification review before the integration changes. The
+AIMAAS OpenAPI spec at `/api/openapi.json` indicates write operations may
+require authentication; Sentinel uses only GET (read) operations.
+
 HTTPS connections to AIMAAS use the combined trust store (system CAs + SUSE
 Trust Root CA). See `networking.md`, TLS Trust Store Configuration.
 
+AIMAAS endpoints use a pagination envelope distinct from SMELT:
+
+| Field | AIMAAS | SMELT |
+|-------|--------|-------|
+| Item array | `items` | `results` |
+| Total count | `total` | `count` |
+| Total pages | `pages` | `total_pages` |
+| Current page | `page` | (in `next`/`previous` metadata) |
+| Page size | `size` | (implicit/requested) |
+| Continuation URLs | None | `next`, `previous` |
+
+Sentinel requests pages sequentially, starting at page 1, with explicit
+`size=100`. AIMAAS enforces a maximum page size of 100; values above this
+return a 422 validation error. Page numbering is 1-based; page 0 returns
+422. Pages beyond `pages` return `{items: []}` with correct metadata (not
+404).
+
+Pagination validation invariants:
+- `total` and `pages` must remain constant across all pages of a single
+  retrieval.
+- Non-final pages must return exactly `size` items.
+- The final page must return `total - (pages - 1) * size` items.
+- Total collected items must equal `total`.
+- An inconsistency aborts the run without publication.
+
+Live verification on 2026-08-26 confirmed this envelope on both the Products
+and CVSS threshold endpoints, 1-based page numbering, the 100-item page-size
+cap, and empty-array (not 404) behavior for pages beyond `pages`.
+
+### Deleted Flag Semantics
+
+AIMAAS exposes a `deleted` boolean on both Product and threshold entities. By
+default, the list endpoints return only `deleted: false` records. The `all`
+and `deleted_only` query parameters control inclusion of deleted records.
+
+Sentinel uses the default behavior (no `all=true` or `deleted_only=true`),
+which excludes deleted records. No explicit filter is needed.
+
+When a previously synchronized product becomes `deleted: true` in AIMAAS (or
+otherwise disappears from the default list): lifecycle dates on the local
+`Product` are retained unchanged. Clearing to NULL would regress a product
+from `eol` to `lifecycle_phase = NULL` (no exclusion), which is operationally
+worse than retaining accurate historical dates. AIMAAS product deletions are
+not expected in normal operation; the existing deleted products are from
+initial test imports.
+
+When a threshold entry disappears: `Product.cvss_threshold` is cleared per
+the threshold-specific rule below.
+
 ### Product Lifecycle Sync (periodic)
 
-- **Endpoint**: `GET /api/entity/products/{slug}` (individual Product)
-  or `GET /api/entity/products?size=100&page={n}` (paginated list)
-- **Base URL**: `https://aimaas.suse.de/api`
-- **Matching**: AIMAAS products are matched to local `Product` records by
-  exact CPE. The two catalogs have different coverage; unmatched Products are
-  expected and MUST NOT be matched heuristically by name or version.
-- **Response fields used**: `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`,
+- **Endpoint suffix**: `entity/products`, resolved relative to
+  `AIMAAS_API_URL`
+- **Query parameters**: `all_fields=true` (required), `size=100`, `page={n}`
+- **Response fields consumed**: `cpe`, `fcs`, `end_of_gs`, `end_of_ltss`,
   `end_of_espos`, `end_of_reactive_ltss`
+- **Response fields ignored**: `slug`, `name`, `id`, `deleted`, `version`,
+  `tracked_in_bz`, `end_of_lts_core`
+- **Matching**: AIMAAS products are matched to local `Product` records by
+  exact CPE. The two catalogs have different coverage (414 overlap out of
+  475 AIMAAS and 556 SMELT); unmatched Products are expected and MUST NOT
+  be matched heuristically by name or version. A product without a local
+  CPE match is silently ignored.
+
+The `all_fields=true` parameter is required. Without it, the list endpoint
+returns a reduced field set that omits `fcs`, `end_of_reactive_ltss`, and
+`version`. With `all_fields=true`, the list response contains all fields
+available from the detail endpoint, eliminating the need for per-product
+detail requests.
+
 - **Sync behavior**:
-  1. Resolve AIMAAS Product details to an exact CPE match.
-  2. Set `first_customer_ship_date` from `fcs` and
+  1. Fetch all AIMAAS product pages with `all_fields=true` and `size=100`
+     under the shared AIMAAS pagination contract before opening a database
+     transaction.
+  2. For each AIMAAS product, match by exact `cpe` against local
+     `Product.cpe`. Skip products with no local match.
+  3. Set `first_customer_ship_date` from `fcs` and
      `general_support_end_date` from `end_of_gs`.
-  3. Set `extended_support_end_date` to the latest non-null value of
+  4. Set `extended_support_end_date` to the latest non-null value of
      `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
-  4. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
+  5. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
+  6. When an AIMAAS field changes from a non-null date to null, the local
+     field is updated to NULL. The lifecycle evaluator derives the phase
+     from the current field values; a field becoming NULL may change the
+     computed `lifecycle_phase`.
 
 The lifecycle synchronization modifies only the four lifecycle date columns;
 it does not modify SMELT-owned descriptive or catalog-observation fields, or
@@ -374,29 +459,55 @@ the lifecycle evaluator exposes the derived phase and
 `evaluate_lifecycle_transitions` applies Reactive Support or EOL behavior
 when applicable.
 
-The Product discovery/detail strategy, complete-snapshot behavior, clearing
-rules, and freshness semantics remain to be completed.
-
 ### CVSS Threshold Sync (periodic)
 
-- **Endpoint**: `GET /api/entity/cvss-threshold` (paginated)
-- **Response fields used**: `product` (AIMAAS product ID), `threshold`
-- **Matching**: each cvss-threshold entry has a `product` field
-  containing an AIMAAS product ID. Fetch that product's details to
-  obtain its CPE, then match to the local `Product` record via CPE.
+- **Endpoint suffix**: `entity/cvss-threshold`, resolved relative to
+  `AIMAAS_API_URL`
+- **Query parameters**: `size=100`, `page={n}`
+- **Response fields consumed**: `product` (AIMAAS product ID integer),
+  `threshold` (numeric)
+- **Response fields ignored**: `slug`, `name`, `id`, `deleted`
+- **CPE resolution**: each threshold entry has a `product` field containing
+  an AIMAAS product ID (integer). CPE resolution uses an in-memory join:
+  the fetcher first fetches the complete AIMAAS product list (with
+  `all_fields=true` and `size=100`), then matches each threshold's
+  `product` value against the product list's `id` field to obtain the
+  corresponding `cpe`. This avoids per-threshold detail requests and
+  produces an internally consistent snapshot.
 - **Sync behavior**:
-  1. Fetch all cvss-threshold entries
-  2. For each entry, resolve the `product` ID to a CPE (via AIMAAS
-     products endpoint)
-  3. Update only the corresponding local `Product.cvss_threshold`; do not
+  1. Fetch all AIMAAS product pages (with `all_fields=true`) and all
+     threshold pages before opening a database transaction. Build a
+     `product_id → cpe` mapping from the product list.
+  2. For each threshold entry, resolve its `product` ID to a CPE via
+     the in-memory mapping. A threshold whose `product` ID has no match
+     in the product list is skipped with a structured warning log.
+  3. Match the resolved CPE against local `Product.cpe`. A threshold
+     whose CPE has no local match is expected (different catalog
+     coverage) and silently ignored.
+  4. Update only the corresponding local `Product.cvss_threshold`; do not
      modify catalog-observation, descriptive, or lifecycle date fields.
-  4. If a Product's threshold changes, trigger the eligibility re-evaluation
-     defined in `product-lifecycle-transitions.md`.
+  5. If a Product's threshold changes, trigger the eligibility
+     re-evaluation defined in `product-lifecycle-transitions.md`.
+  6. **Threshold clearing**: after processing all AIMAAS thresholds,
+     identify local `Product` rows whose `cvss_threshold` is non-null but
+     whose CPE is not present in the resolved AIMAAS threshold set. Clear
+     those products' `cvss_threshold` to NULL (implicit threshold of 0,
+     conservatively permissive). Each clearing is a threshold change and
+     triggers automatic eligibility re-evaluation for non-overridden
+     `TicketPackageProduct` records.
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
   A later change from `NULL` to an explicit threshold is a threshold change
   and triggers automatic eligibility re-evaluation for non-overridden
   `TicketPackageProduct` records.
+
+### SMELT Decoupling
+
+Both AIMAAS fetchers match by CPE against `Product.cpe` with no dependency
+on SMELT data, `ProductRepository`, or SMELT endpoints. The threshold CPE
+resolution uses AIMAAS-internal product IDs resolved via the AIMAAS product
+list. If Product discovery were later migrated away from SMELT, the AIMAAS
+integration would require no changes.
 
 ---
 
@@ -498,19 +609,26 @@ TBD
 | Class name | TBD |
 | Schedule | TBD |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
-| Scope | TBD |
-| Auth | TBD (internal) |
-| Custom settings | TBD |
+| Scope | Complete AIMAAS Product list with `all_fields=true` on every run; no cursor or incremental mode |
+| Auth | None |
+| Custom settings | No |
 
 #### Algorithm
 
-The approved field projection is defined in [Product Lifecycle Sync
-(periodic)](#product-lifecycle-sync-periodic). Discovery, clearing,
-freshness, publication, and recovery behavior remains to be defined.
+The retrieval, field projection, matching, and clearing behavior is
+defined in [AIMAAS Integration](#aimaas-integration): pagination contract
+in [Origin, Authentication, and Pagination](#origin-authentication-and-pagination-1),
+deleted-flag handling in [Deleted Flag Semantics](#deleted-flag-semantics),
+and sync logic in [Product Lifecycle Sync (periodic)](#product-lifecycle-sync-periodic).
 
 #### Error Handling
 
-TBD
+Shared transport retries apply to retryable HTTP failures. After those
+retries are exhausted, any retrieval, non-success HTTP response,
+pagination, or response-schema failure aborts the run without modifying
+local lifecycle data. Recovery is the next scheduled or
+operator-triggered run. Error messages and logs identify the failed page
+or validation category without retaining full response payloads.
 
 #### Metrics
 
@@ -524,19 +642,26 @@ TBD
 | Class name | TBD |
 | Schedule | TBD |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
-| Scope | TBD |
-| Auth | TBD (internal) |
-| Custom settings | TBD |
+| Scope | Complete AIMAAS Product list (for CPE resolution) and complete threshold list on every run; in-memory join; no cursor or incremental mode |
+| Auth | None |
+| Custom settings | No |
 
 #### Algorithm
 
-The approved matching and column-ownership behavior is defined in [CVSS
-Threshold Sync (periodic)](#cvss-threshold-sync-periodic). Complete snapshot,
-clearing, recalculation, and recovery behavior remains to be defined.
+The retrieval, CPE resolution, matching, clearing, and re-evaluation
+behavior is defined in [AIMAAS Integration](#aimaas-integration):
+pagination contract in [Origin, Authentication, and Pagination](#origin-authentication-and-pagination-1),
+deleted-flag handling in [Deleted Flag Semantics](#deleted-flag-semantics),
+and sync logic in [CVSS Threshold Sync (periodic)](#cvss-threshold-sync-periodic).
 
 #### Error Handling
 
-TBD
+Shared transport retries apply to retryable HTTP failures. After those
+retries are exhausted, any retrieval, non-success HTTP response,
+pagination, or response-schema failure aborts the run without modifying
+local thresholds. This includes failures during the product-list
+retrieval phase (required for CPE resolution). Recovery is the next
+scheduled or operator-triggered run.
 
 #### Metrics
 
@@ -550,8 +675,10 @@ TBD
   credentials are rejected according to `docs/api-spec.md`.
 - SMELT and AIMAAS base URLs are configured via environment variables
   (`SMELT_API_URL`, `AIMAAS_API_URL`). See [Configuration](#configuration)
-- SMELT uses anonymous HTTPS requests. AIMAAS authentication remains to be
-  defined. Any future credentials are provided through secret configuration,
+- Both SMELT and AIMAAS use anonymous HTTPS requests. Neither service
+  currently requires authentication for read operations. A future upstream
+  authentication requirement is a contract change requiring specification
+  review. Any future credentials are provided through secret configuration,
   never in code.
 
 ---
@@ -562,8 +689,10 @@ TBD
   package resolution (default: `https://smelt.suse.de/api`). It must contain
   no user information, query, or fragment; a non-default port is permitted.
   Invalid values fail application startup with an error naming the setting.
-- `AIMAAS_API_URL`: AIMAAS API base URL for product lifecycle and CVSS
-  threshold sync (default: `https://aimaas.suse.de/api`)
+- `AIMAAS_API_URL`: AIMAAS HTTPS API prefix for product lifecycle and CVSS
+  threshold sync (default: `https://aimaas.suse.de/api`). It must contain
+  no user information, query, or fragment; a non-default port is permitted.
+  Invalid values fail application startup with an error naming the setting.
 
 ## Cross-references
 
