@@ -9,7 +9,10 @@ management, and role mapping administration.
 This audit trail replaces the INFO-level application logging currently
 specified for these operations. Application-level logging MAY be retained
 alongside the database audit trail for operational monitoring, but the
-database record is the authoritative audit source.
+database record is the authoritative historical audit source. Current user,
+role, and API-key state remains authoritative in the owning operational tables
+per `docs/features/platform/audit-trail-infrastructure.md` (Operational State
+Authority).
 
 ## Data Model
 

@@ -797,10 +797,10 @@ release detection Case B/C).
 #### Design Decisions
 
 - **No status filter on tracks**: all tracks are checked regardless of
-  their `PackageStatus` or soft-deletion status. Soft-deleted tracks are
-  included because submission tracking applies regardless of exclusion
-  status (see hierarchical exclusion model in
-  `docs/features/packages/package-model.md`). This ensures SR/RR data
+  their `PackageStatus` or actionability. VA-excluded and
+  lifecycle-non-actionable tracks are included because submission tracking
+  records factual state regardless of operational participation (see Exclusion
+  and Actionability in `docs/features/packages/package-model.md`). This ensures SR/RR data
   is captured even for tracks already in `FIXED` state (e.g., Case C
   tickets created by `create_ticket_from_detection`) or tracks excluded
   by the VA. The data is not displayed in the UI for final-status or

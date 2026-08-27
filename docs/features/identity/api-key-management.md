@@ -123,7 +123,10 @@ the user must create new keys.
 
 Revoked and expired keys are retained indefinitely. There is no cleanup task.
 The retained API key row is lifecycle history, while `IdentityAuditEvent` is
-the authoritative audit record.
+the authoritative historical audit record. Current revocation and expiry state
+is determined from the API key row, never reconstructed from audit events; see
+`docs/features/platform/audit-trail-infrastructure.md` (Operational State
+Authority).
 
 ### Active-Key Anomaly Warning
 

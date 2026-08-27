@@ -57,7 +57,8 @@ Sentinel does not distinguish LTSS from ESPOS because they have equivalent
 platform behavior. The lifecycle evaluator below defines the exact phase,
 boundary, missing-data, and inconsistent-data behavior. If it returns `NULL`,
 the lifecycle phase is unavailable; `NULL` is not treated as General Support,
-Reactive Support, or EOL and applies no lifecycle exclusion.
+Reactive Support, or EOL and does not make package-tree Products
+non-actionable.
 
 #### Lifecycle Evaluator
 
@@ -122,8 +123,17 @@ For a consistent date set, evaluate in this order:
 The evaluator depends only on these inputs. SMELT catalog presence, ticket
 state, eligibility, and any previously derived phase do not affect its result.
 
-For automated actions triggered by lifecycle phase transitions (Reactive
-Support eligibility changes, EOL Product removal), see
+Every operation that evaluates lifecycle captures one UTC `evaluation_date`
+for its full set of rows, filters, counts, and gate predicates. List requests
+made on opposite sides of midnight may observe different derived phases; one
+request never mixes dates. The Product query service provides a reusable SQL
+expression equivalent to this pure evaluator so lifecycle filters and package
+actionability remain database-filterable. The Python and SQL forms MUST agree
+for every valid, incomplete, inconsistent, and boundary-date combination.
+Neither lifecycle phase nor its EOL result is persisted as current state.
+
+For automated reconciliation triggered by lifecycle phase changes (Reactive
+Support eligibility and EOL-derived package-tree actionability), see
 `docs/features/packages/product-lifecycle-transitions.md`.
 
 ---
@@ -465,8 +475,9 @@ which excludes deleted records. No explicit filter is needed.
 When a previously synchronized product becomes `deleted: true` in AIMAAS (or
 otherwise disappears from the default list): lifecycle dates on the local
 `Product` are retained unchanged. Clearing to NULL would regress a product
-from `eol` to `lifecycle_phase = NULL` (no exclusion), which is operationally
-worse than retaining accurate historical dates. AIMAAS product deletions are
+from `eol` to `lifecycle_phase = NULL` (actionable unless manually excluded),
+which is operationally worse than retaining accurate historical dates. AIMAAS
+product deletions are
 not expected in normal operation; the existing deleted products are from
 initial test imports.
 
@@ -536,12 +547,11 @@ it does not modify SMELT-owned descriptive or catalog-observation fields, or
 `cvss_threshold`.
 
 A Product whose lifecycle evaluator returns `NULL` remains usable for package
-resolution, and no lifecycle exclusion is applied. The Reactive Support
+resolution and actionable unless manually excluded. The Reactive Support
 eligibility rule also does not apply, while independent CVSS threshold
-evaluation still does. When later synchronization changes the evaluator
-result to a phase, the evaluator exposes that phase and
-`evaluate_lifecycle_transitions` applies Reactive Support or EOL behavior
-when applicable.
+evaluation still does. When later synchronization changes the evaluator result
+to a phase, `evaluate_lifecycle_transitions` reconciles Reactive Support
+eligibility and EOL-derived actionability when applicable.
 
 ### CVSS Threshold Sync (periodic)
 
@@ -580,9 +590,12 @@ when applicable.
      Product ID is retained for post-commit eligibility recalculation.
   7. Commit the complete threshold publication before dispatching any task.
   8. In a new read-only phase after commit, identify Products whose
-     system-managed `TicketPackageProduct` eligibility in an active Ticket
-     differs from the result under the committed threshold snapshot. This
-     mismatch set recovers prior task-dispatch or per-Ticket failures.
+      system-managed `TicketPackageProduct` eligibility in an operable Ticket
+      (`New`, `Analysis`, `Analyzed`, or `Resolved`)
+      differs from the result under the committed threshold snapshot. This
+     mismatch scan captures one UTC `evaluation_date` and uses it for every
+     lifecycle-dependent eligibility comparison. The mismatch set recovers
+     prior task-dispatch or per-Ticket failures.
   9. Enqueue the Product-level recalculation defined in
      `product-lifecycle-transitions.md` once per Product in the union of the
      changed and mismatch sets, with reason `threshold`. A dispatch failure
@@ -616,6 +629,11 @@ GET /api/v1/products
 ```
 
 List all products synced from SMELT. Paginated.
+
+The service captures one UTC `evaluation_date` for the request and uses the
+canonical SQL lifecycle expression for both the result query and count query.
+The endpoint remains database-filterable and does not load the complete
+Product table for Python-side filtering.
 
 **Query parameters**:
 
@@ -804,8 +822,8 @@ TBD
   model; eligibility rules consume product lifecycle and threshold data
 - `docs/features/packages/package-service.md` -- package-tree creation used by
   Product catalog backfill
-- `docs/features/packages/product-lifecycle-transitions.md` -- EOL and
-  Reactive Support automated actions
+- `docs/features/packages/product-lifecycle-transitions.md` -- Reactive
+  Support eligibility and EOL-derived actionability reconciliation
 - `docs/features/tickets/cvss-scoring.md` -- CVSS resolution cascade
   used for threshold comparison
 - `docs/features/platform/system-settings.md` -- default CVSS version

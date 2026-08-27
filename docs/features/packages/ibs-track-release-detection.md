@@ -83,10 +83,11 @@ by the real-time `IBSEventConsumer` during downtime — see
    values from `TicketPackageTrack` records with `status` in
    (`ANALYSIS`, `AFFECTED`), belonging to **active tickets** (ticket
     status in `New`, `Analysis`, `Analyzed`).
-   Soft-deleted tracks under active tickets are included — release
-   detection applies regardless of exclusion status (see hierarchical
-   exclusion model in `docs/features/packages/package-model.md`). Only
-   codestreams with at least one such track are scanned.
+   VA-excluded and lifecycle-non-actionable tracks under active Tickets are
+   included because release detection records factual state regardless of
+   operational actionability (see Exclusion and Actionability in
+   `docs/features/packages/package-model.md`). Only codestreams with at least
+   one such track are scanned.
 
 2. **Fetch current MD5 checksums**: for each active codestream, call
    `GET /source/{codestream}?view=info` via the `IBSClient` service. This
@@ -222,7 +223,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 | Class name | `DetectIbsTrackReleases` |
 | Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
-| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active tickets (New, Analysis, Analyzed). Soft-deleted tracks under active tickets are included |
+| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active Tickets (New, Analysis, Analyzed). VA-excluded and lifecycle-non-actionable tracks are included |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |

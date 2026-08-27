@@ -10,8 +10,9 @@ emitted to stdout/stderr by every runtime process role.
 defined and persisted per
 `docs/features/platform/audit-trail-infrastructure.md`. Audit trails
 (`TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
-`FetcherAuditEvent`) are business events: authoritative, persisted in
-PostgreSQL, queryable, and retained indefinitely. Operational logs, by
+`FetcherAuditEvent`) are authoritative historical evidence: persisted in
+PostgreSQL, queryable, and retained indefinitely, but not authoritative current
+operational state. Operational logs, by
 contrast, are diagnostic: transient, never persisted by the
 application, and consumed via an external log collector/aggregator (if
 any). The two systems serve different purposes and MUST NOT be

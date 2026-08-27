@@ -6,12 +6,12 @@ tracking.
 ## Specs
 
 ```
-package-model.md                      Status model, eligibility, delivery, soft-deletion
+package-model.md                      Status, eligibility, delivery, exclusion, actionability
 ├── ibs-track-release-detection.md       IBS track-level: MD5 cache, IBS diff, Cases A/B/C
 ├── ibs-product-release-detection.md     IBS product-level: updateinfo.xml, advisory match chain
 ├── git-track-release-detection.md       Git track-level release detection (TBD)
 ├── git-product-release-detection.md     Git product-level release detection (TBD)
-└── product-lifecycle-transitions.md     Reactive Support / EOL automation
+└── product-lifecycle-transitions.md     Reactive Support and EOL reconciliation
 
 package-service.md                       package_service module contract (mutations, orchestration, queries)
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases

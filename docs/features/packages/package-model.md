@@ -109,20 +109,27 @@ Neither axis resets nor constrains the other. "Anomalous" combinations
 situations requiring VA attention. See
 [Anomaly Detection](#anomaly-detection-future-review-queue).
 
-### 7. Soft-deletion instead of IGNORED status
+### 7. Manual exclusion and derived actionability
 
-Spurious tracks or products are handled by soft-deletion rather than a
-special `IGNORED` status. A record that should not exist is removed, not
-marked with a status value. See [Soft-Deletion](#soft-deletion).
+Spurious packages, tracks, or Products are excluded by a VA through
+hierarchical soft-deletion rather than an `IGNORED` status. Each `deleted_at`
+marker records an explicit VA decision at that exact scope; automated
+workflows never set or clear these markers.
 
-### 8. Soft-deleted records continue to receive updates
+Whether a record currently participates in operational work is represented by
+the derived `actionable` property. Actionability combines the hierarchical VA
+exclusion markers with the authoritative Product lifecycle phase. In
+particular, EOL is derived from AIMAAS lifecycle dates and never copied into a
+package-tree `deleted_at` field. See [Exclusion and Actionability](#exclusion-and-actionability).
 
-Soft-deleted records are excluded from normal views, gates, and anomaly
-detection, but they **continue to receive updates** from propagation,
-delivery tracking, eligibility recalculation, and release detection.
-Their state is always current, eliminating the need for reconciliation
-logic at restore time. Exclusion is determined hierarchically — see
-[Hierarchical Exclusion Model](#hierarchical-exclusion-model).
+### 8. Non-actionable records continue to receive factual updates
+
+VA-excluded and lifecycle-non-actionable records are omitted from operational
+views and gates, but they **continue to receive factual and independently
+derived updates** from delivery tracking, eligibility recalculation, and
+release detection while their Ticket is active. Their state remains current,
+eliminating restore-time reconciliation and allowing lifecycle actionability
+to change without replaying missed facts.
 
 ---
 
@@ -231,7 +238,7 @@ the implicit grouping by `package_name` across
 | `id` | UUID | PK | Internal identifier |
 | `ticket_id` | UUID | FK(ticket.id), NOT NULL | Related ticket |
 | `package_name` | VARCHAR(255) | NOT NULL | Source package name |
-| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `deleted_at` | TIMESTAMPTZ | nullable | Direct VA-exclusion timestamp. NULL = not directly VA-excluded |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
@@ -252,7 +259,7 @@ by the system based on IBS SR/RR tracking data.
 | `reference` | VARCHAR(255) | NOT NULL | Track identifier: IBS codestream name or git branch name |
 | `status` | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS | Affectedness status |
 | `delivery_status` | VARCHAR(20) | NOT NULL, DEFAULT PENDING | Delivery pipeline status |
-| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `deleted_at` | TIMESTAMPTZ | nullable | Direct VA-exclusion timestamp. NULL = not directly VA-excluded |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
@@ -278,7 +285,7 @@ eligibility and delivery confirmation.
 | `eligible` | BOOLEAN | NOT NULL, DEFAULT true | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
 | `released_at` | TIMESTAMPTZ | nullable | When Sentinel detected the fix in the product's update repository |
-| `deleted_at` | TIMESTAMPTZ | nullable | Soft-deletion timestamp. NULL = active |
+| `deleted_at` | TIMESTAMPTZ | nullable | Direct VA-exclusion timestamp. NULL = not directly VA-excluded |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
@@ -599,7 +606,7 @@ ticket status re-evaluation after each change.
 There is **no codestream eligibility rollup** — the track retains its
 affectedness status regardless of whether any product is eligible. The
 question "is there work to do on this track?" is answered by checking
-whether any active product under it has `eligible = true`.
+whether any actionable Product under it has `eligible = true`.
 
 ### VA Overrides Product Eligibility
 
@@ -667,120 +674,132 @@ delivery status — it is system-managed.
 
 ---
 
-## Soft-Deletion
+## Exclusion and Actionability
 
-### Mechanism
+### Manual Exclusion Markers
 
-The VA can soft-delete packages, tracks, or products to exclude them
-from the ticket. Soft-deletion is indicated by a non-null `deleted_at`
-timestamp on the record:
+The VA can soft-delete packages, tracks, or Products to exclude them from the
+Ticket. A non-null `deleted_at` is a durable record of an explicit VA decision
+at that exact scope:
 
-- `deleted_at IS NOT NULL` → record is soft-deleted (excluded)
-- `deleted_at IS NULL` → record is active
+- `deleted_at IS NOT NULL` means directly VA-excluded;
+- `deleted_at IS NULL` means not directly VA-excluded.
 
-The identity of the user who performed the deletion is recorded in the
-corresponding `TicketAuditEvent` (`user_id` field), not on the record itself.
+The acting VA is recorded in the corresponding `TicketAuditEvent`, not on the
+package-tree record. Automated workflows MUST NOT set or clear any package,
+track, or Product `deleted_at` field.
 
-### Hierarchical Exclusion Model
+Manual exclusion is hierarchical. Only the record targeted by the VA is
+modified:
 
-Soft-deletion follows a **hierarchical** model: `deleted_at` is set
-**only** on the record where the VA (or the system) acts. Child records
-are NOT modified — they are implicitly excluded through the hierarchy.
+- excluding a package sets only `TicketPackage.deleted_at`;
+- excluding a track sets only `TicketPackageTrack.deleted_at`;
+- excluding a Product sets only `TicketPackageProduct.deleted_at`.
 
-- **Package soft-deleted** → only the `TicketPackage` record receives
-  `deleted_at`. All tracks and products under it are **effectively
-  excluded** via the parent, but their own `deleted_at` remains `NULL`.
-- **Track soft-deleted** → only the `TicketPackageTrack` record receives
-  `deleted_at`. All products under it are effectively excluded via the
-  parent track.
-- **Product soft-deleted** → only the `TicketPackageProduct` record
-  receives `deleted_at`.
+A descendant is **effectively VA-excluded** when its own marker or any ancestor
+marker is non-null:
 
-When a soft-deletion leaves a parent record with no remaining children
-that have `deleted_at IS NULL`, the orphan cleanup invariants (defined in
-`docs/features/packages/package-service.md`, Orphan Cleanup Invariants)
-apply upward: the parent is also soft-deleted. See
-also `docs/features/packages/product-lifecycle-transitions.md` for the
-EOL-triggered chain.
-
-#### Effectively Excluded
-
-A record is **effectively excluded** if any of the following is true:
-
-- Its own `deleted_at IS NOT NULL` (directly excluded), OR
-- Its parent's `deleted_at IS NOT NULL`, OR
-- Its grandparent's `deleted_at IS NOT NULL`
-
-Concretely:
-
-| Record type | Effectively excluded when |
-|-------------|--------------------------|
+| Record type | Effectively VA-excluded when |
+|-------------|------------------------------|
 | Package | `package.deleted_at IS NOT NULL` |
-| Track | `track.deleted_at IS NOT NULL` OR `package.deleted_at IS NOT NULL` |
-| Product | `product.deleted_at IS NOT NULL` OR `track.deleted_at IS NOT NULL` OR `package.deleted_at IS NOT NULL` |
+| Track | `package.deleted_at IS NOT NULL` or `track.deleted_at IS NOT NULL` |
+| Product | `package.deleted_at IS NOT NULL`, `track.deleted_at IS NOT NULL`, or `product.deleted_at IS NOT NULL` |
 
-All system operations that need to determine whether a record is excluded
-(gates, UI filtering, anomaly detection) MUST use the hierarchical check,
-not just the record's own `deleted_at`.
+There is no automatic orphan soft-deletion. A parent with no participating
+descendants retains `deleted_at = NULL` unless a VA explicitly excludes that
+parent.
+
+### Derived Actionability
+
+`actionable` is a derived property, not a database column. It is evaluated
+from current package-tree markers, Product lifecycle data, and one UTC
+`evaluation_date` captured for the complete request or transaction:
+
+```text
+product.actionable =
+    package.deleted_at IS NULL
+    AND track.deleted_at IS NULL
+    AND ticket_product.deleted_at IS NULL
+    AND (
+        lifecycle_phase(catalog_product, evaluation_date) IS NULL
+        OR lifecycle_phase(catalog_product, evaluation_date) != eol
+    )
+
+track.actionable =
+    package.deleted_at IS NULL
+    AND track.deleted_at IS NULL
+    AND EXISTS(product where product.actionable)
+
+package.actionable =
+    package.deleted_at IS NULL
+    AND EXISTS(track where track.actionable)
+```
+
+A `NULL` lifecycle phase means lifecycle is unavailable and does not make a
+Product non-actionable. Product lifecycle evaluation is defined in
+`product-catalog.md` (Lifecycle Evaluator).
+
+The service layer MUST expose reusable SQL/SQLAlchemy expressions implementing
+these predicates for filters, aggregate counts, and Ticket gates. The pure
+lifecycle evaluator and SQL lifecycle expression MUST produce identical
+results for the same dates and `evaluation_date`. Implementations MUST NOT
+persist `lifecycle_phase` or `actionable` as current-state columns.
+
+Each package-tree response includes `actionable` and a nullable
+`non_actionable_reason`. The reason uses the first applicable value in this
+ordered list, which makes the result deterministic when multiple conditions
+apply:
+
+| Level | Ordered `non_actionable_reason` values |
+|-------|----------------------------------------|
+| Package | `package_excluded`, `no_actionable_tracks` |
+| Track | `package_excluded`, `track_excluded`, `no_actionable_products` |
+| Product | `package_excluded`, `track_excluded`, `product_excluded`, `eol` |
+
+An actionable record has `non_actionable_reason = NULL`. Parent reasons
+describe the absence of actionable descendants without changing any parent
+row. Consumers MUST use these fields rather than infer current participation
+from `deleted_at` alone.
+
+### Gate Participation
+
+Actionability is an observation-point combination of manual exclusion and
+lifecycle; it does not modify affectedness, eligibility, or delivery.
+
+- The Analyzed gate's minimum-presence condition requires at least one track
+  that is not effectively VA-excluded. This proves that package analysis data
+  exists even when every Product is currently EOL.
+- Only actionable tracks participate in the undecided-affectedness check and
+  the Resolved gate.
+- Only actionable Products participate in Product-level resolution
+  conditions.
+- Therefore a Ticket with at least one VA-included track but no actionable
+  tracks can be Resolved once the non-lifecycle Analyzed requirements are met.
+  If a Product later leaves EOL, its track becomes actionable and normal gate
+  reconciliation may regress the Ticket.
 
 ### Continued Updates
 
-Soft-deleted records **continue to receive updates** from all automated
-processes:
-
-- Eligibility recalculation (CVSS/threshold/lifecycle changes)
-- Delivery status updates (SR/RR state changes)
-- Release detection (codestream and product level)
-
-These continued updates apply only to records under **active tickets**
-(status `New`, `Analysis`, or `Analyzed` — see
-`docs/features/tickets/tickets.md`). Records under inactive tickets
-(`Resolved`, `Ignored`, `Duplicated`) are not subject to automated
-processing regardless of their soft-deletion status.
-
-This means the state of a soft-deleted record always reflects the
-current reality, not the state at the time of deletion.
-
-### Exclusion from System Operations
-
-Soft-deleted records are excluded from:
-
-- **Default views** — excluded from default ticket responses (requires `include_deleted` parameter)
-- **Ticket resolution gate** — not considered when evaluating the
-  per-track resolution-complete predicate (see
-  `docs/features/tickets/tickets.md`, "Gate: Analyzed → Resolved")
-- **Anomaly detection** — not flagged in the future Review Queue
-- **Analyzed gate** — not considered when evaluating Analysis → Analyzed
+Directly or effectively VA-excluded records and EOL Products continue to
+receive eligibility recalculation, delivery updates, and release observations
+while their Ticket is active (`New`, `Analysis`, or `Analyzed`). Records under
+inactive Tickets are recovered through the applicable catch-up behavior when
+the Ticket re-enters an active status. This keeps factual state current without
+making exclusion or lifecycle depend on another dimension.
 
 ### Restore
 
-Restore operates **only on the directly excluded record** — there is no
-propagation to child records. The VA can only restore a record that has its
-own `deleted_at IS NOT NULL`.
+Restore clears `deleted_at` only on the directly VA-excluded record selected by
+the VA. It never modifies descendants and is permitted while an ancestor is
+excluded or while the restored record remains non-actionable for another
+reason. No child-existence or actionability precondition applies.
 
-When the VA restores a soft-deleted record:
-
-1. **Pre-check (tracks and packages only)**: verify that the record will
-   have at least one active child after restoration:
-   - Restoring a **track**: at least 1 product under it must have
-     `deleted_at IS NULL` (directly). If all products are directly
-     excluded, return error `PACKAGE_RESTORE_BLOCKED`.
-   - Restoring a **package**: at least 1 track under it must have
-     `deleted_at IS NULL` (directly), and that track must have at least
-     1 product with `deleted_at IS NULL` (directly). If no such
-     track-product chain exists, return error `PACKAGE_RESTORE_BLOCKED`.
-   - Restoring a **product**: no pre-check needed (products have no
-     children).
-2. `deleted_at` is set to `NULL` on the record.
-3. The record's state is already current (no recalculation needed —
-   soft-deleted records continue to receive updates).
-4. A single `TicketAuditEvent` is created for the restored record.
-
-**Restore is permitted even when an ancestor is excluded** (per design
-decision D2). Clearing a product's `deleted_at` while its parent track
-is excluded means the product is no longer directly excluded, but remains
-effectively excluded via the track. When the track is later restored, the
-product becomes fully active.
+For example, restoring a Product while its track remains excluded clears the
+Product's direct marker but leaves it effectively VA-excluded through the
+track. Restoring a track while all its Products are EOL clears the manual
+marker but leaves the track non-actionable until at least one Product becomes
+actionable. Each effective restore creates one VA-attributed audit event and
+reconciles the Ticket once.
 
 ### Interaction with add_package_to_ticket
 
@@ -789,9 +808,9 @@ whether the `TicketPackage` is soft-deleted. It queries SMELT, and
 creates any missing `TicketPackageTrack` and `TicketPackageProduct`
 records. Existing records (active or soft-deleted) are skipped.
 
-New records are created with `deleted_at = NULL`. If the parent package
-or track is soft-deleted, these new records are **effectively excluded**
-via the hierarchy — no special logic is needed.
+New records are created with `deleted_at = NULL`. If the parent package or
+track is VA-excluded, these records are effectively VA-excluded through the
+hierarchy. If their Product is EOL, they are independently non-actionable.
 
 The **API handler** for `POST /api/v1/tickets/{ticket_id}/packages` is
 responsible for checking whether the `TicketPackage` is soft-deleted
@@ -800,29 +819,13 @@ the handler returns `409 PACKAGE_ALREADY_EXCLUDED` without invoking the
 function. Internal callers (CVE ingestion, release detection) call the
 function directly and benefit from the automatic exclusion via hierarchy.
 
-### Ticket Events for Soft-Deletion
+### Ticket Events for Exclusion
 
-A single `TicketAuditEvent` is created for each soft-deletion or restore
-operation — only for the **directly affected record**. Child records
-that become effectively excluded via the hierarchy do not generate
-separate events.
-
-When a VA soft-deletes a track, 1 event is created (`track_excluded`).
-Products under the track are implicitly excluded via the hierarchy but
-do not produce individual events.
-
-**Upward chain (orphan cleanup)**: when orphan cleanup chains upward
-(e.g., deleting the last product triggers track deletion, which may
-trigger package deletion), each record soft-deleted by orphan cleanup
-generates its **own** `TicketAuditEvent` with the appropriate event type
-(`track_excluded`, `package_excluded`). These orphan cleanup audit events use
-`user_id = NULL` to indicate they are system-triggered (not directly
-requested by the VA). The total number of `TicketAuditEvent` records
-created by a soft-delete operation is `1 + len(orphan_cleanup)`: one for the
-directly excluded record (with the VA's `user_id`) plus one for each
-ancestor chained by orphan cleanup (with `user_id = NULL`). Ticket
-status re-evaluation occurs once after the complete orphan chain — see
-`docs/features/packages/package-service.md`, Chain Composition.
+A single VA-attributed `TicketAuditEvent` is created for each effective
+exclusion or restore operation, only for the directly affected record. Child
+records that become effectively VA-excluded through the hierarchy do not
+generate events. Derived EOL/actionability changes do not create exclusion or
+restore events because they do not mutate package-tree records.
 
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
@@ -917,10 +920,10 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 including soft-deleted), initial status determination, and eligibility
 logic internally — see `docs/features/packages/package-service.md`.
 
-New records are created with `deleted_at = NULL`. If the parent package
-or track is soft-deleted, these records are automatically **effectively
-excluded** via the hierarchy — no special handling is needed. See
-[Hierarchical Exclusion Model](#hierarchical-exclusion-model).
+New records are created with `deleted_at = NULL`. A new descendant under a
+VA-excluded parent is effectively VA-excluded through the hierarchy, and a new
+EOL Product is non-actionable without any mutation. See
+[Exclusion and Actionability](#exclusion-and-actionability).
 
 When a Product is added beneath an existing track, the track retains its
 current affectedness and delivery statuses. The Product therefore inherits
@@ -967,8 +970,10 @@ The following scenarios invoke `add_package_to_ticket`:
    detection Case B) — no explicit call is needed at restore time.
 6. **Product catalog backfill**: after a successful SMELT Product catalog
    sync makes at least one Product newly current, a system workflow calls
-   `add_package_to_ticket` for each active, non-soft-deleted package on
-   active tickets. See `product-catalog.md` (Product Catalog
+   `add_package_to_ticket` for each active-Ticket package whose package marker
+   is not soft-deleted. Lifecycle actionability does not filter this recovery
+   scan because a currently EOL Product can later become actionable without a
+   new catalog association. See `product-catalog.md` (Product Catalog
    Backfill).
 
 ### Package Management Constraints
@@ -977,7 +982,8 @@ The VA manages packages at the **package level only**:
 
 - The VA can **add** packages to a ticket.
 - The VA can **soft-delete** entire packages, individual tracks, or
-  individual products from a ticket (see [Soft-Deletion](#soft-deletion)).
+  individual Products from a ticket (see
+  [Exclusion and Actionability](#exclusion-and-actionability)).
 - The VA **cannot** add individual tracks or products — these are
   determined exclusively by SMELT when a package is added via
   `add_package_to_ticket`.
@@ -988,7 +994,8 @@ The VA manages packages at the **package level only**:
 ### Removing a Package from a Ticket
 
 When a VA removes a package from a ticket, Sentinel performs a
-**soft-deletion** (see [Soft-Deletion](#soft-deletion)): `deleted_at`
+**soft-deletion** (see
+[Exclusion and Actionability](#exclusion-and-actionability)): `deleted_at`
 is set on the `TicketPackage` record only. Child `TicketPackageTrack`
 and `TicketPackageProduct` records are not modified — they become
 effectively excluded via the hierarchy.
@@ -1129,7 +1136,7 @@ types are defined:
 | VA restores track | `track_restored` | VA user | `track_name`, `package_name` |
 | VA restores product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
 | VA changes track status | `track_status_changed` | VA user | `track_name`, `package_name`, `old_status`, `new_status` |
-| VA overrides product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
+| VA overrides or resets Product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible`, `reason = va_override` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
 | Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, `product_id`, `advisory_id` |
 | Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible`, `reason` |
@@ -1198,10 +1205,10 @@ contract, including:
 
 - **Analysis → Analyzed**: requires at least one package, all tracks
   decided, severity set, SUSE CVSS provided
-- **Analyzed → Resolved**: requires every non-excluded active track to
+- **Analyzed → Resolved**: requires every actionable track to
   be resolution-complete — either (a) `NOT_AFFECTED`/`WONT_FIX`, or
-  (b) `FIXED` with all non-excluded eligible products released, or
-  (c) `AFFECTED` with no non-excluded eligible products remaining
+  (b) `FIXED` with all actionable eligible Products released, or
+  (c) `AFFECTED` with no actionable eligible Products remaining
 - Reverse transitions when gate conditions are no longer met
 
 ---
@@ -1327,22 +1334,25 @@ documented SMELT/catalog errors may be returned on a repeat call.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/exclude
 ```
 
-Soft-delete a package from the ticket. Sets `deleted_at` on the package
-record only — tracks and products are not modified but become
-effectively excluded via the hierarchy. Creates a single `TicketAuditEvent`.
-See [Soft-Deletion](#soft-deletion) for the full behavior.
+Soft-delete a package from the Ticket. Sets `deleted_at` on the package record
+only; tracks and Products are not modified but become effectively VA-excluded
+through the hierarchy. Creates a single `TicketAuditEvent`.
+See [Exclusion and Actionability](#exclusion-and-actionability) for the full
+behavior.
 
 After the soft-delete, the system reconciles ticket status via
-`package_service`. This is necessary because excluding the package
-changes the set of active records considered by ticket gates (Resolved
-gate and Analyzed gate).
+`package_service`. This is necessary because excluding the package changes the
+set of participating records considered by Ticket gates (Resolved gate and
+Analyzed gate).
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "package_name": "openssl-3"
+    "package_name": "openssl-3",
+    "actionable": false,
+    "non_actionable_reason": "package_excluded"
   }
 }
 ```
@@ -1364,23 +1374,27 @@ gate and Analyzed gate).
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/restore
 ```
 
-Restore a soft-deleted package. Clears `deleted_at` on the package
-record only — child records are not modified. Creates a single
-`TicketAuditEvent`. See [Soft-Deletion — Restore](#restore).
-
-**Pre-check**: the package must have at least one track with
-`deleted_at IS NULL` that itself has at least one product with
-`deleted_at IS NULL`. If not, returns `422 PACKAGE_RESTORE_BLOCKED`.
+Restore a directly VA-excluded package. Clears `deleted_at` on the package
+record only; child records are not modified. The package may remain
+non-actionable because every track is excluded or has no actionable Product.
+Creates a single `TicketAuditEvent`. See
+[Exclusion and Actionability — Restore](#restore).
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "package_name": "openssl-3"
+    "package_name": "openssl-3",
+    "actionable": true,
+    "non_actionable_reason": null
   }
 }
 ```
+
+If every track remains non-actionable after the restore, the same successful
+response instead returns `actionable = false` and
+`non_actionable_reason = "no_actionable_tracks"`.
 
 **`Capability: manage_packages`**
 
@@ -1390,7 +1404,6 @@ record only — child records are not modified. Creates a single
 |--------|------|-----------|
 | 404 | `RESOURCE_NOT_FOUND` | Package not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Package is not directly soft-deleted |
-| 422 | `PACKAGE_RESTORE_BLOCKED` | Package has no active tracks with active products. Restore at least one track (with active products) first. |
 
 ---
 
@@ -1400,16 +1413,13 @@ record only — child records are not modified. Creates a single
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude
 ```
 
-Soft-delete a track from the ticket. Sets `deleted_at` on the track
-record only — products under it are not modified but become effectively
-excluded via the hierarchy. Creates a `TicketAuditEvent` for the excluded
-record. If orphan cleanup chains to ancestors, additional
-system-triggered audit events are created (see
-[Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
+Soft-delete a track from the ticket. Sets `deleted_at` on the track record
+only; Products under it are not modified but become effectively VA-excluded
+through the hierarchy. Creates one VA-attributed `TicketAuditEvent`.
 
-After the soft-delete (and any orphan cleanup chain), the system
+After the soft-delete, the system
 reconciles ticket status via `package_service`. This is necessary
-because excluding a track changes the set of active records considered
+because excluding a track changes the set of participating records considered
 by ticket gates (Resolved gate and Analyzed gate).
 
 **Response** (200 OK):
@@ -1418,35 +1428,11 @@ by ticket gates (Resolved gate and Analyzed gate).
 {
   "data": {
     "reference": "SUSE:SLE-15-SP6:Update",
-    "orphan_cleanup": []
+    "actionable": false,
+    "non_actionable_reason": "track_excluded"
   }
 }
 ```
-
-When this is the last active track under the parent package, orphan cleanup
-removes the package as well. In that case, `orphan_cleanup` contains the affected
-ancestor:
-
-```json
-{
-  "data": {
-    "reference": "SUSE:SLE-15-SP6:Update",
-    "orphan_cleanup": [
-      {"level": "package", "package_name": "openssl-3"}
-    ]
-  }
-}
-```
-
-`orphan_cleanup` is an array of ancestors that were automatically soft-deleted by
-orphan cleanup. Empty array if no orphan cleanup occurred. Maximum 1 element for
-track exclusion (the parent package). Each element identifies the level
-(`"package"`) and the identifying field (`package_name`).
-
-**Orphan cleanup behavior**: when exclusion leaves a parent record with no
-remaining active children (`deleted_at IS NULL`), the parent is also
-soft-deleted automatically. The `orphan_cleanup` array allows clients to update
-their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
@@ -1465,22 +1451,26 @@ their local tree state without a full refetch.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore
 ```
 
-Restore a soft-deleted track. Clears `deleted_at` on the track record
-only — products under it are not modified. Creates a single
+Restore a directly VA-excluded track. Clears `deleted_at` on the track record
+only; Product markers are not modified. The track may remain non-actionable
+because every Product is individually excluded or EOL. Creates a single
 `TicketAuditEvent`.
-
-**Pre-check**: the track must have at least one product with
-`deleted_at IS NULL`. If not, returns `422 PACKAGE_RESTORE_BLOCKED`.
 
 **Response** (200 OK):
 
 ```json
 {
   "data": {
-    "reference": "SUSE:SLE-15-SP6:Update"
+    "reference": "SUSE:SLE-15-SP6:Update",
+    "actionable": true,
+    "non_actionable_reason": null
   }
 }
 ```
+
+If every Product remains non-actionable after the restore, the same successful
+response instead returns `actionable = false` and
+`non_actionable_reason = "no_actionable_products"`.
 
 **`Capability: manage_packages`**
 
@@ -1490,7 +1480,6 @@ only — products under it are not modified. Creates a single
 |--------|------|-----------|
 | 404 | `RESOURCE_NOT_FOUND` | Track not found on this ticket |
 | 422 | `PACKAGE_NOT_EXCLUDED` | Track is not directly soft-deleted |
-| 422 | `PACKAGE_RESTORE_BLOCKED` | Track has no active products. Restore at least one product first. |
 
 ---
 
@@ -1500,14 +1489,13 @@ only — products under it are not modified. Creates a single
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude
 ```
 
-Soft-delete a single product from a track. Creates a `TicketAuditEvent`
-for the excluded record. If orphan cleanup chains to ancestors,
-additional system-triggered audit events are created (see
-[Ticket Events for Soft-Deletion](#ticket-events-for-soft-deletion)).
+Soft-delete a single Product from a track. Creates one VA-attributed
+`TicketAuditEvent` for the excluded record. Parent markers are never changed
+automatically.
 
-After the soft-delete (and any orphan cleanup chain), the system
+After the soft-delete, the system
 reconciles ticket status via `package_service`. This is necessary
-because excluding a product changes the set of active records considered
+because excluding a Product changes the set of actionable records considered
 by ticket gates (Resolved gate and Analyzed gate).
 
 **Response** (200 OK):
@@ -1517,38 +1505,11 @@ by ticket gates (Resolved gate and Analyzed gate).
   "data": {
     "product_id": "uuid",
     "product_name": "SLES 15-SP6",
-    "orphan_cleanup": []
+    "actionable": false,
+    "non_actionable_reason": "product_excluded"
   }
 }
 ```
-
-When orphan cleanup triggers (this was the last active product under the
-parent track, and/or the last active track under the grandparent package):
-
-```json
-{
-  "data": {
-    "product_id": "uuid",
-    "product_name": "SLES 15-SP6",
-    "orphan_cleanup": [
-      {"level": "track", "reference": "SUSE:SLE-15-SP6:Update"},
-      {"level": "package", "package_name": "openssl-3"}
-    ]
-  }
-}
-```
-
-`orphan_cleanup` is an array of ancestors automatically soft-deleted by orphan
-cleanup, ordered from immediate parent upward. Empty array if no orphan cleanup
-occurred. Maximum 2 elements for product exclusion (parent track, then
-grandparent package). Each element identifies the level (`"track"` or
-`"package"`) and the identifying field (`reference` for tracks,
-`package_name` for packages).
-
-**Orphan cleanup behavior**: when exclusion leaves a parent record with no
-remaining active children (`deleted_at IS NULL`), the parent is also
-soft-deleted automatically. The `orphan_cleanup` array allows clients to update
-their local tree state without a full refetch.
 
 **`Capability: manage_packages`**
 
@@ -1567,9 +1528,9 @@ their local tree state without a full refetch.
 POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore
 ```
 
-Restore a soft-deleted product. Clears `deleted_at` on the product
-record. No pre-check needed (products have no children). Creates a
-single `TicketAuditEvent`.
+Restore a directly VA-excluded Product. Clears `deleted_at` on the Product
+record. No child, ancestor, or lifecycle pre-check applies. Creates a single
+`TicketAuditEvent`.
 
 **Response** (200 OK):
 
@@ -1577,10 +1538,16 @@ single `TicketAuditEvent`.
 {
   "data": {
     "product_id": "uuid",
-    "product_name": "SLES-LTSS 15-SP4"
+    "product_name": "SLES-LTSS 15-SP4",
+    "actionable": false,
+    "non_actionable_reason": "eol"
   }
 }
 ```
+
+The example remains non-actionable because the restored Product is EOL. A
+non-EOL Product under manually included ancestors returns `actionable = true`
+and `non_actionable_reason = null`.
 
 **`Capability: manage_packages`**
 
@@ -1629,26 +1596,34 @@ other status but not `FIXED`.
     "status": "AFFECTED",
     "delivery_status": "PENDING",
     "delivery_relevant": true,
+    "actionable": true,
+    "non_actionable_reason": null,
     "products": [
       {
         "product_id": "uuid",
         "product_name": "SLES 15 SP6",
         "eligible": true,
-        "is_eligible_override": false
+        "is_eligible_override": false,
+        "lifecycle_phase": "general_support",
+        "actionable": true,
+        "non_actionable_reason": null
       },
       {
         "product_id": "uuid",
         "product_name": "SLES-LTSS 15-SP4",
         "eligible": false,
-        "is_eligible_override": false
+        "is_eligible_override": false,
+        "lifecycle_phase": "eol",
+        "actionable": false,
+        "non_actionable_reason": "eol"
       }
     ]
   }
 }
 ```
 
-The response includes the updated track and all its active child
-products with their current eligibility, allowing the client to update
+The response includes the updated track and all its child Products with their
+current eligibility and actionability, allowing the client to update
 the UI tree without a separate fetch.
 
 **`Capability: manage_packages`** | **`†admin_ticket_ops`** (Hard
@@ -1722,7 +1697,10 @@ changing an override value, and resetting an override.
     "product_id": "uuid",
     "product_name": "SLES-LTSS 15-SP4",
     "eligible": false,
-    "is_eligible_override": true
+    "is_eligible_override": true,
+    "lifecycle_phase": "reactive_support",
+    "actionable": true,
+    "non_actionable_reason": null
   }
 }
 ```
@@ -1743,9 +1721,10 @@ changing an override value, and resetting an override.
 GET /api/v1/tickets/{ticket_id}/packages
 ```
 
-Returns the complete package tree for a specific ticket — all packages,
-tracks, and products including soft-deleted records (with `deleted_at`
-visible on each level). Identical data to the `packages` field in
+Returns the complete package tree for a specific Ticket — all packages,
+tracks, and Products including non-actionable records. Direct VA-exclusion
+timestamps and current actionability are visible on each level. Identical data
+to the `packages` field in
 `TicketDetail` from `GET /api/v1/tickets/{ticket_id}`, but available as
 a standalone endpoint for clients that only need package data.
 
@@ -1756,7 +1735,8 @@ a standalone endpoint for clients that only need package data.
 | **Guard** | `require_accessible_ticket` (404 for missing/confidential tickets) |
 | **Pagination** | No — package count per ticket is bounded (typically 1-5, rarely >20) |
 | **Envelope** | `{"data": [...]}` (unpaginated list) |
-| **Soft-deleted records** | All package/track/product records are returned (including soft-deleted), with `deleted_at` visible on each — identical to `TicketDetail.packages` behavior |
+| **Excluded records** | All package/track/Product records are returned, including directly or effectively VA-excluded and lifecycle-non-actionable records |
+| **Actionability** | Every level includes derived `actionable` and `non_actionable_reason` values evaluated with one UTC date shared by the response |
 | **Response schema** | `PackageDetail[]` — reuses the existing schema (full tree: package -> tracks -> products) |
 | **Sorting** | Fixed alphabetical order by `package_name`. Client-controlled sorting (`sort_by`/`sort_order`) is not supported — the dataset has bounded cardinality and fixed ordering provides consistent display without configuration overhead. |
 | **Delegation** | Delegates to `package_service.get_ticket_packages()` |
@@ -1790,7 +1770,7 @@ once per ticket in the results.
 | **`Access: Public`** | Consistent with `GET /api/v1/tickets` |
 | **`Authentication: Optional`** | Resolves caller identity for confidentiality filtering |
 | **Confidentiality** | Packages belonging to confidential tickets are excluded for unauthorized callers (same filter as `GET /api/v1/tickets`). The endpoint handler constructs `confidential_ticket_filter()` and passes it to `search_packages(confidentiality_filter=...)` |
-| **Soft-deleted packages** | Always excluded — soft-deleted `TicketPackage` records (`deleted_at IS NOT NULL`) are never returned |
+| **Non-actionable packages** | Always excluded. This includes directly VA-excluded packages and packages with no actionable tracks |
 | **Pagination** | Yes — `page` (default 1), `per_page` (default 20, max 100) |
 | **Envelope** | `{"data": [...], "meta": {"total": N, "page": P, "per_page": PP}}` |
 | **Delegation** | Delegates to `package_service.search_packages()` |
@@ -1852,13 +1832,13 @@ itself is a ticket.
 | `status` | string | Current ticket status |
 | `severity` | string \| null | Ticket severity |
 
-**`track_summary`** (`TrackSummary`) — aggregated track status counts
-for the package within this ticket. Counts only active tracks
-(`deleted_at IS NULL`):
+**`track_summary`** (`TrackSummary`) — aggregated track status counts for the
+package within this Ticket. Counts only actionable tracks, using the same UTC
+`evaluation_date` as package filtering and pagination:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `total` | integer | Total active tracks |
+| `total` | integer | Total actionable tracks |
 | `affected` | integer | Tracks with status `AFFECTED` |
 | `fixed` | integer | Tracks with status `FIXED` |
 | `not_affected` | integer | Tracks with status `NOT_AFFECTED` |
@@ -1895,14 +1875,11 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   sets the originating track to `FIXED`. See
   `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
-- `evaluate_lifecycle_transitions`: periodic task (daily at 04:15
-  UTC) that detects Products currently in Reactive Support or EOL phase
-  with actionable `TicketPackageProduct` records and enqueues
-  re-evaluation. Reactive Support sets
-  `eligible = false` (status stays `AFFECTED`); EOL with `AFFECTED`
-  status removes the product (soft-delete with system TicketAuditEvent); EOL
-  with `ANALYSIS` status removes the product. Idempotent — operates on
-  current state with no cache. See
+- `evaluate_lifecycle_transitions`: periodic task (daily at 04:15 UTC) that
+  reconciles lifecycle-derived eligibility and Ticket gate state from current
+  Product dates. EOL changes derived actionability without mutating
+  package-tree exclusion markers. Idempotent — operates on current state with
+  no lifecycle cache. See
   `docs/features/packages/product-lifecycle-transitions.md` for the
   full specification.
 

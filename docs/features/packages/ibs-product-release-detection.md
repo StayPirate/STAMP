@@ -48,10 +48,10 @@ below for how `<repo_url>` is constructed):
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
     matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-    records reference P and have `released_at IS NULL`. Soft-deleted
-    products are included — release detection applies regardless of
-    exclusion status (see hierarchical exclusion model in
-    `docs/features/packages/package-model.md`).
+    records reference P and have `released_at IS NULL`. VA-excluded and EOL
+    Products are included because release detection records factual state
+    regardless of operational actionability (see Exclusion and Actionability
+    in `docs/features/packages/package-model.md`).
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received

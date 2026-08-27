@@ -168,6 +168,7 @@ beyond status changes.
 | `ticket` | `Ticket` | Yes | The ticket instance (already loaded with FOR UPDATE by the caller) |
 | `db` | `AsyncSession` | Yes | Database session |
 | `previous_status` | `TicketStatus \| None` | No | If provided, used as `old_value` in the audit event instead of the ticket's current status field. Enables recording the real semantic transition (e.g., `Ignored → Analysis`) when the status has been set to an intermediate value |
+| `evaluation_date` | `date \| None` | No | UTC date used for lifecycle and actionability predicates. If omitted, capture the current UTC date once at function entry |
 
 ### Behavior (top-down evaluation)
 
@@ -179,16 +180,19 @@ beyond status changes.
    `"Ticket {ticket_id} in New status with assignee {assignee_id} —
    assignment code path bug: assignee was set without transitioning
    status to Analysis"`.
-2. Evaluate gate conditions from highest to lowest (two active tiers;
+2. Resolve one `evaluation_date` and evaluate gate conditions from highest to
+   lowest using the canonical actionability expressions from
+   `package-model.md` (two active tiers;
    `Analysis` is the unconditional floor, not a gate-evaluated tier):
-   - If all "Resolved" gates are met (every non-excluded active track is
+   - If all "Resolved" gates are met (every actionable track is
      resolution-complete — see `tickets.md`, "Gate: Analyzed → Resolved")
      AND all "Analyzed" gates are met → status is Resolved
    - If all "Analyzed" gates are met (but "Resolved" gates are not) →
      status is Analyzed
    - Otherwise → status is Analysis (unconditional floor; this function
      never produces `New`)
-3. If the determined status differs from the current status:
+3. If the determined status differs from the current status, or if
+   `previous_status` is provided and differs from the determined status:
    - Update `ticket.status`
    - Create `TicketAuditEvent` with `event_type = status_change`
    - `old_value` is taken from `previous_status` if provided; otherwise
@@ -203,9 +207,10 @@ beyond status changes.
    - If `effective_previous ∈ {Resolved, Ignored, Duplicated}` AND
      `new_status ≠ effective_previous`:
       1. If `ticket.cve_id IS NOT NULL`: call
-         `recalculate_cvss_chain(ticket_id)` (reads `default_cvss_version`
-         internally; if the setting is absent, the exception propagates —
-         this indicates a deployment error and the transaction rolls back).
+          `recalculate_cvss_chain(ticket_id, evaluation_date=evaluation_date)`
+          (reads `default_cvss_version` internally; if the setting is absent,
+          the exception propagates — this indicates a deployment error and
+          the transaction rolls back).
          If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
          severity from `severity_manual`, not from CVSS assessments —
          there is nothing to recalculate)
@@ -240,6 +245,10 @@ beyond status changes.
      single enum comparison
 5. The function operates within the same database transaction as the
    triggering operation (atomicity guarantee)
+
+Every query performed by one invocation, including aggregate and existence
+checks, uses the same resolved `evaluation_date`. The function never persists
+the lifecycle phase or actionability result.
 
 ### Inactive Assignee Sanitization
 
@@ -285,12 +294,11 @@ than the intermediate `Analysis` value. Passing
 
 ### Multiple invocations within a transaction
 
-`reconcile_ticket_status` may be called multiple times in a single
-transaction during orphan chains. However, `package_service` calls
-reconcile once after the entire orphan chain completes (not at each
-level). The function is idempotent — each call ensures consistent
-state based on the ticket's current data at that point in the
-transaction.
+`reconcile_ticket_status` is idempotent and may be called multiple times in a
+composed transaction. Each call evaluates the Ticket's current data using one
+UTC evaluation date captured for that invocation. Package exclusion and
+restore operations call it once after their single direct mutation; derived
+actionability never creates an intermediate package-tree mutation chain.
 
 ## Concurrency Control
 
@@ -649,6 +657,7 @@ change (see `docs/features/platform/system-settings.md`).
 | `default_cvss_version` | `str \| None` | No | The CVSS version to use for severity resolution and eligibility evaluation. If `None` (default), the function reads the current version from `settings_service.get_default_cvss_version(db)`. The batch recalculation task provides this explicitly (passed as a task argument from the triggering endpoint) to ensure all tickets in a batch use the same version. Other callers should typically omit this parameter |
 | `acting_user_id` | `UUID \| None` | No | Who triggered the recalculation (typically `None` for system-initiated batch operations) |
 | `suppress_severity_event` | `bool` | No | Default `False`. When `True`, suppresses emission of the `severity_changed` audit event. Used exclusively by `associate_cve()`, which owns the severity handover event and needs to use the ticket's previous `severity_manual` (not `CVE.severity`) as `old_value`. All other callers MUST NOT set this to `True` |
+| `evaluation_date` | `date \| None` | No | UTC date used for every lifecycle predicate in this function, including the Reactive Support check in step 5 and final status reconciliation. If omitted, capture the current UTC date once at function entry |
 
 **Behavior**:
 
@@ -671,9 +680,11 @@ change (see `docs/features/platform/system-settings.md`).
 6. Create `TicketAuditEvent` records for each change:
     - `severity_changed` if severity changed AND
       `suppress_severity_event` is `False`
-    - `product_eligibility_changed` for each product whose eligibility
-      changed
-7. Call `reconcile_ticket_status()`
+    - `product_eligibility_changed` for each Product whose eligibility changed,
+      with the standard `track`, `package`, and `product_id` detail keys and
+      `reason = "cvss"`
+7. Call `reconcile_ticket_status(evaluation_date=evaluation_date)` so the
+   complete recalculation chain uses one temporal input
 
 **TicketAuditEvent**: `severity_changed` (if severity changed and
 `suppress_severity_event` is `False`) +
@@ -985,8 +996,8 @@ Package-specific exceptions (`TrackNotFoundError`, `ProductNotFoundError`,
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   severity calculation
-- `docs/features/packages/package-model.md` — track/product concepts,
-  status propagation, hierarchical exclusion model
+- `docs/features/packages/package-model.md` — track/Product concepts,
+  status propagation, exclusion, and derived actionability
 - `docs/features/packages/product-lifecycle-transitions.md` — AIMAAS
   threshold changes triggering eligibility mutations
 - `docs/features/identity/user-service.md` — `deactivate_user` bulk

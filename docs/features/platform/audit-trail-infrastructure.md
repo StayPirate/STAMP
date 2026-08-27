@@ -193,6 +193,27 @@ at all times — there is no plan for cleanup, archival, or deletion.
 The expected volume of audit events over the lifetime of the system
 does not justify a retention mechanism.
 
+### Operational State Authority
+
+Audit events are append-only historical evidence. They are authoritative
+records of the events they contain, but they are not the authoritative source
+of current operational state. Application code MUST NOT use audit events to
+determine current state or as input to mutation, authorization, idempotency,
+or restoration decisions.
+
+Current operational state MUST instead be persisted on the owning entities or
+derived from sources that the owning feature specification explicitly
+designates as authoritative. If a future operation needs provenance or a
+current cause in order to behave correctly, that information belongs in the
+owning domain model; it must not be reconstructed from audit history.
+
+Audit events MAY be queried or projected into historical, forensic,
+analytical, or presentational read models, including timelines and historical
+intervals, provided those projections do not govern current operational
+decisions. For example, fetcher audit events may reconstruct disabled periods
+for the fetcher timeline, while `FetcherConfig.enabled` remains the authority
+for whether a fetcher is currently enabled.
+
 ### Relationship to AuditEventMixin
 
 ```
