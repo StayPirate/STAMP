@@ -127,7 +127,7 @@ package-tree `deleted_at` field. See [Exclusion and Actionability](#exclusion-an
 VA-excluded and lifecycle-non-actionable records are omitted from operational
 views and gates, but they **continue to receive factual and independently
 derived updates** from delivery tracking, eligibility recalculation, and
-release detection while their Ticket is active. Their state remains current,
+release detection while their Ticket is operable. Their state remains current,
 eliminating restore-time reconciliation and allowing lifecycle actionability
 to change without replaying missed facts.
 
@@ -782,10 +782,10 @@ lifecycle; it does not modify affectedness, eligibility, or delivery.
 
 Directly or effectively VA-excluded records and EOL Products continue to
 receive eligibility recalculation, delivery updates, and release observations
-while their Ticket is active (`New`, `Analysis`, or `Analyzed`). Records under
-inactive Tickets are recovered through the applicable catch-up behavior when
-the Ticket re-enters an active status. This keeps factual state current without
-making exclusion or lifecycle depend on another dimension.
+while their Ticket is operable (`New`, `Analysis`, `Analyzed`, or `Resolved`).
+Records under manual-zone Tickets are recovered through the applicable catch-up
+behavior when the Ticket re-enters an operable status. This keeps factual state
+current without making exclusion or lifecycle depend on another dimension.
 
 ### Restore
 
@@ -865,7 +865,7 @@ processes one Ticket transaction at a time, and calls
 `reconcile_ticket_status()` once only when at least one value changed. The CVSS
 recalculation chain remains the documented architectural exception owned by
 `ticket_mutations`. Both paths skip manual overrides and continue updating
-soft-deleted records under active Tickets.
+soft-deleted records under operable Tickets.
 
 ---
 

@@ -251,7 +251,7 @@ not tracked in ticket, or no ticket exists at all) is described in
 | Class name | `DetectIbsProductReleases` |
 | Schedule | TBD |
 | Source | IBS download infrastructure (`download.suse.de`) |
-| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. Soft-deleted products are included |
+| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. VA-excluded and lifecycle-non-actionable Products are included |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |

@@ -625,8 +625,9 @@ Step 1 — Discover missed open SRs and reconcile known ones:
   1. Identify active codestreams (distinct codestream_name values from
       TicketPackageTrack records belonging to active tickets — ticket
       status in New, Analysis, Analyzed).
-     Soft-deleted tracks are included — submission tracking applies
-     regardless of exclusion status.
+      VA-excluded and lifecycle-non-actionable tracks are included —
+      submission tracking records factual state regardless of operational
+      participation.
 
   2. For each active codestream:
      GET /request?view=collection&project={codestream}&states=new,review
@@ -771,7 +772,8 @@ release detection Case B/C).
 1. Retrieve the ticket's CVE-ID
 2. Retrieve ALL TicketPackageTrack records for (ticket, package)
    — no status filter (includes ANALYSIS, AFFECTED, FIXED, etc.)
-   and no soft-deletion filter (includes soft-deleted tracks)
+    and no VA-exclusion or lifecycle-actionability filter (includes
+    VA-excluded and lifecycle-non-actionable tracks)
 3. For each track:
    a. Query IBS:
       GET /request?view=collection&project={codestream}

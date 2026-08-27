@@ -513,13 +513,16 @@ detail requests.
      `Product.cpe`. Skip products with no local match.
   3. Set `first_customer_ship_date` from `fcs` and
      `general_support_end_date` from `end_of_gs`.
-  4. Set `extended_support_end_date` to the latest non-null value of
-     `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
-  5. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
-  6. When an AIMAAS field changes from a non-null date to null, the local
-     field is updated to NULL. The lifecycle evaluator derives the phase
-     from the current field values; a field becoming NULL may change the
-     computed `lifecycle_phase`.
+   4. Set `extended_support_end_date` to the latest non-null value of
+      `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
+   5. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
+   6. When an AIMAAS field changes from a non-null date to null, the local
+      field is updated to NULL. The lifecycle evaluator derives the phase
+      from the current field values; a field becoming NULL may change the
+      computed `lifecycle_phase`.
+   7. Apply all matched Product updates in one transaction and commit once.
+      Any database error rolls back the complete lifecycle publication; no
+      partial lifecycle-date changes persist.
 
 The fetcher persists every syntactically valid source date faithfully. A
 structurally missing but non-contradictory date set is valid input and does not
@@ -569,9 +572,9 @@ eligibility and EOL-derived actionability when applicable.
   corresponding `cpe`. This avoids per-threshold detail requests and
   produces an internally consistent snapshot.
 - **Sync behavior**:
-  1. Fetch all AIMAAS product pages (with `all_fields=true`) and all
-     threshold pages before opening a database transaction. Build a
-     `product_id → cpe` mapping from the product list.
+   1. Fetch all AIMAAS product pages (with `all_fields=true`) and all
+      threshold pages before opening a database transaction. Build a
+      `product_id → cpe` mapping from the product list.
   2. For each threshold entry, resolve its `product` ID to a CPE via
      the in-memory mapping. A threshold whose `product` ID has no match
      in the product list is skipped with a structured warning log.
@@ -797,7 +800,8 @@ Implementation tests for this endpoint and service MUST cover:
 | Property | Value |
 |----------|-------|
 | Fetcher name | `sync_smelt_products` |
-| Class name | TBD |
+| Class name | `SyncSmeltProducts` |
+| Description | Synchronize the complete SMELT Product catalog and repository associations |
 | Schedule | Daily at 01:00 UTC (`0 1 * * *`) |
 | Source | SMELT (`smelt.suse.de/api`) |
 | Scope | Complete SMELT Product catalog and repository projection on every run; no cursor or incremental mode |
@@ -816,12 +820,38 @@ are exhausted, any retrieval, non-success HTTP response, pagination,
 response-schema, or snapshot-validation failure aborts the run without
 publication or backfill. A publication failure rolls back the complete
 snapshot. The last committed snapshot remains usable, and recovery is a later
-scheduled or operator-triggered full run. Error messages and logs identify the
-failed page or validation category without retaining full response payloads.
+scheduled or operator-triggered full run. A failure to dispatch the one
+post-commit Product catalog backfill task is logged, increments
+`record_failed`, and does not roll back the committed catalog.
+
+The fetcher raises `FetcherError` with these sanitized messages for failures
+that abort the run:
+
+| Failure mode | `FetcherError` message |
+|--------------|------------------------|
+| Connection failure | `"Failed to connect to SMELT"` |
+| Request timeout | `"SMELT request timed out"` |
+| Non-success HTTP response | `"SMELT returned HTTP {status_code}"` |
+| Invalid pagination or response schema | `"SMELT returned invalid Product catalog response"` |
+| Complete-snapshot validation failure | `"SMELT Product catalog validation failed"` |
+| Publication database failure | `"Failed to publish SMELT Product catalog"` |
+
+Logs identify the failed page or validation category without retaining full
+response payloads.
 
 #### Metrics
 
-TBD
+| Metric | Meaning |
+|--------|---------|
+| `record_created` | One for each newly persisted Product CPE. |
+| `record_updated` | One for each already-persisted Product whose logical current-catalog projection changes: a SMELT descriptive field changes, its current repository-association set changes, or it enters or leaves the current snapshot. Multiple changes to the same Product count once. |
+| `record_failed` | One when the post-commit Product catalog backfill task cannot be dispatched. |
+
+Repository order and an advance of only `catalog_last_seen_at` do not count as
+Product updates. A successful backfill dispatch receives no separate metric:
+this fetcher's metric unit is the Product catalog projection, not task
+publication. Retrieval, validation, and publication failures are whole-run
+failures and do not record per-Product metrics.
 
 ### Fetcher: `sync_aimaas_lifecycle`
 
@@ -829,6 +859,7 @@ TBD
 |----------|-------|
 | Fetcher name | `sync_aimaas_lifecycle` |
 | Class name | `SyncAimaasLifecycle` |
+| Description | Synchronize AIMAAS Product lifecycle dates |
 | Schedule | Daily at 02:15 UTC (`15 2 * * *`) |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list with `all_fields=true` on every run; no cursor or incremental mode |
@@ -849,13 +880,34 @@ Shared transport retries apply to retryable HTTP failures. After those
 retries are exhausted, any retrieval, non-success HTTP response,
 pagination, or response-schema failure aborts the run without modifying
 local lifecycle data. Recovery is the next scheduled or
-operator-triggered run. Error messages and logs identify the failed page
-or validation category without retaining full response payloads.
+operator-triggered run.
+
+The fetcher raises `FetcherError` with these sanitized messages for failures
+that abort the run:
+
+| Failure mode | `FetcherError` message |
+|--------------|------------------------|
+| Connection failure | `"Failed to connect to AIMAAS"` |
+| Request timeout | `"AIMAAS request timed out"` |
+| Non-success HTTP response | `"AIMAAS returned HTTP {status_code}"` |
+| Invalid pagination or response schema | `"AIMAAS returned invalid Product lifecycle response"` |
+| Publication database failure | `"Failed to synchronize AIMAAS lifecycle dates"` |
+
+Logs identify the failed page or validation category without retaining full
+response payloads.
 
 #### Metrics
 
-Lifecycle-date inconsistency warnings do not increment `record_failed`.
-The remaining created, updated, and failed metric semantics are TBD.
+| Metric | Meaning |
+|--------|---------|
+| `record_created` | Not used; lifecycle synchronization never creates Products. |
+| `record_updated` | One for each matched local Product whose four-column lifecycle-date projection changes, including a source field clearing to NULL. |
+| `record_failed` | Not used for per-Product conditions. |
+
+Lifecycle-date inconsistency warnings and AIMAAS Products with no local CPE
+match do not increment `record_failed`. Retrieval, pagination, response-schema,
+and database failures are whole-run failures and do not record per-Product
+metrics.
 
 ### Fetcher: `sync_aimaas_thresholds`
 
@@ -863,6 +915,7 @@ The remaining created, updated, and failed metric semantics are TBD.
 |----------|-------|
 | Fetcher name | `sync_aimaas_thresholds` |
 | Class name | `SyncAimaasThresholds` |
+| Description | Synchronize AIMAAS Product CVSS thresholds and trigger eligibility reconciliation |
 | Schedule | Daily at 02:45 UTC (`45 2 * * *`) |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list (for CPE resolution) and complete threshold list on every run; in-memory join; no cursor or incremental mode |
@@ -884,11 +937,39 @@ retries are exhausted, any retrieval, non-success HTTP response,
 pagination, or response-schema failure aborts the run without modifying
 local thresholds. This includes failures during the product-list
 retrieval phase (required for CPE resolution). Recovery is the next
-scheduled or operator-triggered run.
+scheduled or operator-triggered run. A failed post-commit eligibility-task
+dispatch is logged with the Product ID, increments `record_failed`, and does
+not roll back the committed threshold snapshot.
+
+The fetcher raises `FetcherError` with these sanitized messages for failures
+that abort the run:
+
+| Failure mode | `FetcherError` message |
+|--------------|------------------------|
+| Connection failure | `"Failed to connect to AIMAAS"` |
+| Request timeout | `"AIMAAS request timed out"` |
+| Non-success HTTP response | `"AIMAAS returned HTTP {status_code}"` |
+| Invalid Product-list pagination or response schema | `"AIMAAS returned invalid Product list response"` |
+| Invalid threshold-list pagination or response schema | `"AIMAAS returned invalid CVSS threshold response"` |
+| Publication database failure | `"Failed to synchronize AIMAAS CVSS thresholds"` |
+
+A threshold whose AIMAAS Product ID cannot be resolved through the retrieved
+Product list remains a structured warning. A resolved CPE with no local Product
+remains an expected silent skip; neither is a `FetcherError` or per-Product
+metric failure.
 
 #### Metrics
 
-TBD
+| Metric | Meaning |
+|--------|---------|
+| `record_created` | Not used; threshold synchronization never creates Products. |
+| `record_updated` | One for each distinct local Product with a threshold mutation, including clearing to NULL. |
+| `record_failed` | One for each Product whose required post-commit eligibility-recalculation task cannot be dispatched. |
+
+A threshold mutation remains counted as updated when its later task dispatch
+fails because the authoritative threshold snapshot committed successfully.
+Retrieval, pagination, response-schema, and database failures are whole-run
+failures and do not record per-Product metrics.
 
 ---
 
@@ -925,6 +1006,8 @@ TBD
   access details
 - `docs/data-model.md` -- full database schema (Product,
   ProductRepository tables)
+- `docs/features/platform/fetcher-infrastructure.md` -- BaseFetcher contract,
+  error sanitization, and metric helpers used by the fetchers in this document
 - `docs/features/packages/package-model.md` -- package affectedness
   model; eligibility rules consume product lifecycle and threshold data
 - `docs/features/packages/package-service.md` -- package-tree creation used by

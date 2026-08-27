@@ -54,7 +54,6 @@ fields populated according to this table:
 | `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | `NULL` | `NULL` |
 | `product_excluded` | Product directly soft-deleted by a VA | VA user | Product display name | `NULL` | `NULL` | `{"track": "...", "package": "...", "product_id": "..."}` (see detail contract) |
 | `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | `NULL` | `NULL` |
-
 | `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
 | `access_grant_removed` | User manually revoked explicit access to a confidential ticket | Acting user | Target username | `NULL` | `NULL` | `NULL` |
