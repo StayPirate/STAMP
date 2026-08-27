@@ -913,6 +913,14 @@ All standalone product eligibility mutations (such as manual overrides by a VA,
 automated resets, and product lifecycle phase transitions) remain the exclusive
 responsibility of `package_service`.
 
+The platform-wide recalculation after an Admin changes
+`default_cvss_version` remains part of the CVSS exception above: its batch task
+calls `recalculate_cvss_chain()` once per active Ticket in independent
+transactions. Product threshold and Reactive Support changes instead use the
+standalone automatic `package_service` operation defined in
+`docs/features/packages/package-service.md`; they do not call the global CVSS
+batch and never create manual overrides.
+
 Non-gate ticket lifecycle operations live in `ticket_service` — see
 `docs/features/tickets/ticket-service.md`. Some of these operations
 call `reconcile_ticket_status` (directly or via

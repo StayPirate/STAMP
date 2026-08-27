@@ -856,8 +856,13 @@ automatically via CVSS threshold + lifecycle phase calculation. When
 `is_eligible_override = true`, automatic recalculation skips the
 product.
 
-Eligibility changes go through `package_service` and trigger
-`reconcile_ticket_status`.
+Standalone eligibility changes go through `package_service`. Product-originated
+automatic recalculation groups all matching records by Ticket, locks and
+processes one Ticket transaction at a time, and calls
+`reconcile_ticket_status()` once only when at least one value changed. The CVSS
+recalculation chain remains the documented architectural exception owned by
+`ticket_mutations`. Both paths skip manual overrides and continue updating
+soft-deleted records under active Tickets.
 
 ---
 
@@ -1127,7 +1132,7 @@ types are defined:
 | VA overrides product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
 | Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, `product_id`, `advisory_id` |
-| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible` |
+| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible`, `reason` |
 
 - `user_id = NULL` indicates an automatic system action. For
   `package_added`, this distinguishes manual additions (VA user) from
@@ -1139,7 +1144,7 @@ types are defined:
   comment `Product catalog backfill`.
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
-  `old_value`, `new_value`, and `comment` fields as strings. See
+  `old_value`, `new_value`, `comment`, and structured `detail` fields. See
   `docs/features/tickets/ticket-audit-log.md` for the exact field mapping
   and `docs/data-model.md` for the schema.
 
@@ -1890,7 +1895,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   sets the originating track to `FIXED`. See
   `docs/features/packages/ibs-track-release-detection.md` (Case C)
   for details.
-- `evaluate_lifecycle_transitions`: periodic task (daily at 04:00
+- `evaluate_lifecycle_transitions`: periodic task (daily at 04:15
   UTC) that detects Products currently in Reactive Support or EOL phase
   with actionable `TicketPackageProduct` records and enqueues
   re-evaluation. Reactive Support sets

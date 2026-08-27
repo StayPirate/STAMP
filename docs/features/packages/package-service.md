@@ -53,7 +53,7 @@ multiple operations within a single transaction when needed (e.g.,
 
 ### Acting user convention
 
-All mutation operations accept an `acting_user_id: UUID | None`
+User-facing mutation operations accept an `acting_user_id: UUID | None`
 parameter:
 
 - `UUID` — action performed by an authenticated VA (enables
@@ -109,9 +109,10 @@ signature and behavior.
 
 ## Package Mutation Operations
 
-Each function below follows the same pattern (except
-`set_product_released_at()`, which is system-only and omits
-auto-assignment — see its section for details):
+Each user-facing function below follows the same pattern. System-only
+operations such as `set_product_released_at()` and
+`recalculate_product_eligibility_for_ticket()` omit auto-assignment as stated
+in their sections:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `ensure_ticket_operable(ticket)`
@@ -355,6 +356,82 @@ If `eligible` is `None` (reset to automatic):
 
 - Override (`eligible` is `bool`): no-op if `eligible` matches current value AND `is_eligible_override` is already `true`
 - Reset (`eligible` is `None`): no-op if `is_eligible_override` is already `false` (the current `eligible` value is already system-managed)
+
+---
+
+### `recalculate_product_eligibility_for_ticket()`
+
+Recalculates system-managed eligibility for one catalog Product within one
+active Ticket. This is the mutation boundary used after an AIMAAS threshold
+change or a Reactive Support lifecycle change. It is separate from
+`set_product_eligibility()`, whose boolean path creates a VA override, and
+from `ticket_mutations.recalculate_cvss_chain()`, which owns CVSS assessment
+changes and the platform-wide `default_cvss_version` batch.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `db` | `AsyncSession` | Yes | Caller-owned database session |
+| `ticket_id` | `UUID` | Yes | Ticket whose matching package Products are recalculated |
+| `product_id` | `UUID` | Yes | Catalog `Product.id`, not a `TicketPackageProduct.id` |
+| `reason` | `Literal["threshold", "reactive_ltss"]` | Yes | System trigger recorded in each audit event |
+
+**Preconditions and guards**:
+
+- The Ticket and catalog Product must exist.
+- Only active Tickets (`New`, `Analysis`, or `Analyzed`) are processed. A
+  Ticket that became inactive after task candidate selection returns a no-op
+  result rather than raising `TicketNotMutableError`.
+- The calling task validates `reason` before invoking this typed service
+  boundary; callers pass only `threshold` or `reactive_ltss`.
+
+**Behavior**:
+
+1. Acquire `FOR UPDATE` on the Ticket row as the first database operation.
+2. If the locked Ticket is inactive, return an inactive-skip result with zero
+   changed records, without assignment, audit events, or reconciliation.
+3. Call `ensure_ticket_operable(ticket)`, then load the catalog Product and
+   its current threshold and lifecycle inputs.
+4. Select every `TicketPackageProduct` in the Ticket that references the
+   catalog Product. Include records that are directly or effectively
+   soft-deleted and records under every track status. Skip records with
+   `is_eligible_override = true`.
+5. Resolve the Ticket's current eligibility score using the current persisted
+   `default_cvss_version`, then apply the complete eligibility rules in
+   `package-model.md` to every selected record. The task payload never
+   supplies a threshold, lifecycle phase, score, or expected result.
+6. For each record whose computed value differs, update `eligible` without
+   changing `is_eligible_override` and create one
+   `product_eligibility_changed` event in the same transaction. Set
+   `user_id = NULL`, `comment = NULL`, preserve the true old and new boolean
+   values, and populate the standard `track`, `package`, `product_id`, and
+   `reason` detail keys. `detail.product_id` is the changed
+   `TicketPackageProduct.id`, not the catalog `Product.id` input.
+7. If at least one record changed, call `reconcile_ticket_status()` exactly
+   once after all updates and audit events. If no value changed, return a
+   no-op result without reconciliation or audit creation.
+8. Flush and return the number of examined, override-skipped, and changed
+   records plus whether the Ticket was skipped as inactive. Do not commit or
+   roll back; the caller owns the transaction.
+
+This system operation never calls `auto_assign_actor()` and never creates or
+clears a manual override.
+
+**TicketAuditEvent**: one `product_eligibility_changed` event per changed
+`TicketPackageProduct`; none for unchanged or override-skipped records.
+
+**Idempotency**: deterministic and idempotent. Re-invocation reads current
+persisted inputs and produces no mutation, audit event, or reconciliation once
+all automatic records already hold the computed value. Delayed or
+out-of-order invocations therefore converge to current state rather than
+replaying a historical threshold or lifecycle result.
+
+**Exceptions**: `TicketNotFoundError` or `ProductNotFoundError` when a required
+root does not exist; shared settings, database, eligibility-resolution,
+audit-validation, and reconciliation exceptions propagate unchanged. Any
+exception rolls back the caller's whole Ticket transaction, including its
+eligibility updates and audit events.
 
 ---
 
@@ -995,6 +1072,11 @@ transitions. The test must cover:
   level
 - **Auto-assignment**: mutations on unassigned tickets trigger assignment
   to the acting VA
+- **Automatic Product eligibility recalculation**: verify manual-override
+  records are skipped; an inactive Ticket is skipped without mutation, audit,
+  or reconciliation; a fully converged Ticket is a no-op; and multiple changed
+  `TicketPackageProduct` records produce one event per record followed by one
+  Ticket reconciliation
 
 ## Cross-references
 

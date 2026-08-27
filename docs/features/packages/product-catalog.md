@@ -570,20 +570,32 @@ when applicable.
      coverage) and silently ignored.
   4. Update only the corresponding local `Product.cvss_threshold`; do not
      modify catalog-observation, descriptive, or lifecycle date fields.
-  5. If a Product's threshold changes, trigger the eligibility
-     re-evaluation defined in `product-lifecycle-transitions.md`.
+  5. Retain the IDs of Products whose persisted threshold changes for
+     post-commit eligibility recalculation.
   6. **Threshold clearing**: after processing all AIMAAS thresholds,
      identify local `Product` rows whose `cvss_threshold` is non-null but
      whose CPE is not present in the resolved AIMAAS threshold set. Clear
      those products' `cvss_threshold` to NULL (implicit threshold of 0,
-     conservatively permissive). Each clearing is a threshold change and
-     triggers automatic eligibility re-evaluation for non-overridden
-     `TicketPackageProduct` records.
+     conservatively permissive). Each clearing is a threshold change and its
+     Product ID is retained for post-commit eligibility recalculation.
+  7. Commit the complete threshold publication before dispatching any task.
+  8. In a new read-only phase after commit, identify Products whose
+     system-managed `TicketPackageProduct` eligibility in an active Ticket
+     differs from the result under the committed threshold snapshot. This
+     mismatch set recovers prior task-dispatch or per-Ticket failures.
+  9. Enqueue the Product-level recalculation defined in
+     `product-lifecycle-transitions.md` once per Product in the union of the
+     changed and mismatch sets, with reason `threshold`. A dispatch failure
+     logs a structured warning containing the Product ID and continues with
+     other Products; it does not roll back the committed threshold snapshot.
+     The next complete threshold run rediscovers any remaining mismatch and
+     can be triggered through the existing fetcher-operations API. No durable
+     dispatch state or dedicated recovery endpoint is added.
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
   A later change from `NULL` to an explicit threshold is a threshold change
-  and triggers automatic eligibility re-evaluation for non-overridden
-  `TicketPackageProduct` records.
+  and is included in the same post-commit automatic eligibility
+  recalculation.
 
 ### SMELT Decoupling
 
@@ -661,7 +673,7 @@ contract.
 |----------|-------|
 | Fetcher name | `sync_smelt_products` |
 | Class name | TBD |
-| Schedule | TBD |
+| Schedule | Daily at 01:00 UTC (`0 1 * * *`) |
 | Source | SMELT (`smelt.suse.de/api`) |
 | Scope | Complete SMELT Product catalog and repository projection on every run; no cursor or incremental mode |
 | Auth | None |
@@ -692,7 +704,7 @@ TBD
 |----------|-------|
 | Fetcher name | `sync_aimaas_lifecycle` |
 | Class name | `SyncAimaasLifecycle` |
-| Schedule | TBD |
+| Schedule | Daily at 02:15 UTC (`15 2 * * *`) |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list with `all_fields=true` on every run; no cursor or incremental mode |
 | Auth | None |
@@ -726,7 +738,7 @@ The remaining created, updated, and failed metric semantics are TBD.
 |----------|-------|
 | Fetcher name | `sync_aimaas_thresholds` |
 | Class name | `SyncAimaasThresholds` |
-| Schedule | TBD |
+| Schedule | Daily at 02:45 UTC (`45 2 * * *`) |
 | Source | AIMAAS (`aimaas.suse.de/api`) |
 | Scope | Complete AIMAAS Product list (for CPE resolution) and complete threshold list on every run; in-memory join; no cursor or incremental mode |
 | Auth | None |

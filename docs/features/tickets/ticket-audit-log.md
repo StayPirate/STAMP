@@ -113,7 +113,13 @@ types not listed here MUST set `detail` to `NULL`.
   `reason` key is present only for automatic exclusions (orphan cleanup). When
   `detail` is non-NULL, `reason` MUST be present.
 - `product_eligibility_changed`: `reason` values are `reactive_ltss`,
-  `threshold`, `cvss`, or `va_override`.
+  `threshold`, `cvss`, or `va_override`. Product-originated automatic
+  recalculation (`reactive_ltss` or `threshold`) emits one event per changed
+  `TicketPackageProduct`, with `user_id = NULL` and `comment = NULL`, in the
+  same per-Ticket transaction as the eligibility update. Unchanged and
+  manual-override records emit no event. For this event,
+  `detail.product_id` identifies the changed `TicketPackageProduct.id`, not
+  its catalog `Product.id` foreign key.
 - `track_excluded` and `product_excluded`: `reason` values include
   `orphan_cleanup`, `eol`, and other system-initiated reasons.
 - `reference_type_changed`, `reference_title_changed`,
