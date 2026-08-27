@@ -590,9 +590,9 @@ eligibility and EOL-derived actionability when applicable.
      Product ID is retained for post-commit eligibility recalculation.
   7. Commit the complete threshold publication before dispatching any task.
   8. In a new read-only phase after commit, identify Products whose
-      system-managed `TicketPackageProduct` eligibility in an operable Ticket
-      (`New`, `Analysis`, `Analyzed`, or `Resolved`)
-      differs from the result under the committed threshold snapshot. This
+     system-managed `TicketPackageProduct` eligibility in an operable Ticket
+     (`New`, `Analysis`, `Analyzed`, or `Resolved`)
+     differs from the result under the committed threshold snapshot. This
      mismatch scan captures one UTC `evaluation_date` and uses it for every
      lifecycle-dependent eligibility comparison. The mismatch set recovers
      prior task-dispatch or per-Ticket failures.
