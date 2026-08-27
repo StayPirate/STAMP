@@ -628,11 +628,17 @@ integration would require no changes.
 GET /api/v1/products
 ```
 
-List all products synced from SMELT. Paginated.
+**`Access: Public`**
+**`Authentication: Optional`**
 
-The service captures one UTC `evaluation_date` for the request and uses the
-canonical SQL lifecycle expression for both the result query and count query.
-The endpoint remains database-filterable and does not load the complete
+List Products synchronized from SMELT. The default result contains the current
+catalog snapshot; retained historical Products are available through an
+explicit filter. The endpoint is paginated.
+
+The route delegates the query to `product_service.list_products()` and performs
+no ORM query directly. It captures one UTC `evaluation_date` for the request.
+The service uses the canonical SQL lifecycle expression for filtering and
+serialization; it remains database-filterable and does not load the complete
 Product table for Python-side filtering.
 
 **Query parameters**:
@@ -641,10 +647,20 @@ Product table for Python-side filtering.
 |-----------|------|---------|-------------|
 | `page` | int | 1 | Page number |
 | `per_page` | int | 20 | Items per page (max: 100) |
-| `sort_by` | string | `name` | Sort field. Valid values: `name`, `version`, `cpe`, `created_at` |
+| `sort_by` | string | `name` | Sort field. Valid values: `name`, `display_name`, `version`, `cpe`, `catalog_last_seen_at`, `created_at` |
 | `sort_order` | string | `asc` | Sort direction: `asc` or `desc` |
-| `search` | string | -- | Filter by name (case-insensitive substring match) |
-| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Valid values: `pre_release`, `general_support`, `extended_support`, `reactive_support`, `eol`. Multiple values use OR semantics. Products whose phase is `NULL` do not match this filter. Invalid values follow `docs/api-spec.md` (Enum Filter Validation). |
+| `search` | string | -- | Case-insensitive substring match against `name`, `display_name`, `version`, or `cpe`. A Product matches when any of those fields matches. |
+| `cpe` | string | -- | Exact, case-sensitive match against the canonical stored CPE. |
+| `catalog_presence` | string (repeatable) | `current` | Filter by the selected SMELT snapshot. Valid values: `current`, `historical`. `current` selects Products observed in the selected latest complete snapshot; `historical` selects retained Products not observed in it. Supplying both selects all retained Products. |
+| `lifecycle_phase` | string (repeatable) | -- | Filter by current lifecycle phase. Real phase values are `pre_release`, `general_support`, `extended_support`, `reactive_support`, and `eol`. The filter-only pseudo-value `unavailable` selects Products for which the Lifecycle Evaluator returns `NULL`; it is not a lifecycle phase and is never emitted in a response. |
+
+`catalog_presence` and `lifecycle_phase` are repeatable enum filters. Their
+valid supplied values combine with OR and invalid values follow
+`docs/api-spec.md` (Enum Filter Validation). All distinct client-declared
+filters combine with AND under `docs/api-spec.md` (Filtering). Pagination,
+sorting, and nullable-sort behavior follow the corresponding global API
+conventions. The deterministic primary-key tiebreaker is applied as required by
+`docs/api-spec.md` (Deterministic Pagination Ordering).
 
 **Response** (200 OK):
 
@@ -657,9 +673,16 @@ Product table for Python-side filtering.
       "version": "15 SP6",
       "cpe": "cpe:/o:suse:sles:15:sp6",
       "display_name": "SLES 15 SP6",
+      "catalog_presence": "current",
+      "catalog_last_seen_at": "2025-01-15T02:00:00Z",
+      "first_customer_ship_date": "2024-10-01",
+      "general_support_end_date": "2031-10-31",
+      "extended_support_end_date": null,
+      "reactive_support_end_date": null,
       "lifecycle_phase": "general_support",
       "cvss_threshold": null,
-      "catalog_last_seen_at": "2025-01-15T02:00:00Z"
+      "created_at": "2025-01-15T02:00:00Z",
+      "updated_at": "2025-01-15T02:00:00Z"
     }
   ],
   "meta": {
@@ -670,16 +693,100 @@ Product table for Python-side filtering.
 }
 ```
 
-**`Access: Public`**
-**`Authentication: Optional`**
+**Product list item**:
 
-`lifecycle_phase` is a nullable string. It is `NULL` when the Lifecycle
-Evaluator returns `None`, including when AIMAAS data is absent or the date set
-is inconsistent or does not establish a current phase or EOL boundary.
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Internal Product identifier |
+| `name` | string | Descriptive SMELT name |
+| `version` | string | Descriptive SMELT version |
+| `display_name` | string | Human-readable SMELT name |
+| `cpe` | string | Canonical Product CPE |
+| `catalog_presence` | string | Derived value: `current` when the Product belongs to the selected latest complete SMELT snapshot; otherwise `historical` |
+| `catalog_last_seen_at` | datetime | UTC timestamp of the latest complete SMELT snapshot that observed this Product |
+| `first_customer_ship_date` | date \| null | AIMAAS first-customer-ship date |
+| `general_support_end_date` | date \| null | AIMAAS General Support end date |
+| `extended_support_end_date` | date \| null | Latest AIMAAS LTSS or ESPOS end date |
+| `reactive_support_end_date` | date \| null | AIMAAS Reactive LTSS end date |
+| `lifecycle_phase` | string \| null | Derived current lifecycle phase. `null` when the Lifecycle Evaluator cannot establish a phase or EOL boundary, including absent, incomplete, or inconsistent AIMAAS dates. |
+| `cvss_threshold` | number \| null | AIMAAS CVSS threshold; `null` means the implicit threshold of 0 |
+| `created_at` | datetime | UTC Product-record creation timestamp |
+| `updated_at` | datetime | UTC timestamp of the latest persisted Product change |
 
-Whether this endpoint returns all retained Products or only Products in the
-current catalog snapshot remains to be completed with the Product read service
-contract.
+All four lifecycle-date fields and `lifecycle_phase` are always present. A
+missing date is represented as `null`; an absent field is not an alternative
+representation. `catalog_presence` and `lifecycle_phase` are derived response
+values, not persisted Product columns.
+
+Before the first complete SMELT snapshot commits, the endpoint returns `200 OK`
+with an empty `data` array and `meta.total = 0`. It does not return
+`PRODUCT_CATALOG_NOT_READY`: catalog readiness is a gate only for operations
+that require Product CPE resolution.
+
+The `meta.total` and every Product in `data` MUST be evaluated against one
+consistent selected catalog snapshot. A SMELT publication that commits during a
+request may be reflected entirely by a later request, but it MUST NOT make the
+count, `catalog_presence`, or page rows describe different snapshots within the
+same response.
+
+#### Product Query Service
+
+`product_service` owns Product catalog read queries. It exposes the following
+read-only operation:
+
+```python
+async def list_products(
+    db: AsyncSession,
+    *,
+    evaluation_date: date,
+    search: str | None = None,
+    cpe: str | None = None,
+    catalog_presence: tuple[CatalogPresence, ...] = (CatalogPresence.CURRENT,),
+    lifecycle_phase: tuple[LifecyclePhaseFilter, ...] | None = None,
+    sort_by: ProductSortField = ProductSortField.NAME,
+    sort_order: SortOrder = SortOrder.ASC,
+    page: int = 1,
+    per_page: int = 20,
+) -> ProductPage:
+```
+
+`CatalogPresence` has the API values `current` and `historical`.
+`LifecyclePhaseFilter` accepts the five `LifecyclePhase` values plus the
+filter-only `unavailable` value. API validation removes invalid repeatable enum
+values before this function is called; `page`, `per_page`, `sort_by`, and
+`sort_order` have also passed API validation.
+
+The function captures the latest complete snapshot identity once. If no such
+snapshot exists, it returns `ProductPage(items=[], total=0, page=page,
+per_page=per_page)`. Otherwise, it applies the requested catalog-presence,
+lifecycle, CPE, and search predicates, with the endpoint semantics above, and
+returns the requested page and its total from one consistent selected snapshot.
+It computes lifecycle phase using the supplied `evaluation_date` and serializes
+all Product list-item fields. It creates no audit event, acquires no mutation
+lock, and propagates underlying database exceptions; it raises no
+Product-specific exception.
+
+#### Test Requirements
+
+Implementation tests for this endpoint and service MUST cover:
+
+- the default `current` result, historical-only result, and the union selected
+  by both catalog-presence values;
+- the empty successful response before initial catalog publication and for a
+  page beyond the result range;
+- search across every declared field, exact case-sensitive CPE matching, AND
+  composition across distinct filters, and OR composition within each
+  repeatable filter;
+- `unavailable` lifecycle filtering alone and combined with a real phase,
+  while responses retain `lifecycle_phase: null` for unavailable values;
+- permanent presence of all lifecycle-date fields, with `null` for unavailable
+  source values;
+- every supported sort field, ascending and descending directions, deterministic
+  pagination where primary sort values tie, and correct `meta.total`;
+- one-response snapshot consistency when a complete SMELT publication overlaps
+  a list request; and
+- anonymous access, each valid optional credential kind, and selected invalid
+  credentials according to the optional-authentication contract.
 
 ---
 

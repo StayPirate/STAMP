@@ -173,6 +173,17 @@ resource. Common patterns:
 - Search: `?search=term` (searches relevant text fields)
 - Date range: `?from_date=2024-01-01&to_date=2024-12-31`
 
+Unless an endpoint explicitly specifies otherwise, simultaneously supplied
+client-declared filter parameters on a list or search endpoint combine with
+AND semantics. Matching rules internal to one parameter remain
+endpoint-specific: for example, a `search` parameter may match any of several
+resource fields. Pagination, sorting, authentication, authorization,
+confidentiality or visibility rules, path or ownership scope, and other
+mandatory resource constraints are not client-declared filters for this rule.
+An endpoint may instead make filters mutually exclusive when their combined
+meaning would be invalid; it must state that behavior and its validation
+response explicitly.
+
 #### Enum Filter Validation
 
 Enum filter parameters accept a **single value** by default. Endpoints
