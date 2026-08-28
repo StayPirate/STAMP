@@ -5,8 +5,7 @@ description: >
   envelope format). Use this agent after creating or modifying feature specs
   that define API endpoints. Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-sonnet-5
-variant: xhigh
+model: google-vertex/claude-sonnet-5@default
 permission:
   edit: deny
   bash:
