@@ -676,10 +676,12 @@ attribute it exposes.
   - `experimental/v2/maintained/?package={name}&include_reactive_ltss=true`
     relative to the API prefix (non-paginated) — unified resolver that
     combines IBS channel records with Git/SLFO Product SBOM records. Returns
-    codestream-grouped entries with direct Product CPE, workflow type
-    (`product_definition.type`: `channel` or `compose`), and aggregated
-    targets. Sentinel consumes only the fields required for package
-    resolution (see `package-model.md`, SMELT Query for Package Resolution)
+    codestream-grouped entries with direct Product CPE, the authoritative
+    codestream `maintenance_process_type`, target-level Product-definition
+    provenance (`product_definition.type`: `channel` or `compose`), and
+    aggregated targets. Sentinel consumes only the fields required for
+    package resolution (see `package-model.md`, SMELT Query for Package
+    Resolution)
 - **Integration status**: **Active**. Sentinel periodically syncs the product
   catalog (`sync_smelt_products` fetcher) and queries package maintenance
   information on demand when adding packages to tickets. CPE identifiers
@@ -701,6 +703,9 @@ attribute it exposes.
     AIMAAS-derived Reactive LTSS status.
   - Git/SLFO package resolution originates from the latest released Product
     SBOM snapshot and Product-compose metadata, not from `SUSE:Channels`.
+  - `codestream.maintenance_process_type` identifies the codestream process;
+    `product_definition.type` identifies how an individual Product target was
+    resolved and is not workflow authority.
   - Absence from one upstream catalog is not evidence that a Product is EOL,
     deleted, or ineligible. Catalog presence and lifecycle are independent.
 - **Documentation**: https://smelt.suse.de (internal)

@@ -55,10 +55,12 @@ system (IBS codestream project name or git branch name). Both are
 human-readable. For git, the full repository URL is derivable from
 `package_name` (convention: `src.suse.de/pool/{package_name}`).
 
-The SMELT v2 maintained-package endpoint provides an explicit workflow
-type indicator (`product_definition.type`: `channel` for IBS, `compose`
-for git). Sentinel maps this directly to `workflow_type` at ingestion
-time. Both workflows can coexist under the same package. See
+The SMELT v2 maintained-package endpoint provides the codestream-level
+`maintenance_process_type`. Sentinel maps supported values directly to
+`workflow_type` at ingestion time: `SLFO` maps to `git` and `SLE_15` maps to
+`ibs`. The target-level `product_definition.type` (`channel` or `compose`)
+describes Product-definition provenance and is not workflow authority. Both
+supported workflows can coexist under the same package. See
 [SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
 for the full resolution contract.
 
@@ -200,8 +202,8 @@ that provides:
    (`experimental/v2/maintained/` relative to the configured SMELT API
    prefix): given a source package name, returns the list of codestreams
    where the package is maintained and the Products it is shipped to,
-   with direct CPE identification and workflow type
-   (`product_definition.type`: `channel` for IBS, `compose` for git).
+   with direct CPE identification, authoritative codestream maintenance
+   process, and target-level Product-definition provenance.
 
 SMELT reads from IBS, Git Product catalogs, Product build SBOM snapshots,
 and other sources internally.
@@ -890,9 +892,10 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 1. Query SMELT and resolve products as specified in
    [SMELT Query for Package Resolution](#smelt-query-for-package-resolution):
    external I/O, envelope validation, catalog readiness check, CPE matching,
-   compose-over-channel deduplication, and `workflow_type` determination from
-   `product_definition.type`. If no Product is resolved across the complete
-   response, reject the operation without database writes.
+   synthetic channel/compose deduplication, unsupported-process filtering, and
+   `workflow_type` determination from `codestream.maintenance_process_type`.
+   If no Product is resolved across the complete response, reject the
+   operation without database writes.
 2. Create a `TicketPackage` record for the package if one does not already
    exist. If a record already exists (active or soft-deleted), skip creation.
 3. For each resolved track, delegate `TicketPackageTrack` record
@@ -1040,12 +1043,25 @@ single non-paginated JSend envelope.
 - The `include_reactive_ltss=true` parameter MUST always be included to
   ensure Products in Reactive LTSS are returned.
 - Each entry in `data` must have a `codestream` object with a non-empty
-  string `name` that fits the persisted track-reference column length, and a
-  non-empty `targets` array.
-- Each target must have `product.cpe` as a non-empty string and
+  string `name` that fits the persisted track-reference column length and a
+  non-null string `maintenance_process_type`. Codestream names must be unique
+  across the grouped response.
+- `maintenance_process_type` must be one of the declared SMELT values `SLFO`,
+  `SLFO_IBS`, or `SLE_15`. A missing, null, non-string, or unknown value, or a
+  repeated codestream name, rejects the complete response and raises
+  `SmeltUnavailableError`.
+- A supported `SLFO` or `SLE_15` entry must have a non-empty `targets` array.
+  Each target must have `product.cpe` as a non-empty string and
   `product_definition.type` with a value of `"channel"` or `"compose"`.
-  An invalid entry or target rejects the complete response and raises
-  `SmeltUnavailableError`; entries are never skipped.
+  An invalid supported entry or target rejects the complete response and
+  raises `SmeltUnavailableError`; targets are never individually skipped for
+  structural validation failures.
+- `SLFO_IBS` is a known but unsupported maintenance process. Sentinel skips
+  the complete codestream without validating or consuming its targets and
+  emits one WARNING-level
+  `package_codestream_maintenance_process_unsupported` event containing
+  `package_name`, `codestream`, and `maintenance_process_type`. Processing
+  continues with supported codestreams.
 - `product.friendly_name` is used only for logging and warning messages.
   If absent or empty, the `product.cpe` value is used as a fallback in
   log messages. A missing `friendly_name` does not reject the response.
@@ -1055,8 +1071,9 @@ single non-paginated JSend envelope.
 | Field | Purpose |
 |-------|---------|
 | `data[].codestream.name` | Track reference (`TicketPackageTrack.reference`) |
+| `data[].codestream.maintenance_process_type` | Authoritative track workflow: `SLFO` → `git`, `SLE_15` → `ibs`; known `SLFO_IBS` entries are unsupported and skipped |
 | `data[].targets[].product.cpe` | Product match key against local `Product.cpe` |
-| `data[].targets[].product_definition.type` | Workflow type: `channel` → `ibs`, `compose` → `git` |
+| `data[].targets[].product_definition.type` | Product-definition provenance used only for synthetic same-CPE channel/compose deduplication |
 | `data[].targets[].product.friendly_name` | Logging and warning messages |
 
 All other response fields (`codestream.url`, `product.id`,
@@ -1086,21 +1103,25 @@ removed by SMELT.
    targets-unresolved outcomes.
 3. If `status` is `"error"`, or `status` is `"success"` with an empty `data`
    array, raise `PackageNotFoundInSmeltError`.
-4. Validate all entries and targets per the entry validation rules above.
-5. Collect all `(codestream.name, product.cpe, product_definition.type)`
-   triples from the response. Apply the deduplication rule above.
-6. For each remaining triple:
+4. Validate every codestream name and maintenance-process value. Skip each
+   `SLFO_IBS` codestream with the warning defined above. Validate all targets
+   belonging to the remaining supported codestreams.
+5. Map each supported codestream to one `workflow_type`: `SLFO` maps to `git`
+   and `SLE_15` maps to `ibs`.
+6. Collect all `(codestream.name, workflow_type, product.cpe,
+   product_definition.type)` records from supported entries. Apply the
+   deduplication rule above.
+7. For each remaining record:
    a. Look up the Product by exact `Product.cpe` match in the local catalog.
       If no local Product matches, ignore this triple and continue.
-   b. Determine `workflow_type` from `product_definition.type`: `"channel"`
-      → `ibs`, `"compose"` → `git`.
-   c. Create or find a `TicketPackageTrack` with `reference =
+   b. Create or find a `TicketPackageTrack` with `reference =
       codestream.name` and the determined `workflow_type` (if one does not
       already exist for this package + reference combination, including
       soft-deleted).
-   d. Create a `TicketPackageProduct` linking the track to the matched
+   c. Create a `TicketPackageProduct` linking the track to the matched
       Product (if one does not already exist).
-7. If no Product was resolved across the entire response, fail with
+8. If no Product was resolved across the entire response, including when all
+   returned codestreams were skipped as unsupported, fail with
    `PackageTargetsUnresolvedError`; no package-tree record is created.
 
 When at least one Product CPE has no local match in an otherwise successful
@@ -1923,12 +1944,11 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
       product-level)
 - [ ] Bugowner resolution for git workflow (CODEOWNERS? maintainer file?)
 - [ ] Real-time event source for git workflow (webhook? polling?)
-- [x] SMELT API evolution — the v2 `maintained` endpoint returns both IBS
-      channel and Git/SLFO compose records with `product_definition.type`
-      distinguishing the two workflows
-- [x] Inference heuristic for workflow_type — resolved: use
-      `product_definition.type` from SMELT v2 (`channel` → `ibs`,
-      `compose` → `git`)
+- [x] SMELT API evolution — the v2 `maintained` endpoint exposes
+      `codestream.maintenance_process_type` as the authoritative workflow
+      discriminator
+- [x] Workflow type mapping — `SLFO` maps to `git`, `SLE_15` maps to `ibs`,
+      and known unsupported `SLFO_IBS` codestreams are skipped
 - [ ] Submission tracking (SR/RR) equivalent for git workflow, if any
 
 ---

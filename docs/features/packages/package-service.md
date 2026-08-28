@@ -510,10 +510,28 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Target ticket |
 | `package_name` | `str` | Yes | Source package name |
-| `tracks` | `list[TrackData]` | Yes | Track/product data from SMELT resolution |
+| `tracks` | `list[ResolvedTrackData]` | Yes | Fully validated and locally resolved track/Product data; semantic shape defined below |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 | `audit_comment` | `str \| None` | No | System-generated context for `package_added`; `NULL` for user actions |
 | `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product catalog backfill |
+
+`ResolvedTrackData` names the semantic input boundary; it does not require a
+particular dataclass, `TypedDict`, Pydantic model, or other concrete in-memory
+representation. Each item contains:
+
+| Field | Type | Contract |
+|-------|------|----------|
+| `reference` | `str` | Unique SMELT codestream name, already validated against the persisted track-reference constraints |
+| `workflow_type` | `WorkflowType` | Already mapped from the supported authoritative `codestream.maintenance_process_type` value |
+| `product_ids` | non-empty collection of `UUID` | Distinct IDs of existing local Products resolved by exact CPE under this codestream |
+
+Before calling `add_package_records()`, the caller has completed all external
+I/O, JSend and response validation, unsupported-process filtering,
+channel/compose deduplication, exact CPE lookup, workflow mapping, and
+deduplication of Product IDs within each track. Consequently this function
+does not parse SMELT data, infer a workflow, accept unknown Products, or decide
+whether a codestream is supported. The concrete collection and record types
+remain implementation choices as long as they preserve this contract.
 
 **Preconditions**:
 
@@ -819,12 +837,14 @@ async def add_package_to_ticket(
    error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are
    created.
 5. Match returned product CPEs directly against local `Product.cpe` before
-   the Ticket lock is acquired. Ignore CPEs with no local match, apply the
-   compose-over-channel deduplication rule, and determine `workflow_type`
-   from `product_definition.type` as specified in `package-model.md`
-   (SMELT Query for Package Resolution). If resolution is partial, emit
-   the required structured WARNING before mutation. If no Product CPE
-   resolves to a local Product across the complete response, raise
+   the Ticket lock is acquired. Filter known unsupported codestreams, apply
+   the synthetic same-CPE channel/compose deduplication rule, and map
+   `workflow_type` from the authoritative
+   `codestream.maintenance_process_type` as specified in `package-model.md`
+   (SMELT Query for Package Resolution). Build the validated
+   `ResolvedTrackData` input defined by `add_package_records()`. If resolution
+   is partial, emit the required structured warnings before mutation. If no
+   Product CPE resolves to a local Product across supported codestreams, raise
    `PackageTargetsUnresolvedError`. No records are created.
 6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.

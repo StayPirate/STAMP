@@ -48,10 +48,12 @@ receives only resolved track/product data. (2026-08-27)
 
 ### PKS-GAP-10 — TrackData type not defined (Medium)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-The `TrackData` type is referenced in the `add_package_records()` parameter table but never defined. What fields does it contain? The I/O-then-Lock pattern implies all external resolution happens before `add_package_records()`, so `TrackData` must contain fully resolved data — but this is not stated. Without a definition, implementers must reverse-engineer the structure.
+**Status**: RESOLVED — Replaced the undefined nominal reference with the
+defined semantic `ResolvedTrackData` boundary. The specification now requires
+a validated track reference, mapped `WorkflowType`, and distinct existing
+local Product IDs after all external I/O, response validation, filtering,
+deduplication, and CPE resolution. The concrete in-memory representation
+remains an implementation choice. (2026-08-28)
 
 ### PKS-GAP-11 — Mutations on effectively-excluded records not explicitly permitted or denied (Low)
 
