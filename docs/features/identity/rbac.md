@@ -439,9 +439,9 @@ here with the required authorization level and a link to the owning spec.
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-track) |
 | POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-track) |
 | PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}` | `manage_packages` †admin_ticket_ops | [package-model](../packages/package-model.md#change-track-status) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-product) |
-| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-product) |
-| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}` | `manage_packages` | [package-model](../packages/package-model.md#override-product-eligibility) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}/exclude` | `manage_packages` | [package-model](../packages/package-model.md#soft-delete-product) |
+| POST | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}/restore` | `manage_packages` | [package-model](../packages/package-model.md#restore-product) |
+| PATCH | `/api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}` | `manage_packages` | [package-model](../packages/package-model.md#override-product-eligibility) |
 
 ### Products
 

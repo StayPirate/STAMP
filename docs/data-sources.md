@@ -813,7 +813,7 @@ delivery topology from being conflated:
 | Product lifecycle dates and CVSS thresholds | AIMAAS | AIMAAS API |
 | IBS package/codestream-to-target mapping | IBS `SUSE:Channels` | SMELT channel resolver |
 | Historical IBS channel location | IBS `SUSE:Channels:EOL` | SMELT, only when explicitly relevant |
-| Git package/codestream-to-Product mapping | Released Product SBOM and Product-compose data | Experimental SMELT SBOM resolver; not a current Sentinel contract |
+| Git package/codestream-to-Product mapping | Released Product SBOM and Product-compose data | Active SMELT v2 `experimental/v2/maintained/` compose-target resolution |
 | Architecture, extension/module, release-stage, and migration structure | SCC | SMELT today; possible future direct enrichment |
 
 CPE is the cross-source Product reconciliation key when present. Exact CPE

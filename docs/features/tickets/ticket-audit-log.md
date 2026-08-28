@@ -35,7 +35,7 @@ fields populated according to this table:
 | `package_excluded` | Package directly soft-deleted by a VA. Child tracks and Products are not modified and do not generate events; they become effectively VA-excluded through the hierarchy | VA user | Package name | `NULL` | `NULL` | `NULL` |
 | `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | `NULL` | `NULL` |
 | `track_status_changed` | Track status changed (VA action, admin force-FIXED, or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
-| `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | `RELEASED` | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "advisory_id": "..."}` (see detail contract) |
+| `product_released` | Product release detected via updateinfo.xml | `NULL` | `NULL` | Advisory-issued `released_at` timestamp in UTC ISO 8601 format | `NULL` | Product subject plus `advisory_id` (see detail contract) |
 | `ticket_created` | Ticket created (CVE ingestion, track detection, or manual) | `NULL` for automatic creation, creating user for manual creation | `NULL` | `NULL` | Creation source description (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in openssl (SUSE:SLE-15-SP6:Update)"`, `"Ticket created manually"`) | `NULL` |
 | `cve_associated` | CVE associated with a ticket that previously had no CVE | VA user | `NULL` | CVE-ID string (e.g., `"CVE-2024-1234"`) | `NULL` | `NULL` |
 | `severity_changed` | CVSS recalculation changes ticket severity (system), VA sets/clears manual severity, or CVE association triggers handover from manual to CVSS-derived severity | `NULL` for automatic CVSS recalculation, acting user's UUID for manual severity (`set_severity_manual()`) or CVE association handover (`associate_cve()`) | Old severity (e.g., `High`) or `NULL` | New severity (e.g., `Critical`) or `NULL` | `NULL` | `NULL` |
@@ -49,11 +49,11 @@ fields populated according to this table:
 > severity (or `NULL` if the CVE has no CVSS data yet). This event is
 > emitted by `associate_cve()` itself (not by `recalculate_cvss_chain()`).
 | `cvss_assessment_changed` | CVSS assessment added, modified, or removed | VA user for SUSE changes, `NULL` for external sync | Previous `"provider_name vX.Y score"` or `NULL` if new | Current `"provider_name vX.Y score"` or `NULL` if removed | `NULL` | `NULL` |
-| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive Support), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `NULL` | `{"track": "...", "package": "...", "product_id": "...", "reason": "..."}` (see detail contract) |
+| `product_eligibility_changed` | Product eligibility changed due to CVSS recalculation, lifecycle phase transition (Reactive Support), threshold change, or VA override | VA user for VA overrides, `NULL` for system-triggered changes | Old eligibility (`true` or `false`) | New eligibility (`true` or `false`) | `NULL` | Product subject plus `reason` and conditional `override_action` (see detail contract) |
 | `track_excluded` | Track directly soft-deleted by a VA. Child Products are not modified and do not generate events; they become effectively VA-excluded through the hierarchy | VA user | Track name | `NULL` | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
-| `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | `NULL` | `NULL` |
-| `product_excluded` | Product directly soft-deleted by a VA | VA user | Product display name | `NULL` | `NULL` | `{"track": "...", "package": "...", "product_id": "..."}` (see detail contract) |
-| `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | `NULL` | `NULL` |
+| `track_restored` | Directly excluded track restored to ticket. Only the track record is restored — child products are not modified | VA user | `NULL` | Track name | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
+| `product_excluded` | Product directly soft-deleted by a VA | VA user | Product display name | `NULL` | `NULL` | Product subject (see detail contract) |
+| `product_restored` | Directly excluded product restored to ticket | VA user | `NULL` | Product display name | `NULL` | Product subject (see detail contract) |
 | `confidentiality_changed` | Ticket `is_confidential` flag toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually granted explicit access to a confidential ticket | Acting user | `NULL` | Target username | `NULL` | `NULL` |
 | `access_grant_removed` | User manually revoked explicit access to a confidential ticket | Acting user | Target username | `NULL` | `NULL` | `NULL` |
@@ -82,6 +82,9 @@ fields populated according to this table:
 - `detail` is used for structured machine-readable context (JSONB). Keys are
   validated per event type — see the detail JSONB Schema Contract below.
   Event types not listed in the contract MUST set `detail` to `NULL`.
+- Product subject fields are event-time snapshots. Services populate them from
+  the locked mutation context before changing the row. Audit reads and search
+  never join current Product data to reconstruct historical meaning.
 - All events include an implicit `created_at` timestamp set by the database
   default.
 
@@ -97,9 +100,11 @@ types not listed here MUST set `detail` to `NULL`.
 |---|---|---|---|
 | `track_status_changed` | `track` (string), `package` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"}` |
 | `track_excluded` | `track` (string), `package` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"}` |
-| `product_released` | `track` (string), `package` (string), `product_id` (UUID string), `advisory_id` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "advisory_id": "SUSE-SU-2025:1234-1"}` |
-| `product_eligibility_changed` | `track` (string), `package` (string), `product_id` (UUID string), `reason` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000", "reason": "threshold"}` |
-| `product_excluded` | `track` (string), `package` (string), `product_id` (UUID string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_id": "550e8400-e29b-41d4-a716-446655440000"}` |
+| `track_restored` | `track` (string), `package` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl"}` |
+| `product_released` | `track` (string), `package` (string), `product_name` (string), `product_cpe` (string), `advisory_id` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_name": "SLES 15 SP6", "product_cpe": "cpe:/o:suse:sles:15:sp6", "advisory_id": "SUSE-SU-2025:1234-1"}` |
+| `product_eligibility_changed` | `track` (string), `package` (string), `product_name` (string), `product_cpe` (string), `reason` (string) | `override_action` (string; conditionally required) | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_name": "SLES 15 SP6", "product_cpe": "cpe:/o:suse:sles:15:sp6", "reason": "threshold"}` |
+| `product_excluded` | `track` (string), `package` (string), `product_name` (string), `product_cpe` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_name": "SLES 15 SP6", "product_cpe": "cpe:/o:suse:sles:15:sp6"}` |
+| `product_restored` | `track` (string), `package` (string), `product_name` (string), `product_cpe` (string) | — | `{"track": "SUSE:SLE-15-SP6:Update", "package": "openssl", "product_name": "SLES 15 SP6", "product_cpe": "cpe:/o:suse:sles:15:sp6"}` |
 | `reference_type_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `reference_title_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `reference_description_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
@@ -113,9 +118,15 @@ types not listed here MUST set `detail` to `NULL`.
   emits one event per changed
   `TicketPackageProduct`, with `user_id = NULL` and `comment = NULL`, in the
   same per-Ticket transaction as the eligibility update. Unchanged and
-  manual-override records emit no event. For this event,
-  `detail.product_id` identifies the changed `TicketPackageProduct.id`, not
-  its catalog `Product.id` foreign key.
+  manual-override records emit no event. When `reason = va_override`,
+  `override_action` is required and equals `set` when automatic management
+  becomes a manual override, `changed` when an existing override changes
+  value, or `cleared` when the override is removed. For every other reason,
+  `override_action` is absent.
+- Product event details intentionally omit both `TicketPackageProduct.id` and
+  internal `Product.id`. Within the ticket-scoped audit log, the event-time
+  `package`, `track`, and canonical `product_cpe` identify the occurrence, and
+  `product_name` keeps the event directly readable and searchable by analysts.
 - `reference_type_changed`, `reference_title_changed`,
   `reference_description_changed`: `url` is the post-normalization URL of the
   reference being modified — used as the locator since a ticket can have
@@ -254,6 +265,13 @@ Tests for any ticket-mutating service MUST verify:
    (expected keys present, no extra keys, `NULL` when required)
 6. The event is created in the same transaction (i.e., if the operation is
    rolled back, no event exists)
+7. Product events preserve event-time `product_name` and `product_cpe`, remain
+   searchable by both values, and do not expose an internal Product or
+   TicketPackageProduct UUID as the subject
+8. `product_released.new_value` equals the actual persisted `released_at`
+   timestamp, including retroactive advisory dates
+9. VA eligibility events distinguish `override_action` values `set`,
+   `changed`, and `cleared`; automatic events omit that key
 
 See Guardrail 6 (Mandatory testing) and Guardrail 11 (Ticket event logging)
 in `AGENTS.md` for enforcement.

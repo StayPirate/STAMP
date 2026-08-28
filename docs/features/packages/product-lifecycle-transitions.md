@@ -63,12 +63,15 @@ The fetcher is idempotent and maintains no lifecycle cursor or phase cache.
    `TicketPackageProduct` on an operable Ticket has stored eligibility that
    differs from the complete current eligibility result. Operable Tickets are
    `New`, `Analysis`, `Analyzed`, or `Resolved`; `Ignored` and `Duplicated`
-   remain in the manual zone. Candidate discovery may prefilter obvious
-   mismatches, but mutation always recomputes from current persisted inputs.
+   remain in the manual zone. Include directly and effectively VA-excluded
+   records and EOL Products in this scan; exclusion and actionability do not
+   suspend factual eligibility maintenance. Candidate discovery may prefilter
+   obvious mismatches, but mutation always recomputes from current persisted
+   inputs.
 3. For each Product found in step 2, enqueue one independent
-   `re_evaluate_product_eligibility(product_id, reason="reactive_ltss")`
-   task. Dispatch failures are logged per Product and do not stop later
-   dispatches.
+   `re_evaluate_product_eligibility(catalog_product_id,
+   reason="reactive_ltss")` task. Dispatch failures are logged per Product and
+   do not stop later dispatches.
 4. Using the same `evaluation_date`, select distinct Ticket IDs in `Analysis`,
    `Analyzed`, or `Resolved` whose persisted status differs from the status
    produced by the current gate predicates. Candidate discovery uses the same
@@ -140,7 +143,7 @@ independent schedule or dashboard entry.
 
 | Parameter | Type | Meaning |
 |-----------|------|---------|
-| `product_id` | `UUID` | Catalog `Product.id` |
+| `catalog_product_id` | `UUID` | Internal catalog `Product.id` |
 | `reason` | `Literal["threshold", "reactive_ltss", "reactivation"]` | Trigger recorded in changed-record audit events |
 
 The task validates `reason` before opening a database session. An unsupported
@@ -181,8 +184,9 @@ not use this task; they remain owned by
 `EvaluateLifecycleTransitions.catch_up(ticket_id, session)` is a custom
 override of the shared per-Ticket catch-up contract. The passed session is used
 only to verify that the Ticket exists and enumerate distinct catalog Product
-IDs currently linked to its package tree. A missing Ticket or an empty package
-tree returns silently.
+IDs currently linked to its package tree. This enumeration includes directly
+and effectively VA-excluded records and EOL Products. A missing Ticket or an
+empty package tree returns silently.
 
 For every Product ID, the method opens an independent session and transaction
 and invokes `package_service.recalculate_product_eligibility_for_ticket()` for
@@ -222,7 +226,7 @@ triggered manually after that daily evaluation, operators may trigger
 converges all affected Tickets.
 
 `sync_aimaas_thresholds` retains its post-commit mismatch discovery and
-dispatches `re_evaluate_product_eligibility(product_id,
+dispatches `re_evaluate_product_eligibility(catalog_product_id,
 reason="threshold")`. The Product task includes `Resolved` Tickets so a newly
 eligible Product can invalidate resolution.
 

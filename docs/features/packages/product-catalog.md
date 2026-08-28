@@ -597,8 +597,10 @@ eligibility and EOL-derived actionability when applicable.
      (`New`, `Analysis`, `Analyzed`, or `Resolved`)
      differs from the result under the committed threshold snapshot. This
      mismatch scan captures one UTC `evaluation_date` and uses it for every
-     lifecycle-dependent eligibility comparison. The mismatch set recovers
-     prior task-dispatch or per-Ticket failures.
+     lifecycle-dependent eligibility comparison. It includes directly and
+     effectively VA-excluded records and EOL Products; exclusion and
+     actionability do not suspend factual eligibility maintenance. The
+     mismatch set recovers prior task-dispatch or per-Ticket failures.
   9. Enqueue the Product-level recalculation defined in
      `product-lifecycle-transitions.md` once per Product in the union of the
      changed and mismatch sets, with reason `threshold`. A dispatch failure
@@ -673,7 +675,6 @@ conventions. The deterministic primary-key tiebreaker is applied as required by
 {
   "data": [
     {
-      "id": "uuid",
       "name": "SUSE Linux Enterprise Server",
       "version": "15 SP6",
       "cpe": "cpe:/o:suse:sles:15:sp6",
@@ -702,7 +703,6 @@ conventions. The deterministic primary-key tiebreaker is applied as required by
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | UUID | Internal Product identifier |
 | `name` | string | Descriptive SMELT name |
 | `version` | string | Descriptive SMELT version |
 | `display_name` | string | Human-readable SMELT name |
@@ -767,9 +767,11 @@ per_page=per_page)`. Otherwise, it applies the requested catalog-presence,
 lifecycle, CPE, and search predicates, with the endpoint semantics above, and
 returns the requested page and its total from one consistent selected snapshot.
 It computes lifecycle phase using the supplied `evaluation_date` and serializes
-all Product list-item fields. It creates no audit event, acquires no mutation
-lock, and propagates underlying database exceptions; it raises no
-Product-specific exception.
+all public Product list-item fields. The internal `Product.id` remains available
+to the query implementation for joins or deterministic ordering but is not
+serialized. The function creates no audit event, acquires no mutation lock, and
+propagates underlying database exceptions; it raises no Product-specific
+exception.
 
 #### Test Requirements
 
@@ -786,6 +788,8 @@ Implementation tests for this endpoint and service MUST cover:
   while responses retain `lifecycle_phase: null` for unavailable values;
 - permanent presence of all lifecycle-date fields, with `null` for unavailable
   source values;
+- CPE as the public Product identity and absence of the internal `Product.id`
+  from serialized items;
 - every supported sort field, ascending and descending directions, deterministic
   pagination where primary sort values tie, and correct `meta.total`;
 - one-response snapshot consistency when a complete SMELT publication overlaps

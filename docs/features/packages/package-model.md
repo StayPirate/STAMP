@@ -838,10 +838,10 @@ restore events because they do not mutate package-tree records.
 |--------|-------------|-----------|------------------|
 | VA soft-deletes a package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes a track | `track_excluded` | VA user | `track_name`, `package_name` |
-| VA soft-deletes a product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
+| VA soft-deletes a product | `product_excluded` | VA user | `track_name`, `package_name`, event-time Product name and CPE |
 | VA restores a package | `package_restored` | VA user | `package_name` |
 | VA restores a track | `track_restored` | VA user | `track_name`, `package_name` |
-| VA restores a product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
+| VA restores a product | `product_restored` | VA user | `track_name`, `package_name`, event-time Product name and CPE |
 
 ---
 
@@ -1031,13 +1031,16 @@ single non-paginated JSend envelope.
 - A package-not-found response arrives with HTTP status 404 and body
   `{"status": "error", "data": "Package X not found"}`.
 - Both package-not-found cases map to `PackageNotFoundInSmeltError`.
+- A connection failure, timeout, proxy error, or remote-protocol error after
+  the shared transport retries are exhausted maps to `SmeltUnavailableError`.
+  No HTTP response exists to inspect in these cases.
 - Sentinel MUST parse the JSON body regardless of HTTP status and check the
   JSend `status` field before applying the catch-all rule below. A 404 with
   a valid `status: "error"` body is a package-not-found, not an availability
   failure.
-- Any response that cannot be parsed as JSON, whose `status` field is not
-  `"success"` or `"error"`, or that fails entry validation maps to
-  `SmeltUnavailableError`.
+- Any non-200 response other than the valid 404 package-not-found response,
+  any body that cannot be parsed as JSON, any unrecognized `status` field, or
+  any entry-validation failure maps to `SmeltUnavailableError`.
 - Live verification confirmed that the `package` filter is case-sensitive:
   canonical `kernel-default` returned results, while case variants returned
   the error envelope. Sentinel does not normalize package-name case before
@@ -1098,16 +1101,18 @@ removed by SMELT.
 
 **Processing**:
 
-1. Retrieve the response and validate the JSON envelope structure (parseable
-   JSON with a `status` field). If validation fails, raise
-   `SmeltUnavailableError`.
+1. Retrieve the response. If transport fails after shared retries, or the
+   response does not have a valid JSend envelope and an expected HTTP status,
+   raise `SmeltUnavailableError`.
 2. Require a ready Product catalog as defined in `product-catalog.md`. If no
    complete Product snapshot has committed, raise
    `ProductCatalogNotReadyError` before interpreting the response content.
    Readiness failure takes precedence over both package-not-found and
    targets-unresolved outcomes.
-3. If `status` is `"error"`, or `status` is `"success"` with an empty `data`
-   array, raise `PackageNotFoundInSmeltError`.
+3. If HTTP status is 404 with a valid `status = "error"` envelope, or status
+   is 200 with `status = "success"` and an empty `data` array, raise
+   `PackageNotFoundInSmeltError`. Any other non-200 response raises
+   `SmeltUnavailableError`.
 4. Validate every codestream name and maintenance-process value. Skip each
    `SLFO_IBS` codestream with the warning defined above. Validate all targets
    belonging to the remaining supported codestreams.
@@ -1157,15 +1162,15 @@ types are defined:
 | Package auto-added or completed (CVE ingestion, release detection, or Product catalog backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
-| VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, `product_id` |
+| VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, event-time Product name and CPE |
 | VA restores package | `package_restored` | VA user | `package_name` |
 | VA restores track | `track_restored` | VA user | `track_name`, `package_name` |
-| VA restores product | `product_restored` | VA user | `track_name`, `package_name`, `product_id` |
+| VA restores product | `product_restored` | VA user | `track_name`, `package_name`, event-time Product name and CPE |
 | VA changes track status | `track_status_changed` | VA user | `track_name`, `package_name`, `old_status`, `new_status` |
-| VA overrides or resets Product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible`, `reason = va_override` |
+| VA overrides or resets Product eligibility | `product_eligibility_changed` | VA user | `track_name`, `package_name`, event-time Product name and CPE, `old_eligible`, `new_eligible`, `reason = va_override`, and `override_action` |
 | Ticket created | `ticket_created` | `NULL` | Creation source description |
-| Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, `product_id`, `advisory_id` |
-| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, `product_id`, `old_eligible`, `new_eligible`, `reason` |
+| Product release detected | `product_released` | `NULL` | `track_name`, `package_name`, event-time Product name and CPE, `released_at`, `advisory_id` |
+| Product eligibility recalculated | `product_eligibility_changed` | `NULL` | `track_name`, `package_name`, event-time Product name and CPE, `old_eligible`, `new_eligible`, `reason` |
 
 - `user_id = NULL` indicates an automatic system action. For
   `package_added`, this distinguishes manual additions (VA user) from
@@ -1512,7 +1517,7 @@ response instead returns `actionable = false` and
 ### Soft-Delete Product
 
 ```
-POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/exclude
+POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}/exclude
 ```
 
 Soft-delete a single Product from a track. Creates one VA-attributed
@@ -1529,7 +1534,8 @@ by ticket gates (Resolved gate and Analyzed gate).
 ```json
 {
   "data": {
-    "product_id": "uuid",
+    "id": "uuid",
+    "product_cpe": "cpe:/o:suse:sles:15:sp6",
     "product_name": "SLES 15-SP6",
     "actionable": false,
     "non_actionable_reason": "product_excluded"
@@ -1551,7 +1557,7 @@ by ticket gates (Resolved gate and Analyzed gate).
 ### Restore Product
 
 ```
-POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}/restore
+POST /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}/restore
 ```
 
 Restore a directly VA-excluded Product. Clears `deleted_at` on the Product
@@ -1563,7 +1569,8 @@ record. No child, ancestor, or lifecycle pre-check applies. Creates a single
 ```json
 {
   "data": {
-    "product_id": "uuid",
+    "id": "uuid",
+    "product_cpe": "cpe:/o:suse:sles_ltss:15:sp4",
     "product_name": "SLES-LTSS 15-SP4",
     "actionable": false,
     "non_actionable_reason": "eol"
@@ -1626,7 +1633,8 @@ other status but not `FIXED`.
     "non_actionable_reason": null,
     "products": [
       {
-        "product_id": "uuid",
+        "id": "uuid",
+        "product_cpe": "cpe:/o:suse:sles:15:sp6",
         "product_name": "SLES 15 SP6",
         "eligible": true,
         "is_eligible_override": false,
@@ -1635,7 +1643,8 @@ other status but not `FIXED`.
         "non_actionable_reason": null
       },
       {
-        "product_id": "uuid",
+        "id": "uuid",
+        "product_cpe": "cpe:/o:suse:sles_ltss:15:sp4",
         "product_name": "SLES-LTSS 15-SP4",
         "eligible": false,
         "is_eligible_override": false,
@@ -1666,7 +1675,7 @@ Conditional Check: required only when `status = FIXED`)
 ### Override Product Eligibility
 
 ```
-PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{product_id}
+PATCH /api/v1/tickets/{ticket_id}/packages/{package_id}/tracks/{track_id}/products/{ticket_package_product_id}
 ```
 
 Override the eligibility of a specific product. Sets
@@ -1720,7 +1729,8 @@ changing an override value, and resetting an override.
     "ticket_id": "uuid",
     "package_name": "openssl-3",
     "reference": "SUSE:SLE-15-SP6:Update",
-    "product_id": "uuid",
+    "id": "uuid",
+    "product_cpe": "cpe:/o:suse:sles_ltss:15:sp4",
     "product_name": "SLES-LTSS 15-SP4",
     "eligible": false,
     "is_eligible_override": true,

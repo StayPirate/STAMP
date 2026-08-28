@@ -40,7 +40,11 @@ receives only resolved track/product data. (2026-08-27)
 
 ### PKS-GAP-08 — Restore pre-checks from package-model.md not reflected in module spec (Medium)
 
-**Status**: RESOLVED — Spec updated: restore functions now include child-existence pre-checks with PACKAGE_RESTORE_BLOCKED error (2026-05-23)
+**Status**: SUPERSEDED — The derived-actionability design removed automatic
+orphan cleanup, child-existence restore pre-checks, and
+`PACKAGE_RESTORE_BLOCKED`. Restore now clears only the selected VA exclusion
+marker and is valid under an excluded ancestor or another non-actionability
+cause. (2026-08-28)
 
 ### PKS-GAP-09 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
 

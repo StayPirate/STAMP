@@ -1023,7 +1023,7 @@ is `null` rather than an object.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | UUID | TicketPackageProduct primary key |
-| `product_id` | UUID | Product foreign key |
+| `product_cpe` | string | Canonical public identity of the related catalog Product |
 | `product_name` | string | Product display name (from `Product.display_name`) |
 | `eligible` | boolean | Whether this product receives the fix |
 | `is_eligible_override` | boolean | `true` if VA manually set eligibility |

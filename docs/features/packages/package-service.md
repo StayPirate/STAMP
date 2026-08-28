@@ -252,7 +252,7 @@ repository.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to modify |
 | `released_at` | `datetime` | Yes | Advisory issued date (UTC) |
 | `advisory_id` | `str` | Yes | Advisory identifier (e.g., `SUSE-SU-2025:1234-1`) |
 
@@ -275,8 +275,9 @@ repository.
    is irreversible; see below)
 4. Set `TicketPackageProduct.released_at` to the provided value
 5. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
-   with detail: `{"track": "...", "package": "...", "product_id": "...",
-   "advisory_id": "..."}`
+   with `new_value` equal to the `released_at` timestamp in UTC ISO 8601
+   format and with the event-time Product subject plus `advisory_id` in
+   `detail`, as defined in `ticket-audit-log.md`
 6. Call `reconcile_ticket_status()`
 7. Return updated product
 
@@ -304,7 +305,7 @@ Sets or resets the eligibility override of a `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to modify |
 | `eligible` | `bool \| None` | Yes | New eligibility value (`true`/`false` for override, `None` to reset to automatic calculation) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
@@ -325,8 +326,9 @@ If `eligible` is `bool` (override):
 5. Update `TicketPackageProduct.eligible` to the given value
 6. Set `TicketPackageProduct.is_eligible_override = true`
 7. Create `TicketAuditEvent` (`product_eligibility_changed`) with the standard
-   `track`, `package`, and `product_id` detail keys and
-   `reason = "va_override"`
+   Product subject, `reason = "va_override"`, and `override_action = "set"`
+   when the previous value was system-managed or `override_action = "changed"`
+   when an existing override changed value
 8. Call `reconcile_ticket_status()`
 9. Return updated product
 
@@ -344,8 +346,8 @@ If `eligible` is `None` (reset to automatic):
    `cvss.resolve_eligibility_score()`.
 7. Update `TicketPackageProduct.eligible` to the calculated value
 8. Create `TicketAuditEvent` (`product_eligibility_changed`) with the standard
-   `track`, `package`, and `product_id` detail keys and
-   `reason = "va_override"`
+   Product subject, `reason = "va_override"`, and
+   `override_action = "cleared"`
 9. Call `reconcile_ticket_status()`
 10. Return updated product
 
@@ -379,7 +381,7 @@ changes and the platform-wide `default_cvss_version` batch.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Caller-owned database session |
 | `ticket_id` | `UUID` | Yes | Ticket whose matching package Products are recalculated |
-| `product_id` | `UUID` | Yes | Catalog `Product.id`, not a `TicketPackageProduct.id` |
+| `catalog_product_id` | `UUID` | Yes | Internal catalog `Product.id`, not a `TicketPackageProduct.id` |
 | `reason` | `Literal["threshold", "reactive_ltss", "reactivation"]` | Yes | System trigger recorded in each audit event |
 | `evaluation_date` | `date \| None` | No | UTC date used for lifecycle rules and final actionability reconciliation. If omitted, capture once at function entry |
 
@@ -414,9 +416,8 @@ changes and the platform-wide `default_cvss_version` batch.
    changing `is_eligible_override` and create one
    `product_eligibility_changed` event in the same transaction. Set
    `user_id = NULL`, `comment = NULL`, preserve the true old and new boolean
-   values, and populate the standard `track`, `package`, `product_id`, and
-   `reason` detail keys. `detail.product_id` is the changed
-   `TicketPackageProduct.id`, not the catalog `Product.id` input.
+   values, and populate the standard Product subject and `reason` detail keys
+   defined in `ticket-audit-log.md`.
 7. If at least one record changed, call `reconcile_ticket_status()` exactly
    once after all updates and audit events, using that `evaluation_date` for
    all actionability checks. If no value changed, return a no-op result without
@@ -523,12 +524,13 @@ representation. Each item contains:
 |-------|------|----------|
 | `reference` | `str` | Unique SMELT codestream name, already validated against the persisted track-reference constraints |
 | `workflow_type` | `WorkflowType` | Already mapped from the supported authoritative `codestream.maintenance_process_type` value |
-| `product_ids` | non-empty collection of `UUID` | Distinct IDs of existing local Products resolved by exact CPE under this codestream |
+| `catalog_product_ids` | non-empty collection of `UUID` | Distinct internal IDs of existing local Products resolved by exact CPE under this codestream |
 
 Before calling `add_package_records()`, the caller has completed all external
 I/O, JSend and response validation, unsupported-process filtering,
 channel/compose deduplication, exact CPE lookup, workflow mapping, and
-deduplication of Product IDs within each track. Consequently this function
+deduplication of `catalog_product_ids` within each track. Consequently this
+function
 does not parse SMELT data, infer a workflow, accept unknown Products, or decide
 whether a codestream is supported. The concrete collection and record types
 remain implementation choices as long as they preserve this contract.
@@ -668,7 +670,7 @@ Soft-deletes a `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to soft-delete |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to soft-delete |
 | `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
@@ -686,6 +688,7 @@ Soft-deletes a `TicketPackageProduct` record.
 4. Validate preconditions
 4. Set `product.deleted_at = now()`
 5. Create `TicketAuditEvent` (`product_excluded`)
+   with the standard event-time Product subject detail
 6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated product
 
@@ -752,6 +755,7 @@ Restores a soft-deleted `TicketPackageTrack` record.
 4. Validate preconditions
 4. Clear `track.deleted_at`
 5. Create `TicketAuditEvent` (`track_restored`)
+   with the standard `track` and `package` detail keys
 6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated track
 
@@ -768,7 +772,7 @@ Restores a soft-deleted `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to restore |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to restore |
 | `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
@@ -787,6 +791,7 @@ No child-existence pre-check required (product is a leaf record).
 4. Validate preconditions
 4. Clear `product.deleted_at`
 5. Create `TicketAuditEvent` (`product_restored`)
+   with the standard event-time Product subject detail
 6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated product
 
@@ -824,18 +829,21 @@ async def add_package_to_ticket(
    maintained tracks and products for the given package name (external I/O —
    no lock held). Parse the response body regardless of HTTP status and
    validate the JSend envelope structure.
-2. If the response cannot be parsed as JSON or has no recognized JSend
-   `status` value, raise an application error corresponding to
-   `503 SMELT_UNAVAILABLE`. No records are created.
+2. If connection, timeout, proxy, or remote-protocol failure remains after the
+   shared transport retries, or the response cannot be parsed as JSON or has
+   no recognized JSend `status` value, raise `SmeltUnavailableError`
+   corresponding to `503 SMELT_UNAVAILABLE`. A non-200 response other than a
+   valid 404 package-not-found envelope maps to the same exception. No records
+   are created.
 3. Verify that a complete Product catalog snapshot exists; if none exists,
    raise `ProductCatalogNotReadyError` before interpreting the response
    content. Readiness failure takes precedence over both package-not-found
    and targets-unresolved outcomes. Error precedence is defined in
    `product-catalog.md` (Catalog Readiness and Freshness).
-4. If SMELT returns a package-not-found response (`status = "error"`, or
-   `status = "success"` with an empty `data` array), raise an application
-   error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are
-   created.
+4. If SMELT returns a package-not-found response (HTTP 404 with a valid
+   `status = "error"` envelope, or HTTP 200 with `status = "success"` and an
+   empty `data` array), raise `PackageNotFoundInSmeltError` corresponding to
+   `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are created.
 5. Filter known unsupported codestreams, map `workflow_type` from the
    authoritative `codestream.maintenance_process_type`, and apply the
    synthetic same-CPE channel/compose deduplication rule as specified in
@@ -1034,7 +1042,7 @@ Caught by endpoint handlers and mapped to HTTP responses:
 | `PackageNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Package ID does not exist |
 | `PackageAlreadyExcludedError` | 409 | `PACKAGE_ALREADY_EXCLUDED` | Soft-delete on record with `deleted_at IS NOT NULL` |
 | `PackageNotExcludedError` | 422 | `PACKAGE_NOT_EXCLUDED` | Restore on record with `deleted_at IS NULL` |
-| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT does not produce a valid successful response |
+| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT transport fails after shared retries or SMELT does not produce a valid expected response |
 | `ProductCatalogNotReadyError` | 503 | `PRODUCT_CATALOG_NOT_READY` | No complete SMELT Product catalog snapshot has committed |
 | `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
 | `PackageTargetsUnresolvedError` | 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returns tracks but no target resolves through the current Product catalog snapshot |
@@ -1116,6 +1124,14 @@ transitions. The test must cover:
   evaluation date across rows and aggregate counts; a pure EOL entry/exit
   creates no package-tree exclusion/restoration audit event, while an actual
   Ticket status change still creates the ordinary `status_change` event
+- **Public Product identity**: package-tree Product responses expose
+  `TicketPackageProduct.id` as `id`, the related Product CPE as `product_cpe`,
+  and no internal catalog `Product.id`; Product mutation paths resolve
+  `ticket_package_product_id` as the package-tree occurrence
+- **Human-readable Product audit subjects**: every Product event persists the
+  event-time Product name and CPE with package and track context; release
+  events preserve the actual `released_at`, and VA eligibility events
+  distinguish override set, change, and clear actions
 
 ## Cross-references
 

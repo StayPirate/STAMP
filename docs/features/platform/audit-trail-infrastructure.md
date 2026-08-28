@@ -214,6 +214,21 @@ decisions. For example, fetcher audit events may reconstruct disabled periods
 for the fetcher timeline, while `FetcherConfig.enabled` remains the authority
 for whether a fetcher is currently enabled.
 
+### Human-Readable Subjects
+
+An audit event intended for human review MUST identify its subject without
+requiring the reader to resolve an opaque internal UUID. Internal identifiers
+may remain as top-level event metadata or structured correlation fields when
+they serve a concrete machine or follow-up-operation need, but they are not a
+substitute for a stable domain identifier and readable label.
+
+Each owning audit specification defines the appropriate subject fields. When a
+label or canonical identifier can change or disappear from current operational
+state, the event stores an event-time snapshot in `old_value`, `new_value`, or
+`detail`; the audit API does not reconstruct historical meaning by joining the
+current entity. Examples include ticket identifiers, usernames, setting keys,
+fetcher names, Product CPEs, and Product display names.
+
 ### Relationship to AuditEventMixin
 
 ```

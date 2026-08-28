@@ -681,8 +681,7 @@ change (see `docs/features/platform/system-settings.md`).
     - `severity_changed` if severity changed AND
       `suppress_severity_event` is `False`
     - `product_eligibility_changed` for each Product whose eligibility changed,
-      with the standard `track`, `package`, and `product_id` detail keys and
-      `reason = "cvss"`
+      with the standard event-time Product subject detail and `reason = "cvss"`
 7. Call `reconcile_ticket_status(evaluation_date=evaluation_date)` so the
    complete recalculation chain uses one temporal input
 

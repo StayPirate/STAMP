@@ -823,6 +823,24 @@ canonical `CVE_ID_PATTERN` defined in `backend/app/core/identifiers.py`
 (anchored regex `^CVE-[0-9]{4}-[0-9]{4,}$`). This is the single
 source of truth for CVE-ID format validation across all layers.
 
+### Product Identifier Resolution
+
+Product API representations use the canonical Product CPE as their public
+identity. The internal UUIDv7 `Product.id` is a database primary key and
+foreign-key target only; it is not serialized in API responses and is not
+accepted as an API input.
+
+This rule does not apply to ticket-scoped package-tree resources. A
+`TicketPackageProduct` is a mutable occurrence of one Product under one Ticket
+package and track. Its UUID identifies that occurrence in package-tree
+responses and mutation paths, while `product_cpe` identifies the related
+catalog Product. `TicketPackage` and `TicketPackageTrack` UUIDs similarly remain
+public mutation locators.
+
+`ProductRepository` is an internal catalog association. Its UUID is never
+serialized or accepted by the API; repository names are exposed only when an
+owning endpoint explicitly requires them.
+
 ## Mutation Conventions
 
 ### Mutation Patterns
