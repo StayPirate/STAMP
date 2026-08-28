@@ -104,6 +104,25 @@ Examples:
 - `secbox osc -A https://build.suse.de ls SUSE:SLE-15-SP6:Update`
 - `secbox osc -A https://build.suse.de api /source/SUSE:SLE-15-SP6:Update/kernel-default`
 
+### GitLab CLI (`glab`)
+
+On this machine, the `glab` command-line tool is configured and authenticated
+against `gitlab.suse.de`. When you need to inspect issues, merge requests, or
+repositories hosted on SUSE's internal GitLab instance (e.g., SMELT at
+`tools/smelt`, SMASH at `tools/smash`):
+
+- **Read-only usage only**: use `glab` exclusively for viewing and listing
+  issues, MRs, or repositories
+- **Target project**: always specify the repository explicitly using
+  `-R gitlab.suse.de/<group>/<project>` (or `<group>/<project>` when the
+  default host is set)
+- **View issues with comments**:
+  `glab issue view <id> -R gitlab.suse.de/<group>/<project> --comments`
+- **View merge requests**:
+  `glab mr view <id> -R gitlab.suse.de/<group>/<project>`
+- **View file or repository info**:
+  `glab repo view gitlab.suse.de/<group>/<project>`
+
 ## Workspace Awareness
 
 When checking for existing files or directories, ALWAYS inspect the

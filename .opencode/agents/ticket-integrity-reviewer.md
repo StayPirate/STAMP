@@ -22,6 +22,11 @@ permission:
     "gh project view*": allow
     "gh project list*": allow
     "gh project item-list*": allow
+    "glab issue view*": allow
+    "glab issue list*": allow
+    "glab mr view*": allow
+    "glab mr list*": allow
+    "glab repo view*": allow
     "*": deny
 ---
 
