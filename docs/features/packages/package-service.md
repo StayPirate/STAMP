@@ -836,15 +836,15 @@ async def add_package_to_ticket(
    `status = "success"` with an empty `data` array), raise an application
    error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are
    created.
-5. Match returned product CPEs directly against local `Product.cpe` before
-   the Ticket lock is acquired. Filter known unsupported codestreams, apply
-   the synthetic same-CPE channel/compose deduplication rule, and map
-   `workflow_type` from the authoritative
-   `codestream.maintenance_process_type` as specified in `package-model.md`
-   (SMELT Query for Package Resolution). Build the validated
-   `ResolvedTrackData` input defined by `add_package_records()`. If resolution
-   is partial, emit the required structured warnings before mutation. If no
-   Product CPE resolves to a local Product across supported codestreams, raise
+5. Filter known unsupported codestreams, map `workflow_type` from the
+   authoritative `codestream.maintenance_process_type`, and apply the
+   synthetic same-CPE channel/compose deduplication rule as specified in
+   `package-model.md` (SMELT Query for Package Resolution). Match the
+   remaining product CPEs directly against local `Product.cpe` before the
+   Ticket lock is acquired. Build the validated `ResolvedTrackData` input
+   defined by `add_package_records()`. If resolution is partial, emit the
+   required structured warnings before mutation. If no Product CPE resolves to
+   a local Product across supported codestreams, raise
    `PackageTargetsUnresolvedError`. No records are created.
 6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.

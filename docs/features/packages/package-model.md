@@ -64,6 +64,11 @@ supported workflows can coexist under the same package. See
 [SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
 for the full resolution contract.
 
+`workflow_type` is captured when a `TicketPackageTrack` is first created.
+Subsequent resolution of the same track reference does not reconcile a later
+SMELT maintenance-process reclassification; the existing track retains its
+persisted `workflow_type`.
+
 ### 3. Eligibility as a separate dimension
 
 Product eligibility (whether a product will receive the fix) is a
@@ -1073,7 +1078,7 @@ single non-paginated JSend envelope.
 | `data[].codestream.name` | Track reference (`TicketPackageTrack.reference`) |
 | `data[].codestream.maintenance_process_type` | Authoritative track workflow: `SLFO` → `git`, `SLE_15` → `ibs`; known `SLFO_IBS` entries are unsupported and skipped |
 | `data[].targets[].product.cpe` | Product match key against local `Product.cpe` |
-| `data[].targets[].product_definition.type` | Product-definition provenance used only for synthetic same-CPE channel/compose deduplication |
+| `data[].targets[].product_definition.type` | Validated as `channel` or `compose`; Product-definition provenance used for synthetic same-CPE channel/compose deduplication |
 | `data[].targets[].product.friendly_name` | Logging and warning messages |
 
 All other response fields (`codestream.url`, `product.id`,
