@@ -71,7 +71,12 @@ The fetcher is idempotent and maintains no lifecycle cursor or phase cache.
 3. For each Product found in step 2, enqueue one independent
    `re_evaluate_product_eligibility(catalog_product_id,
    reason="reactive_ltss")` task. Dispatch failures are logged per Product and
-   do not stop later dispatches.
+   do not stop later dispatches. This periodic scan is a general safety net
+   over the complete eligibility result — the recorded `reason` identifies the
+   discovery mechanism (this daily scan), not necessarily the original
+   upstream cause of the mismatch. A mismatch first introduced by a threshold
+   change (whose own dispatch already failed or was superseded) and later
+   caught here is still recorded with `reason="reactive_ltss"`.
 4. Using the same `evaluation_date`, select distinct Ticket IDs in `Analysis`,
    `Analyzed`, or `Resolved` whose persisted status differs from the status
    produced by the current gate predicates. Candidate discovery uses the same

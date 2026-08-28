@@ -832,18 +832,22 @@ async def add_package_to_ticket(
 2. If connection, timeout, proxy, or remote-protocol failure remains after the
    shared transport retries, or the response cannot be parsed as JSON or has
    no recognized JSend `status` value, raise `SmeltUnavailableError`
-   corresponding to `503 SMELT_UNAVAILABLE`. A non-200 response other than a
-   valid 404 package-not-found envelope maps to the same exception. No records
-   are created.
+   corresponding to `503 SMELT_UNAVAILABLE`. The only recognized `status`
+   values are `success` and `error` (see `package-model.md`, SMELT Query for
+   Package Resolution); JSend `fail` and any other value are unrecognized. No
+   records are created.
 3. Verify that a complete Product catalog snapshot exists; if none exists,
    raise `ProductCatalogNotReadyError` before interpreting the response
-   content. Readiness failure takes precedence over both package-not-found
-   and targets-unresolved outcomes. Error precedence is defined in
-   `product-catalog.md` (Catalog Readiness and Freshness).
+   content further. Readiness failure takes precedence over both
+   package-not-found and targets-unresolved outcomes. Error precedence is
+   defined in `product-catalog.md` (Catalog Readiness and Freshness).
 4. If SMELT returns a package-not-found response (HTTP 404 with a valid
    `status = "error"` envelope, or HTTP 200 with `status = "success"` and an
    empty `data` array), raise `PackageNotFoundInSmeltError` corresponding to
-   `422 PACKAGE_NOT_FOUND_IN_SMELT`. No records are created.
+   `422 PACKAGE_NOT_FOUND_IN_SMELT`. Any other HTTP status and JSend `status`
+   combination — including a non-200 response and HTTP 200 with
+   `status = "error"` — raises `SmeltUnavailableError`. No records are
+   created.
 5. Filter known unsupported codestreams, map `workflow_type` from the
    authoritative `codestream.maintenance_process_type`, and apply the
    synthetic same-CPE channel/compose deduplication rule as specified in

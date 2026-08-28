@@ -1040,8 +1040,8 @@ is `null` rather than an object.
 | `id` | UUID | TicketPackageTrack primary key |
 | `workflow_type` | string | `"ibs"` or `"git"` |
 | `reference` | string | Codestream project name or branch reference |
-| `status` | string | PackageStatus enum: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`, `WONT_FIX` |
-| `delivery_status` | string | DeliveryStatus enum: `PENDING`, `IN_PROGRESS`, `RELEASED` |
+| `status` | string | PackageStatus enum: `analysis`, `affected`, `not_affected`, `fixed`, `wont_fix` |
+| `delivery_status` | string | DeliveryStatus enum: `pending`, `in_progress`, `released` |
 | `delivery_relevant` | boolean | Computed field (see `docs/features/packages/package-model.md`) |
 | `products` | ProductDetail[] | Products under this track |
 | `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |

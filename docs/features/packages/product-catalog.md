@@ -281,8 +281,14 @@ for the general SMELT description.
   4. In the publication transaction, before modifying any catalog row,
      capture the set of Product CPEs belonging to the previously applied
      snapshot and the set of `ProductRepository` associations belonging to
-     it. If no previous complete snapshot exists, use the empty set for
-     both.
+     it, together with the previously applied snapshot's timestamp
+     (`MAX(Product.catalog_last_seen_at)`, read inside this same
+     transaction). If no previous complete snapshot exists, use the empty
+     set for both and skip the next sentence. If `snapshot_at` is not
+     strictly greater than that timestamp (clock skew or backward system
+     time), advance it to that timestamp plus the smallest representable
+     increment before use, so every complete publication is guaranteed to
+     become the new current snapshot.
   5. Upsert Products by exact CPE and
      ProductRepository associations by `(product_id, repo_name)`. Assign the
      same `snapshot_at` to every observed row's `catalog_last_seen_at`.
@@ -410,6 +416,17 @@ serialized by the Ticket row lock; duplicate external work is accepted. The
 task has no task-level retry after process loss. Recovery remains the next
 qualifying backfill trigger or a later package-addition invocation.
 
+Log one structured completion line at the end of the task invocation, mirroring
+the equivalent requirement on `re_evaluate_product_eligibility`: candidate
+pair count, record-creating pair count, no-op pair count, skipped-inactive
+count, and failed count. Record-creating and no-op counts distinguish pairs
+that added at least one package-tree record from pairs where every record
+already existed, so an operator can tell whether a run actually progressed
+stuck packages. If the process is lost before this line is logged, the run's
+partial progress has no other observability signal, and the next qualifying
+trigger or a later `add_package_to_ticket()` invocation remains the only
+recovery path.
+
 ---
 
 ## AIMAAS Integration
@@ -509,20 +526,26 @@ detail requests.
   1. Fetch all AIMAAS product pages with `all_fields=true` and `size=100`
      under the shared AIMAAS pagination contract before opening a database
      transaction.
-  2. For each AIMAAS product, match by exact `cpe` against local
+  2. Validate the complete retrieved response before applying any change:
+     the product list MUST NOT contain two entries with the same `cpe`. This
+     mirrors the identical validation applied by `sync_aimaas_thresholds` to
+     the same endpoint. Any violation aborts the complete run without
+     modifying local lifecycle data, raising `FetcherError`
+     (`"AIMAAS Product lifecycle validation failed"`).
+  3. For each AIMAAS product, match by exact `cpe` against local
      `Product.cpe`. Skip products with no local match.
-  3. Set `first_customer_ship_date` from `fcs` and
+  4. Set `first_customer_ship_date` from `fcs` and
      `general_support_end_date` from `end_of_gs`.
-   4. Set `extended_support_end_date` to the latest non-null value of
-      `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
-   5. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
-   6. When an AIMAAS field changes from a non-null date to null, the local
-      field is updated to NULL. The lifecycle evaluator derives the phase
-      from the current field values; a field becoming NULL may change the
-      computed `lifecycle_phase`.
-   7. Apply all matched Product updates in one transaction and commit once.
-      Any database error rolls back the complete lifecycle publication; no
-      partial lifecycle-date changes persist.
+  5. Set `extended_support_end_date` to the latest non-null value of
+     `end_of_ltss` and `end_of_espos`, or NULL when both are NULL.
+  6. Set `reactive_support_end_date` from `end_of_reactive_ltss`.
+  7. When an AIMAAS field changes from a non-null date to null, the local
+     field is updated to NULL. The lifecycle evaluator derives the phase
+     from the current field values; a field becoming NULL may change the
+     computed `lifecycle_phase`.
+  8. Apply all matched Product updates in one transaction and commit once.
+     Any database error rolls back the complete lifecycle publication; no
+     partial lifecycle-date changes persist.
 
 The fetcher persists every syntactically valid source date faithfully. A
 structurally missing but non-contradictory date set is valid input and does not
@@ -572,27 +595,38 @@ eligibility and EOL-derived actionability when applicable.
   corresponding `cpe`. This avoids per-threshold detail requests and
   produces an internally consistent snapshot.
 - **Sync behavior**:
-   1. Fetch all AIMAAS product pages (with `all_fields=true`) and all
-      threshold pages before opening a database transaction. Build a
-      `product_id → cpe` mapping from the product list.
-  2. For each threshold entry, resolve its `product` ID to a CPE via
+  1. Fetch all AIMAAS product pages (with `all_fields=true`) and all
+     threshold pages before opening a database transaction. Build a
+     `product_id → cpe` mapping from the product list.
+  2. Validate the complete retrieved response before applying any change:
+     the product list MUST NOT contain two entries with the same `id` or
+     the same `cpe` (the latter mirrors the identical validation applied by
+     `sync_aimaas_lifecycle` to the same endpoint, and prevents two
+     different AIMAAS product IDs from resolving to the same local
+     `Product.cpe`); the threshold list MUST NOT contain two entries with
+     the same `product` ID; and every `threshold` value MUST be a number
+     representable at one decimal place within `[0.0, 10.0]` (matching the
+     persisted `Product.cvss_threshold` column). Any violation aborts the
+     complete run without publishing any threshold change or clearing,
+     raising `FetcherError` (`"AIMAAS CVSS threshold validation failed"`).
+  3. For each threshold entry, resolve its `product` ID to a CPE via
      the in-memory mapping. A threshold whose `product` ID has no match
      in the product list is skipped with a structured warning log.
-  3. Match the resolved CPE against local `Product.cpe`. A threshold
+  4. Match the resolved CPE against local `Product.cpe`. A threshold
      whose CPE has no local match is expected (different catalog
      coverage) and silently ignored.
-  4. Update only the corresponding local `Product.cvss_threshold`; do not
+  5. Update only the corresponding local `Product.cvss_threshold`; do not
      modify catalog-observation, descriptive, or lifecycle date fields.
-  5. Retain the IDs of Products whose persisted threshold changes for
+  6. Retain the IDs of Products whose persisted threshold changes for
      post-commit eligibility recalculation.
-  6. **Threshold clearing**: after processing all AIMAAS thresholds,
+  7. **Threshold clearing**: after processing all AIMAAS thresholds,
      identify local `Product` rows whose `cvss_threshold` is non-null but
      whose CPE is not present in the resolved AIMAAS threshold set. Clear
      those products' `cvss_threshold` to NULL (implicit threshold of 0,
      conservatively permissive). Each clearing is a threshold change and its
      Product ID is retained for post-commit eligibility recalculation.
-  7. Commit the complete threshold publication before dispatching any task.
-  8. In a new read-only phase after commit, identify Products whose
+  8. Commit the complete threshold publication before dispatching any task.
+  9. In a new read-only phase after commit, identify Products whose
      system-managed `TicketPackageProduct` eligibility in an operable Ticket
      (`New`, `Analysis`, `Analyzed`, or `Resolved`)
      differs from the result under the committed threshold snapshot. This
@@ -601,7 +635,7 @@ eligibility and EOL-derived actionability when applicable.
      effectively VA-excluded records and EOL Products; exclusion and
      actionability do not suspend factual eligibility maintenance. The
      mismatch set recovers prior task-dispatch or per-Ticket failures.
-  9. Enqueue the Product-level recalculation defined in
+  10. Enqueue the Product-level recalculation defined in
      `product-lifecycle-transitions.md` once per Product in the union of the
      changed and mismatch sets, with reason `threshold`. A dispatch failure
      logs a structured warning containing the Product ID and continues with
@@ -897,6 +931,7 @@ that abort the run:
 | Request timeout | `"AIMAAS request timed out"` |
 | Non-success HTTP response | `"AIMAAS returned HTTP {status_code}"` |
 | Invalid pagination or response schema | `"AIMAAS returned invalid Product lifecycle response"` |
+| Complete-response validation failure (duplicate `cpe`) | `"AIMAAS Product lifecycle validation failed"` |
 | Publication database failure | `"Failed to synchronize AIMAAS lifecycle dates"` |
 
 Logs identify the failed page or validation category without retaining full
@@ -941,7 +976,10 @@ and sync logic in [CVSS Threshold Sync (periodic)](#cvss-threshold-sync-periodic
 Shared transport retries apply to retryable HTTP failures. After those
 retries are exhausted, any retrieval, non-success HTTP response,
 pagination, or response-schema failure aborts the run without modifying
-local thresholds. This includes failures during the product-list
+local thresholds. Logs identify which of the two retrieval phases
+(Product list or threshold list) failed, and the failed page or
+validation category within that phase, without retaining full response
+payloads. This includes failures during the product-list
 retrieval phase (required for CPE resolution). Recovery is the next
 scheduled or operator-triggered run. A failed post-commit eligibility-task
 dispatch is logged with the Product ID, increments `record_failed`, and does
@@ -957,6 +995,7 @@ that abort the run:
 | Non-success HTTP response | `"AIMAAS returned HTTP {status_code}"` |
 | Invalid Product-list pagination or response schema | `"AIMAAS returned invalid Product list response"` |
 | Invalid threshold-list pagination or response schema | `"AIMAAS returned invalid CVSS threshold response"` |
+| Complete-response validation failure (duplicate `id`/`cpe`/`product`, or out-of-range `threshold`) | `"AIMAAS CVSS threshold validation failed"` |
 | Publication database failure | `"Failed to synchronize AIMAAS CVSS thresholds"` |
 
 A threshold whose AIMAAS Product ID cannot be resolved through the retrieved

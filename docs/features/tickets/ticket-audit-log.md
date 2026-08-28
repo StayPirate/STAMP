@@ -122,11 +122,24 @@ types not listed here MUST set `detail` to `NULL`.
   `override_action` is required and equals `set` when automatic management
   becomes a manual override, `changed` when an existing override changes
   value, or `cleared` when the override is removed. For every other reason,
-  `override_action` is absent.
+  `override_action` is absent. `TicketAuditLog.log_event()` MUST enforce this
+  conditional requirement — reject an `override_action` key when
+  `reason ≠ va_override`, and reject a missing `override_action` key when
+  `reason = va_override` — rather than relying solely on caller correctness.
+  `log_event()` MUST also reject a `reason` value outside the five listed
+  values and an `override_action` value outside `set`, `changed`, or
+  `cleared`. Every rejection under this rule raises `ValueError`, consistent
+  with the base `log_event()` contract in
+  `docs/features/platform/audit-trail-infrastructure.md` for other kwarg
+  validation failures.
 - Product event details intentionally omit both `TicketPackageProduct.id` and
   internal `Product.id`. Within the ticket-scoped audit log, the event-time
   `package`, `track`, and canonical `product_cpe` identify the occurrence, and
   `product_name` keeps the event directly readable and searchable by analysts.
+  `detail.product_name` and the "Product display name" recorded in
+  `old_value`/`new_value` (for `product_excluded`/`product_restored`) are the
+  same value: `Product.display_name` at mutation time. Services MUST NOT
+  populate either field from `Product.name` (the short SMELT identifier).
 - `reference_type_changed`, `reference_title_changed`,
   `reference_description_changed`: `url` is the post-normalization URL of the
   reference being modified — used as the locator since a ticket can have
@@ -243,7 +256,10 @@ fails, no orphan event is created.
 5. **detail validation**: `TicketAuditLog` MUST override `log_event()` to
    validate that `detail` contains only keys defined in the JSONB Schema
    Contract for the given event type. Undocumented keys MUST be rejected.
-   The maximum `detail` payload is 4 KB.
+   Where the contract makes a key's presence conditional on another field's
+   value (e.g., `product_eligibility_changed`'s `override_action`), `log_event()`
+   MUST enforce that condition, not just flat key membership. The maximum
+   `detail` payload is 4 KB.
 
 6. **Concurrency correctness**: the correctness of `old_value` and
    `new_value` fields depends on the pessimistic locking enforced by
@@ -267,7 +283,8 @@ Tests for any ticket-mutating service MUST verify:
    rolled back, no event exists)
 7. Product events preserve event-time `product_name` and `product_cpe`, remain
    searchable by both values, and do not expose an internal Product or
-   TicketPackageProduct UUID as the subject
+   TicketPackageProduct UUID as the subject. `product_name` equals
+   `Product.display_name` at mutation time, never `Product.name`
 8. `product_released.new_value` equals the actual persisted `released_at`
    timestamp, including retroactive advisory dates
 9. VA eligibility events distinguish `override_action` values `set`,

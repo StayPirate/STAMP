@@ -231,8 +231,10 @@ feature are:
 
 See `docs/features/packages/product-catalog.md` (Data Model) for the
 Product and ProductRepository tables. These are owned by the product
-catalog feature and consumed here for track-to-product mapping and
-eligibility evaluation.
+catalog feature. `Product` is consumed here for CPE-based package
+resolution (see [SMELT Query for Package Resolution](#smelt-query-for-package-resolution))
+and eligibility evaluation. `ProductRepository` is not used by package
+resolution — it remains scoped to catalog sync and release detection.
 
 ### TicketPackage
 
@@ -1038,6 +1040,9 @@ single non-paginated JSend envelope.
   JSend `status` field before applying the catch-all rule below. A 404 with
   a valid `status: "error"` body is a package-not-found, not an availability
   failure.
+- Sentinel recognizes only the JSend `status` values `success` and `error` in
+  this endpoint's responses. Any other value — including JSend `fail`, which
+  this experimental endpoint does not document a use for — is unrecognized.
 - Any non-200 response other than the valid 404 package-not-found response,
   any body that cannot be parsed as JSON, any unrecognized `status` field, or
   any entry-validation failure maps to `SmeltUnavailableError`.
@@ -1111,7 +1116,8 @@ removed by SMELT.
    targets-unresolved outcomes.
 3. If HTTP status is 404 with a valid `status = "error"` envelope, or status
    is 200 with `status = "success"` and an empty `data` array, raise
-   `PackageNotFoundInSmeltError`. Any other non-200 response raises
+   `PackageNotFoundInSmeltError`. Any other combination of HTTP status and
+   JSend `status` — including HTTP 200 with `status = "error"` — raises
    `SmeltUnavailableError`.
 4. Validate every codestream name and maintenance-process value. Skip each
    `SLFO_IBS` codestream with the warning defined above. Validate all targets
@@ -1606,13 +1612,13 @@ creation and ticket status re-evaluation via `package_service`.
 
 ```json
 {
-  "status": "AFFECTED"
+  "status": "affected"
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `status` | string | Yes | New status value. Valid values: `ANALYSIS`, `AFFECTED`, `NOT_AFFECTED`, `FIXED`†, `WONT_FIX` |
+| `status` | string | Yes | New status value. Valid values: `analysis`, `affected`, `not_affected`, `fixed`†, `wont_fix` |
 
 † Setting `status` to `FIXED` requires the `admin_ticket_ops` capability
 (Hard Conditional Check). Users with only `manage_packages` can set any
@@ -1626,8 +1632,8 @@ other status but not `FIXED`.
     "ticket_id": "uuid",
     "package_name": "openssl-3",
     "reference": "SUSE:SLE-15-SP6:Update",
-    "status": "AFFECTED",
-    "delivery_status": "PENDING",
+    "status": "affected",
+    "delivery_status": "pending",
     "delivery_relevant": true,
     "actionable": true,
     "non_actionable_reason": null,
