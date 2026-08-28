@@ -23,6 +23,11 @@ permission:
     "gh project view*": allow
     "gh project list*": allow
     "gh project item-list*": allow
+    "glab issue view*": allow
+    "glab issue list*": allow
+    "glab mr view*": allow
+    "glab mr list*": allow
+    "glab repo view*": allow
     "*": deny
 ---
 
@@ -75,6 +80,9 @@ structure. Use:
   `smelt.suse.de/api`, AIMAAS at `aimaas.suse.de/api`) — these are
   reachable from the SUSE network without special tooling
 - `secbox osc api ...` for IBS/OBS (NEVER bare `osc`)
+- `glab` (e.g., `glab issue view`, `glab mr view`, `glab repo view`) for
+  SUSE internal GitLab projects (`gitlab.suse.de`, e.g., SMELT at
+  `tools/smelt`, SMASH at `tools/smash`)
 - `git ls-remote` or `git clone --bare --depth=1` for git-based sources
 
 Compare the live response against both the documentation AND the

@@ -32,6 +32,15 @@ permission:
     "gh issue close*": deny
     "gh issue edit*": deny
     "gh issue create*": deny
+    "glab mr merge*": deny
+    "glab mr close*": deny
+    "glab mr edit*": deny
+    "glab mr create*": deny
+    "glab issue close*": deny
+    "glab issue edit*": deny
+    "glab issue create*": deny
+    "glab issue note*": deny
+    "glab mr note*": deny
 ---
 
 ## Role
