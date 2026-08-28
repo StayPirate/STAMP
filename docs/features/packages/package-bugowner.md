@@ -291,6 +291,11 @@ any active ticket.
    records
 4. Call `self.record_updated()` for each removed record
 
+Lifecycle actionability does not participate in this association test. A
+package with only EOL Products remains associated for bugowner cache and
+confidential-access purposes until a VA directly excludes the
+`TicketPackage`.
+
 ### Operation 2: Update
 
 Refresh bugowner data from IBS for all remaining `PackageBugowner`
@@ -443,4 +448,3 @@ visible to all users (same access level as package data in tickets).
 - `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
   (bugowner resolution endpoint)
 - `docs/features/identity/rbac.md` — access control for fetcher operations
-

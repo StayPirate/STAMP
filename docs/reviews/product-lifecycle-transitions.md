@@ -1,8 +1,8 @@
 # Review: product-lifecycle-transitions
 
 **Spec**: `docs/features/packages/product-lifecycle-transitions.md`
-**Last reviewed**: 2026-06-02
-**Reviewers**: Manual (audit log contract consistency check)
+**Last reviewed**: 2026-08-25
+**Reviewers**: Manual (audit log contract consistency check), docs-reviewer
 
 ---
 
@@ -11,7 +11,9 @@
 ### PLT-MAN-01 — Structured data placed in `comment` column instead of `detail` JSONB (Medium)
 
 **Category**: Spec inconsistency
-**Status**: OPEN
+**Status**: RESOLVED — `product-lifecycle-transitions.md` now keeps
+`comment = NULL` and records structured context in `detail`, including the
+canonical `reason` value. (2026-08-25)
 
 `product-lifecycle-transitions.md` (lines 142-148) populates the
 `comment` column with structured data for `product_eligibility_changed`

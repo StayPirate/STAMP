@@ -577,7 +577,7 @@ blockers.
 | `SG4-04` | Complete lifecycle, threshold, and eligibility contracts | `SG4-02` | product catalog/lifecycle, package service, Ticket audit |
 | `SG4-05` | Complete package contracts | Sub-issue roll-up: `SG4-05A` through `SG4-05D` | package model/service, Ticket audit, package APIs |
 | `SG4-05A` | Define package mutation foundations | `SG4-03`, `SG4-04` | package persistence, direct state mutations, locking, audit |
-| `SG4-05B` | Complete exclusion and restoration contracts | `SG4-05A` | hierarchical exclusion, restoration, orphan cleanup |
+| `SG4-05B` | Complete exclusion, restoration, and actionability contracts | `SG4-05A` | manual hierarchical exclusion, restoration, derived actionability |
 | `SG4-05C` | Complete SMELT package orchestration contracts | `SG4-05A` | SMELT resolution, package-add orchestration, typed results |
 | `SG4-06` | Correct Ticket lifecycle, locking, and audit contracts | `SG4-01` | ticket service/mutations/audit, data model |
 | `SG4-07` | Complete Ticket/CVE access and read contracts | Sub-issue roll-up: `SG4-07A` through `SG4-07D` | Ticket/CVE/reference APIs, RBAC, API/architecture rules |
@@ -610,7 +610,7 @@ blockers.
 | `P4-12` | Ticket reconciliation and CVSS recalculation chain | `P4-02`, `P4-03`, `P4-04`, `P4-10`, `P4-11` | ticket mutations, CVSS scoring |
 | `P4-13` | CVSS, manual-severity, and manual-zone mutation services | `P4-12` | ticket mutations, CVSS scoring |
 | `P4-14` | Package record and state mutation services/APIs | `P4-10`, `P4-12` | package model/service |
-| `P4-15` | Package exclusion, restore, and orphan-chain services/APIs | `SG4-05B`, `P4-14` | package model/service, Ticket audit |
+| `P4-15` | Package exclusion, restore, and actionability services/APIs | `SG4-05B`, `P4-14` | package model/service, Ticket audit |
 | `P4-16` | SMELT package resolution and package-add API | `SG4-05C`, `P4-08`, `P4-09`, `P4-14` | package model/service |
 | `P4-17` | Product lifecycle evaluator and eligibility sub-task | `P4-09`, `P4-11`, `P4-15` | product lifecycle transitions |
 | `P4-18` | Confidential visibility and explicit access services | `SG4-07A`, `P4-03` | Ticket service, tickets, RBAC |

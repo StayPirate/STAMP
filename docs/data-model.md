@@ -244,23 +244,28 @@ erDiagram
         UUID ticket_package_track_id FK "NOT NULL"
         UUID product_id FK "NOT NULL"
         BOOLEAN eligible "NOT NULL, DEFAULT true"
-        BOOLEAN is_eligible_override "DEFAULT false"
+        BOOLEAN is_eligible_override "NOT NULL, DEFAULT false"
         TIMESTAMPTZ released_at "nullable"
         TIMESTAMPTZ deleted_at "nullable"
     }
     Product {
         UUID id PK
-        INTEGER smelt_id UK "NOT NULL"
         VARCHAR_100 name "NOT NULL"
         VARCHAR_50 version "NOT NULL"
         VARCHAR_255 cpe UK "NOT NULL"
+        VARCHAR_255 display_name "NOT NULL"
         DECIMAL cvss_threshold "nullable"
-        BOOLEAN active "DEFAULT true"
+        DATE first_customer_ship_date "nullable"
+        DATE general_support_end_date "nullable"
+        DATE extended_support_end_date "nullable"
+        DATE reactive_support_end_date "nullable"
+        TIMESTAMPTZ catalog_last_seen_at "NOT NULL"
     }
     ProductRepository {
         UUID id PK
         UUID product_id FK "NOT NULL"
-        VARCHAR_255 repo_name UK "NOT NULL"
+        VARCHAR_255 repo_name "NOT NULL"
+        TIMESTAMPTZ catalog_last_seen_at "NOT NULL"
     }
 
     Ticket ||--o{ TicketPackage : "has packages"
@@ -697,7 +702,7 @@ the general affected version model. See
 
 Records are replaced (delete-and-reinsert per `(cve_id,
 source_container)`), never updated in place — only `created_at` is
-included (no `updated_at`), consistent with `ProductRepository`.
+included (no `updated_at`).
 
 **Deduplication**: delete-and-reinsert per `(cve_id, source_container)`.
 Each `upsert_cve()` call deletes all existing rows for the given
@@ -974,20 +979,20 @@ change.
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Atomic repoint: the ticket's `duplicate_of_id` was updated because its previous target was marked as duplicate. `old_value` is the previous target identifier (`SNTL-{n}`). `new_value` is the new target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered this repoint. |
-| package_added              | Package added to the ticket (manual by VA or automatic via CVE ingestion / track release detection). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. |
-| package_excluded           | Package directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the package name. `user_id` is the VA who performed the action, or NULL for system (orphan cleanup). `detail` carries `{"reason"}` for automatic exclusions, NULL for manual. Child records are not modified — they become effectively excluded via the hierarchy. |
+| package_added              | Package tree added or completed (manual by VA or automatic via CVE ingestion, track release detection, or Product catalog backfill). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. A complete no-op creates no event. |
+| package_excluded           | Package directly soft-deleted from the Ticket by a VA. `old_value` contains the package name and `user_id` identifies the VA. `detail` is NULL. Child records are not modified; they become effectively VA-excluded through the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). `detail` carries `{"track", "package"}` context. |
-| track_excluded             | Track directly soft-deleted from ticket by VA or orphan cleanup. `old_value` contains the track reference. `user_id` is the VA, or NULL for system (orphan cleanup). `detail` carries `{"track", "package", "reason"}` context. Child products are not modified — they become effectively excluded via the hierarchy. |
-| track_restored             | Directly soft-deleted track restored by VA. `new_value` contains the track reference. `user_id` is the VA. Only the track record is restored — child products are not modified. |
-| product_released           | Product release detected via updateinfo.xml advisory. `detail` carries `{"track", "package", "product_id", "advisory_id"}` context. |
-| product_excluded           | Product directly soft-deleted from ticket by VA or lifecycle transition (EOL). `old_value` contains the product display name. `user_id` is the VA, or NULL for system (EOL, orphan). `detail` carries `{"track", "package", "product_id", "reason"}` context. |
-| product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the product display name. `user_id` is the VA. |
+| track_excluded             | Track directly soft-deleted from the Ticket by a VA. `old_value` contains the track reference, `user_id` identifies the VA, and `detail` carries `{"track", "package"}` context. Child Products are not modified; they become effectively VA-excluded through the hierarchy. |
+| track_restored             | Directly soft-deleted track restored by VA. `new_value` contains the track reference, `detail` carries `{"track", "package"}`, and `user_id` is the VA. Only the track record is restored — child products are not modified. |
+| product_released           | Product release detected via updateinfo.xml advisory. `new_value` contains the advisory-issued `released_at` timestamp in UTC ISO 8601 format. `detail` carries event-time Product name/CPE plus track, package, and advisory context. |
+| product_excluded           | Product directly soft-deleted from the Ticket by a VA. `old_value` contains the Product display name, `user_id` identifies the VA, and `detail` carries the event-time Product name/CPE plus track and package. EOL is derived and never emits this event. |
+| product_restored           | Directly soft-deleted product restored by VA. `new_value` contains the Product display name, `detail` carries the event-time Product name/CPE plus track and package, and `user_id` is the VA. |
 | ticket_created             | Ticket created. Always the first event in a ticket's history. `user_id` is NULL for automatic creation (system event) or set to the creating user for manual creation. `comment` describes the creation source (e.g., `"CVE ingested from NVD"`, `"CVE fix detected in {package} ({codestream})"`, `"Ticket created manually"`) |
 | cve_associated             | A CVE was associated with a ticket that previously had no CVE. `user_id` is set to the VA who performed the action. `old_value` is NULL. `new_value` is the CVE-ID string (e.g., `"CVE-2024-1234"`). |
 | severity_changed           | NULL for automatic CVSS recalculation, acting user's UUID for manual severity (`set_severity_manual()`) or CVE association handover (`associate_cve()`). |
 | cvss_assessment_changed    | A CVSS assessment was added, modified, or removed. `old_value` contains previous `"provider_name vX.Y score"` (or NULL if new). `new_value` contains current value (or NULL if removed). `comment` is NULL. `user_id` set for SUSE changes, NULL for external sync. |
-| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive LTSS), threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries `{"track", "package", "product_id", "reason"}` context where reason is `reactive_ltss`, `threshold`, `cvss`, or `va_override`. |
+| product_eligibility_changed | Product eligibility changed due to CVSS score recalculation, lifecycle phase transition (Reactive Support), reactivation catch-up, threshold change, or VA override. `old_value` and `new_value` contain the eligibility value (`true`/`false`). `user_id` is set for VA overrides, NULL for system-triggered changes. `detail` carries event-time Product name/CPE plus track, package, and `reason`, where reason is `reactive_ltss`, `threshold`, `reactivation`, `cvss`, or `va_override`. VA override events additionally carry `override_action = set`, `changed`, or `cleared`. |
 | confidentiality_changed     | Ticket `is_confidential` flag was toggled by a VA. `old_value` and `new_value` contain `"true"` or `"false"`. `detail` is NULL. See `docs/features/tickets/tickets.md` (Confidential Tickets). |
 | access_grant_added          | VA manually granted a user explicit access to a confidential ticket. `old_value` is NULL. `new_value` is the target username. `detail` is NULL. |
 | access_grant_removed        | VA manually revoked a user's explicit access to a confidential ticket. `old_value` is the target username. `new_value` is NULL. `detail` is NULL. |
@@ -1029,7 +1034,7 @@ entity for tracks and products. See
 | id           | UUID      | PK                           | Internal identifier                |
 | ticket_id    | UUID      | FK(ticket.id), NOT NULL      | Related ticket                     |
 | package_name | VARCHAR(255) | NOT NULL                     | Source package name                |
-| deleted_at   | TIMESTAMPTZ | nullable                     | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| deleted_at   | TIMESTAMPTZ | nullable                     | Direct VA-exclusion timestamp. NULL = not directly VA-excluded. The package can still be non-actionable when it has no actionable tracks |
 | created_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
 | updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
 
@@ -1052,7 +1057,7 @@ dimensions (affectedness, eligibility, delivery).
 | reference         | VARCHAR(255) | NOT NULL                              | Track identifier: IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) or git branch name (e.g., `slfo-main`). Stored as a string — tracks are not maintained as a separate table because SMELT does not provide an independent listing. |
 | status            | VARCHAR(20) | NOT NULL, DEFAULT ANALYSIS            | PackageStatus enum (affectedness)  |
 | delivery_status   | VARCHAR(20) | NOT NULL, DEFAULT PENDING             | DeliveryStatus enum                |
-| deleted_at        | TIMESTAMPTZ | nullable                              | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| deleted_at        | TIMESTAMPTZ | nullable                              | Direct VA-exclusion timestamp. NULL = not directly VA-excluded. A record may still be effectively VA-excluded through its package or non-actionable because it has no actionable Products |
 | created_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record creation timestamp          |
 | updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
 
@@ -1074,18 +1079,18 @@ override model.
 | eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
 | released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
-| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct soft-deletion timestamp. NULL = not directly excluded. A record may still be effectively excluded via an ancestor's `deleted_at` (see hierarchical exclusion model in `docs/features/packages/package-model.md`) |
+| deleted_at               | TIMESTAMPTZ | nullable                                    | Direct VA-exclusion timestamp. NULL = not directly VA-excluded. Current actionability also depends on ancestor markers and the catalog Product lifecycle phase |
 | created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |
 
 **Unique constraint**: (ticket_package_track_id, product_id)
 
-> **Soft-deletion semantics — package level**: Package/track/product-level `deleted_at`
-> does NOT block mutations on those child records — soft-deleted children
-> on operable tickets continue receiving updates (release detection,
-> eligibility recalculation) to stay current with reality. See
-> `docs/features/packages/package-service.md` (Soft-Deleted Records and
-> Mutations) for the full semantics.
+> **Exclusion and actionability semantics**: package-tree `deleted_at` fields
+> are modified only by VA exclusion/restore operations. They do not block
+> factual mutations on operable Tickets. Current actionability is derived from
+> the hierarchy and Product lifecycle and is not persisted. See
+> `docs/features/packages/package-service.md` (Excluded and Non-Actionable
+> Records) for the full semantics.
 
 #### PackageStatus Enum
 
@@ -1137,40 +1142,48 @@ periodically from SMELT (product list and repositories) and enriched with
 lifecycle data from AIMAAS. See `docs/features/packages/product-catalog.md` for
 full details.
 
-| Column               | Type         | Constraints          | Description                        |
-|----------------------|--------------|----------------------|------------------------------------|
-| id                   | UUID         | PK                   | Internal identifier                |
-| smelt_id             | INTEGER      | UNIQUE, NOT NULL     | Product ID in SMELT                |
-| name                 | VARCHAR(100) | NOT NULL             | Short product name from SMELT (e.g., `SLES-LTSS`) |
-| version              | VARCHAR(50)  | NOT NULL             | Product version from SMELT (e.g., `15-SP4`) |
-| display_name         | VARCHAR(255) | NOT NULL             | Human-readable full name from SMELT (`friendly_name` field), used in the UI (e.g., `SUSE Linux Enterprise Server LTSS 15 SP4`) |
-| cpe                  | VARCHAR(255) | UNIQUE, NOT NULL     | CPE identifier — primary join key between SMELT and AIMAAS |
-| cvss_threshold       | DECIMAL(3,1) | nullable             | Minimum CVSS score for eligibility (from AIMAAS `cvss-threshold` endpoint). NULL means threshold is 0 (all CVEs eligible). |
-| fcs                  | DATE         | nullable             | First Customer Shipment date (from AIMAAS) |
-| end_of_gs            | DATE         | nullable             | End of General Support (from AIMAAS) |
-| end_of_ltss          | DATE         | nullable             | End of Long Term Service Pack Support (from AIMAAS) |
-| end_of_espos         | DATE         | nullable             | End of Extended Service Pack Overlap Support (from AIMAAS). Serves a similar purpose to `end_of_ltss` for products that have ESPOS instead of or in addition to LTSS. |
-| end_of_reactive_ltss | DATE         | nullable             | End of Reactive LTSS (from AIMAAS). During this phase, products have `eligible = false` regardless of CVSS score. |
-| active               | BOOLEAN      | NOT NULL, DEFAULT true | False when product is no longer reported by SMELT (does NOT indicate EOL — see `docs/features/packages/product-lifecycle-transitions.md` for EOL determination via AIMAAS dates) |
-| smelt_synced_at      | TIMESTAMPTZ    |                      | Last sync from SMELT               |
-| aimaas_synced_at     | TIMESTAMPTZ    |                      | Last sync from AIMAAS              |
-| created_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at           | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp            |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| name | VARCHAR(100) | NOT NULL | Descriptive short name from SMELT |
+| version | VARCHAR(50) | NOT NULL | Descriptive version from SMELT |
+| display_name | VARCHAR(255) | NOT NULL | Human-readable name from SMELT `friendly_name` |
+| cpe | VARCHAR(255) | UNIQUE, NOT NULL | Canonical Product identity and exact SMELT/AIMAAS join key |
+| cvss_threshold | DECIMAL(3,1) | nullable | Minimum CVSS score from AIMAAS; NULL means an implicit threshold of 0 |
+| first_customer_ship_date | DATE | nullable | AIMAAS `fcs` |
+| general_support_end_date | DATE | nullable | AIMAAS `end_of_gs` |
+| extended_support_end_date | DATE | nullable | Latest non-null value of AIMAAS `end_of_ltss` and `end_of_espos` |
+| reactive_support_end_date | DATE | nullable | AIMAAS `end_of_reactive_ltss` |
+| catalog_last_seen_at | TIMESTAMPTZ | NOT NULL | Shared timestamp of the latest complete SMELT snapshot in which this Product was observed |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
-**Unique constraint**: (name, version)
+`name`, `version`, and `display_name` are descriptive and are not identity
+constraints. A Product omitted from a later SMELT snapshot is retained with
+its prior `catalog_last_seen_at`; catalog presence does not determine
+lifecycle state.
 
 #### ProductRepository
 
-Maps SMELT repository project names to products. Used to resolve the
-`target` values returned by SMELT's `maintainedpackage` endpoint to local
-Product records. Synced from SMELT alongside products.
+Maps SMELT repository project names to products. Synced from SMELT
+alongside products. Used by the Product catalog synchronization and by
+release detection to enumerate a Product's known update repositories.
+Package resolution (adding packages to tickets) matches products directly
+by CPE from the SMELT v2 maintained-package response and does not use this
+table.
 
-| Column     | Type      | Constraints                  | Description                        |
-|------------|-----------|------------------------------|------------------------------------|
-| id         | UUID      | PK                           | Internal identifier                |
-| product_id | UUID      | FK(product.id), NOT NULL     | Related product                    |
-| repo_name  | VARCHAR(255) | UNIQUE, NOT NULL             | SMELT repository project name (e.g., `SUSE:Updates:SLE-Product-SLES:15-SP4-LTSS:x86_64`) |
-| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record creation timestamp          |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| product_id | UUID | FK(product.id), NOT NULL | Related Product |
+| repo_name | VARCHAR(255) | NOT NULL | SMELT repository project name |
+| catalog_last_seen_at | TIMESTAMPTZ | NOT NULL | Shared timestamp of the latest complete SMELT snapshot in which this association was observed |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
+
+**Unique constraint**: `(product_id, repo_name)`. Repository names are not
+globally unique. An association omitted from a later complete snapshot is
+retained with its prior `catalog_last_seen_at`.
 
 ### Identity
 #### User
@@ -1731,7 +1744,7 @@ a value requires an Alembic migration.
   `TicketAccessGrant` uses a composite PK `(ticket_id, user_id)`)
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
-  `UserRole`, `ProductRepository`,
+  `UserRole`,
   `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
   `SubmissionRequestTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`
@@ -1739,8 +1752,8 @@ a value requires an Alembic migration.
   replaced rather than updated in place. `TicketAccessGrant` uses
   `granted_at` instead of `created_at` (semantically identical for
   write-once records) and has no `updated_at` —
-  `ProductRepository` and `CVEAffectedVersion` records are
-  replaced via delete-and-reinsert during sync, never updated in place;
+  `CVEAffectedVersion` records are replaced via delete-and-reinsert during
+  sync, never updated in place;
   `PackageBugownerMember` records are deleted and recreated when
   group membership changes;
   `ApiKey` uses `last_used_at` and `revoked_at` as the authoritative

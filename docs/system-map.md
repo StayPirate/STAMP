@@ -216,17 +216,22 @@ erDiagram
 
     Product {
         UUID id PK
-        INTEGER smelt_id UK
         VARCHAR cpe UK
         VARCHAR name
         VARCHAR version
         DECIMAL cvss_threshold "nullable"
+        DATE first_customer_ship_date "nullable"
+        DATE general_support_end_date "nullable"
+        DATE extended_support_end_date "nullable"
+        DATE reactive_support_end_date "nullable"
+        TIMESTAMPTZ catalog_last_seen_at
     }
 
     ProductRepository {
         UUID id PK
         UUID product_id FK
-        VARCHAR repo_name UK
+        VARCHAR repo_name
+        TIMESTAMPTZ catalog_last_seen_at
     }
 
     User {
@@ -490,7 +495,7 @@ flowchart LR
     end
 
     subgraph resolve["Resolution (on-demand)"]
-        SMELT_Q["Query SMELT<br/>maintainedpackage"]
+        SMELT_Q["Query SMELT<br/>maintained (v2)"]
         CREATE_CS["Create<br/>TicketPackageTrack<br/>(per codestream)"]
         CREATE_PR["Create<br/>TicketPackageProduct<br/>(per product)"]
     end
@@ -581,16 +586,17 @@ flowchart TD
 ```
 
 **Analyzed gate** (all must be true):
-- At least one package added to the ticket
-- No `TicketPackageTrack` in `ANALYSIS` status
-- Severity is set (non-None)
-- If CVE is associated: SUSE CVSS assessment exists
+- At least one manually included `TicketPackageTrack`
+- No actionable `TicketPackageTrack` in `ANALYSIS` status
+- Severity is determined (not `NULL`)
+- If CVE is associated: SUSE CVSS v3.1 and v4.0 assessments exist
 
-**Resolved gate**: every active `TicketPackageTrack` is
+**Resolved gate**: every actionable `TicketPackageTrack` is
 resolution-complete: (a) `NOT_AFFECTED`/`WONT_FIX`, or (b) `FIXED` with
-all non-excluded eligible products having `released_at IS NOT NULL`, or
-(c) `AFFECTED` with no non-excluded eligible products. Tracks/products are
-soft-deleted rather than using a separate `IGNORED` status. Delivery status
+all actionable eligible Products having `released_at IS NOT NULL`, or
+(c) `AFFECTED` with no actionable eligible Products. Actionability combines
+manual hierarchical exclusion with derived Product EOL; it is not persisted.
+Delivery status
 (`PENDING`/`IN_PROGRESS`/`RELEASED`) is tracked independently for workflow
 visibility but is not a gate condition.
 
@@ -631,8 +637,8 @@ flowchart TD
 
     subgraph gates_ref["Gate Conditions"]
         direction LR
-        G1["<b>Gate #1 (→ Analyzed)</b><br/>① ≥1 active track<br/>② all tracks decided (not ANALYSIS)<br/>③ severity determined<br/>④ SUSE CVSS v3.1 + v4.0 (CVE only)"]
-        G2["<b>Gate #2 (→ Resolved)</b><br/>Every active track is resolution-complete:<br/>(a) NOT_AFFECTED / WONT_FIX, or<br/>(b) FIXED + all eligible products released, or<br/>(c) AFFECTED + no eligible products"]
+        G1["<b>Gate #1 (→ Analyzed)</b><br/>① ≥1 manually included track<br/>② all actionable tracks decided<br/>③ severity determined<br/>④ SUSE CVSS v3.1 + v4.0 (CVE only)"]
+        G2["<b>Gate #2 (→ Resolved)</b><br/>Every actionable track is resolution-complete:<br/>(a) NOT_AFFECTED / WONT_FIX, or<br/>(b) FIXED + all actionable eligible Products released, or<br/>(c) AFFECTED + no actionable eligible Products"]
     end
 
     %% Entry from pre-state to gate zone

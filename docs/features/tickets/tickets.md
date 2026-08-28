@@ -220,20 +220,20 @@ layer.
 | New        | Created automatically (CVE ingestion or external source). Not yet assigned to any VA. |
 | Analysis   | Assigned to an VA who is actively analyzing — filling in affectedness data. |
 | Analyzed   | All required data has been filled in. Ready for updates to be prepared. |
-| Resolved   | Every active track is resolution-complete: either in a conclusive affectedness status, or fully delivered (`FIXED` + all eligible products released), or factually affected with no eligible products remaining. |
+| Resolved   | Every actionable track is resolution-complete: either in a conclusive affectedness status, fully delivered (`FIXED` + all actionable eligible Products released), or factually affected with no actionable eligible Products remaining. |
 | Ignored    | The issue does not require action. Can only be set from New or Analysis. See design note below. |
 | Duplicated | Duplicate of another ticket. Links to the original. Reversible. |
 
 **Design note — why Analyzed → Ignored is intentionally excluded**: A ticket
 in Analyzed status has had all its packages and tracks fully evaluated. If a VA
 later determines the CVE does not require action, the natural workflow is to
-remove (soft-delete) the remaining packages. This triggers the orphan cleanup
-chain, which calls `reconcile_ticket_status()` — the "at least one package"
-gate condition (Analyzed gate #1) fails and the ticket automatically regresses
-to Analysis. At that point the VA can use the existing Analysis → Ignored
-transition. Adding a direct Analyzed → Ignored transition would bypass the
-package cleanup step, leaving stale affectedness data attached to an Ignored
-ticket. The regression path ensures a clean state.
+exclude the remaining packages. Each exclusion calls
+`reconcile_ticket_status()`; once no track remains manually included, the
+"at least one package" gate condition fails and the Ticket automatically
+regresses to Analysis. At that point the VA can use the existing Analysis →
+Ignored transition. Adding a direct Analyzed → Ignored transition would bypass
+the package exclusion step, leaving included affectedness data attached to an
+Ignored Ticket. The regression path ensures a clean state.
 
 ### Status Transition Diagram
 
@@ -273,10 +273,13 @@ New ──→ Analysis ──────────→ Analyzed ────�
 The system automatically transitions a ticket from Analysis to Analyzed
 when ALL of the following conditions are met:
 
-1. **At least one package**: the ticket must have at least one package
-   added (at least one active `TicketPackageTrack` record exists)
-2. **All track affectedness decided**: no active `TicketPackageTrack`
-   records in `ANALYSIS` status
+1. **At least one manually included track**: at least one
+   `TicketPackageTrack` must not be effectively VA-excluded through its own or
+   its package's `deleted_at`. Product lifecycle does not affect this
+   structural completeness check.
+2. **All actionable track affectedness decided**: no actionable
+   `TicketPackageTrack` is in `ANALYSIS`. A manually included track whose
+   Products are all EOL or otherwise non-actionable does not block analysis.
 3. **Severity set**: the ticket must have a determined severity (not
    `NULL`). Severity `None` (CVSS score 0.0) IS a valid determined
    severity and satisfies this gate. For tickets with CVE, this is
@@ -305,26 +308,26 @@ from Analyzed to Analysis.
 ### Gate: Analyzed → Resolved
 
 The system automatically transitions a ticket from Analyzed to Resolved
-when **every active `TicketPackageTrack` is resolution-complete** (only
-records that are not effectively excluded are considered — see
-`docs/features/packages/package-model.md`, "Hierarchical Exclusion
-Model"). For each track, only non-excluded products are considered when
-evaluating product-level conditions.
+when **every actionable `TicketPackageTrack` is resolution-complete**. Manual
+exclusion and lifecycle-derived participation are combined by the canonical
+predicates in `docs/features/packages/package-model.md` (Exclusion and
+Actionability). For each track, only actionable Products are considered when
+evaluating Product-level conditions.
 
 A track is **resolution-complete** when any of:
 
 - **(a)** `status` is `NOT_AFFECTED` or `WONT_FIX`, OR
-- **(b)** `status = FIXED` AND every non-excluded eligible product
+- **(b)** `status = FIXED` AND every actionable eligible Product
   (`eligible = true`) under it has `released_at IS NOT NULL`, OR
-- **(c)** `status = AFFECTED` AND it has no non-excluded eligible
-  products (all non-excluded products have `eligible = false`, or no
-  non-excluded products exist).
+- **(c)** `status = AFFECTED` AND it has no actionable eligible Products (all
+  actionable Products have `eligible = false`, or no actionable Product
+  exists).
 
 A track in `ANALYSIS` is never resolution-complete.
 
-Note: clause (b) uses universal quantification over non-excluded eligible
-products. If a `FIXED` track has no non-excluded eligible products (all
-products are ineligible or excluded), the condition is vacuously satisfied
+Note: clause (b) uses universal quantification over actionable eligible
+Products. If a `FIXED` track has no actionable eligible Products, the
+condition is vacuously satisfied
 and the track is resolution-complete. This is the intended behavior — a
 fix was delivered and no eligible product is pending confirmation.
 
@@ -332,15 +335,17 @@ Clause (c) enables auto-resolution for the legitimate scenario where a
 track is genuinely affected (code vulnerable) but all products under it
 are ineligible — there is nothing to wait for, and the "affected, no
 fix" fact is preserved (the track stays `AFFECTED`). If a product later
-becomes eligible (CVSS recalculation, AIMAAS threshold update, product
-restore), clause (c) ceases to hold and the ticket automatically reverts
-to Analyzed.
+becomes eligible and actionable (CVSS recalculation, AIMAAS threshold update,
+Product restore, or correction of an EOL lifecycle date), clause (c) ceases to
+hold and the Ticket automatically reverts to Analyzed.
 
 This evaluation is performed by the centralized status evaluation
 function after every operation that modifies track statuses, product
 eligibility, or product release confirmation. The Resolved gate is only
-reachable when the Analyzed gate is also met (which requires at least
-one active track), so the predicate never evaluates over an empty set.
+reachable when the Analyzed gate is also met (which requires at least one
+manually included track). The actionable-track set may be empty, in which case
+the Resolved predicate is intentionally true because lifecycle leaves no
+current work.
 There is no manual "Mark as Resolved" action.
 
 Conversely, if any track ceases to be resolution-complete (e.g., CVSS
@@ -385,7 +390,7 @@ change was initiated by a VA.
 
 See [ticket-mutations.md](ticket-mutations.md) for the full function
 contract, inactive assignee sanitization, concurrency control rules,
-orphan cleanup invariants, and architectural test requirements.
+actionability-aware gate evaluation, and architectural test requirements.
 
 #### Architectural Invariant
 
@@ -725,12 +730,13 @@ meets at least one condition:
    *currently associated* package in the ticket. The email comparison
    MUST be case-insensitive.
 
-*Dynamic Access Note:* Bugowner access is dynamic. A maintainer gains
-access when a package they support is added to the ticket, and loses
-access the moment the last package they support is removed from the
-ticket. "Currently associated packages" means
-`TicketPackage.deleted_at IS NULL` — soft-deleted (excluded) packages do
-not grant bugowner access.
+*Dynamic Access Note:* Bugowner access is dynamic. A maintainer gains access
+when a package they support is added to the Ticket, and loses access the moment
+the last package they support is excluded from it. "Currently associated
+packages" means `TicketPackage.deleted_at IS NULL`; a directly VA-excluded
+package does not grant bugowner access. Product lifecycle actionability does
+not affect authorization: a package whose Products are all EOL remains
+associated until a VA excludes the package.
 
 If no condition is met, or if the user is unauthenticated, the
 confidential ticket is **invisible**: it is excluded from list queries
@@ -939,14 +945,19 @@ always lowercase.
 serialize as JSON `null` when unset. The enum value `"none"` is a
 distinct valid value (CVSS score 0.0), not equivalent to JSON `null`.
 
-**Soft-deletion visibility**: package, track, and product entities
-include a `deleted_at` field (`datetime | null`) that indicates
-exclusion status. In single-ticket views (`TicketDetail`, `GET
+**Exclusion and actionability visibility**: package, track, and Product
+entities include a `deleted_at` field (`datetime | null`) that indicates only
+direct VA exclusion at that level. They also include derived `actionable` and
+`non_actionable_reason` fields. In single-ticket views (`TicketDetail`, `GET
 /api/v1/tickets/{ticket_id}/packages`), all records are returned
-including soft-deleted ones, with `deleted_at` visible on each level.
-In cross-ticket search (`GET /api/v1/packages`), soft-deleted packages
-are always excluded. See `docs/features/packages/package-model.md` for
-full visibility rules.
+including non-actionable ones. In cross-ticket search (`GET /api/v1/packages`),
+non-actionable packages are excluded. See `docs/features/packages/package-model.md`
+for the canonical predicates and reason precedence.
+
+Every response that contains `PackageDetail` captures one UTC evaluation date
+after its mutations have completed and uses it for the complete package tree.
+This applies to Ticket detail, package detail, and every mutation endpoint that
+returns `TicketDetail`; one response never mixes lifecycle dates across rows.
 
 #### Shared Sub-Schemas
 
@@ -1012,12 +1023,15 @@ is `null` rather than an object.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | UUID | TicketPackageProduct primary key |
-| `product_id` | UUID | Product foreign key |
+| `product_cpe` | string | Canonical public identity of the related catalog Product |
 | `product_name` | string | Product display name (from `Product.display_name`) |
 | `eligible` | boolean | Whether this product receives the fix |
 | `is_eligible_override` | boolean | `true` if VA manually set eligibility |
 | `released_at` | datetime \| null | When the fix was detected in the product repository (UTC) |
-| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+| `lifecycle_phase` | string \| null | Current Product lifecycle phase for the response's UTC evaluation date |
+| `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |
+| `actionable` | boolean | Whether the Product currently participates in operational decisions |
+| `non_actionable_reason` | string \| null | `package_excluded`, `track_excluded`, `product_excluded`, or `eol` according to canonical precedence; `null` when actionable |
 
 **TrackDetail** — track (codestream) within a package:
 
@@ -1030,7 +1044,9 @@ is `null` rather than an object.
 | `delivery_status` | string | DeliveryStatus enum: `pending`, `in_progress`, `released` |
 | `delivery_relevant` | boolean | Computed field (see `docs/features/packages/package-model.md`) |
 | `products` | ProductDetail[] | Products under this track |
-| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+| `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |
+| `actionable` | boolean | Whether the track has at least one actionable Product and is not VA-excluded |
+| `non_actionable_reason` | string \| null | `package_excluded`, `track_excluded`, or `no_actionable_products`; `null` when actionable |
 
 **PackageDetail** — package within a ticket (detail view only):
 
@@ -1040,7 +1056,9 @@ is `null` rather than an object.
 | `package_name` | string | Source package name |
 | `bugowner` | BugownerInfo \| null | Bugowner data. `null` if not resolved |
 | `tracks` | TrackDetail[] | Tracks (codestreams) for this package |
-| `deleted_at` | datetime \| null | Soft-deletion (see above) |
+| `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |
+| `actionable` | boolean | Whether the package has at least one actionable track and is not VA-excluded |
+| `non_actionable_reason` | string \| null | `package_excluded` or `no_actionable_tracks`; `null` when actionable |
 
 #### TicketSummary
 
@@ -1057,7 +1075,7 @@ views without the full package tree.
 | `cve` | CVESummary \| null | Associated CVE summary, or `null` if no CVE |
 | `duplicate_of` | string \| null | Duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
-| `package_names` | string[] | Flat list of affected package names (e.g., `["curl", "openssl-3"]`) |
+| `package_names` | string[] | Flat list of package names whose `TicketPackage.deleted_at IS NULL` (e.g., `["curl", "openssl-3"]`). Product lifecycle actionability does not remove an associated package name |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
 
@@ -1166,6 +1184,10 @@ in the response is populated via
 the full package/track/product tree with bugowner information for each
 package (type, name, email, and group members when applicable — see
 `docs/features/packages/package-bugowner.md`).
+
+The endpoint captures one UTC evaluation date and passes it to
+`get_ticket_packages()` so every lifecycle phase, actionability value, and
+reason in the tree uses the same temporal input.
 
 Response: `TicketDetail` object in standard `{"data": ...}` envelope
 (200 OK).

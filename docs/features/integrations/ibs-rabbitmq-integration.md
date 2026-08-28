@@ -315,8 +315,9 @@ For each `suse.obs.package.commit` event:
    active tickets (ticket status in New, Analysis, Analyzed). The
     `has_non_final_tracks` flag is `true` if
    the codestream has at least one track in `ANALYSIS` or `AFFECTED`.
-   Soft-deleted tracks are included — release detection applies
-   regardless of exclusion status (see hierarchical exclusion model in
+   VA-excluded and lifecycle-non-actionable tracks are included because
+   release detection records factual state regardless of operational
+   actionability (see Exclusion and Actionability in
    `docs/features/packages/package-model.md`).
    The set is cached in memory and refreshed periodically (every 5
    minutes) or on cache miss. A single DB query builds the entire dict

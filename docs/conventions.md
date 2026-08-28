@@ -101,7 +101,6 @@ affected:
 
 - User lifecycle: `User.active` field, "inactive user", "active status"
   as a boolean attribute (identity domain)
-- Product lifecycle: `Product.active` field (product domain)
 - Assignee state: "inactive assignee" = user whose `active` field is
   `false` (ticket-mutations domain)
 - IBS request states: "open", "accepted", "declined" (IBS domain)
@@ -611,9 +610,14 @@ Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
 as a `BaseAuditLog` subclass
 (`backend/app/services/base_audit_log.py`).
 
+Audit events are historical evidence, not operational state. They MUST NOT be
+used to determine current state or drive mutation, authorization, idempotency,
+or restoration decisions.
+
 See `docs/features/platform/audit-trail-infrastructure.md` for the
-full specification: base class interface, mixin columns, naming
-conventions, atomicity rules, and the Audit Trail Index.
+full specification, including permitted historical read models, base class
+interface, mixin columns, naming conventions, atomicity rules, and the Audit
+Trail Index.
 
 ### Transaction and Locking
 

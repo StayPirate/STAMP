@@ -108,7 +108,7 @@ CVSS version. No fallback to other providers or other versions is applied:
    not exist (for any reason: the ticket has no associated CVE, the CVE
    has no SUSE assessment, or SUSE has not scored the default version),
    the score is treated as **10.0** (worst-case, conservative approach —
-   the product is always eligible unless excluded by the Reactive LTSS
+    the Product is always eligible unless excluded by the Reactive Support
    override).
 
 **Rationale**: eligibility drives automated decisions about which products
@@ -838,7 +838,7 @@ See `docs/data-model.md` for the full schema. This feature introduces the
 - `docs/features/tickets/cve-sync-nvd.md` — `sync_nvd_cves` fetcher
   definition (incremental algorithm, NVD Source API caching)
 - `docs/features/packages/package-model.md` — Three Orthogonal Dimensions,
-  Axis 2: Eligibility (rules, override model, Reactive LTSS)
+  Axis 2: Eligibility (rules, override model, Reactive Support)
 - `docs/features/platform/system-settings.md` — `default_cvss_version`
   setting, batch recalculation trigger
 - `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher`

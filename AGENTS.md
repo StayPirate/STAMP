@@ -386,6 +386,12 @@ trail registered in `BaseAuditLog` MUST create the corresponding audit
 event record in the same database transaction. The absence of an audit
 event for a covered mutation is a bug.
 
+Audit events are historical evidence, not the authoritative source of current
+operational state. They MUST NOT be used to determine current state or as
+input to mutation, authorization, idempotency, or restoration decisions. See
+`docs/features/platform/audit-trail-infrastructure.md` (Operational State
+Authority) for the complete rule and permitted historical read-model uses.
+
 See `docs/features/platform/audit-trail-infrastructure.md` for the
 Audit Trail Index (which audit trails exist and what they cover),
 naming conventions, and the `BaseAuditLog` / `AuditEventMixin`

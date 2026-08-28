@@ -173,6 +173,17 @@ resource. Common patterns:
 - Search: `?search=term` (searches relevant text fields)
 - Date range: `?from_date=2024-01-01&to_date=2024-12-31`
 
+Unless an endpoint explicitly specifies otherwise, simultaneously supplied
+client-declared filter parameters on a list or search endpoint combine with
+AND semantics. Matching rules internal to one parameter remain
+endpoint-specific: for example, a `search` parameter may match any of several
+resource fields. Pagination, sorting, authentication, authorization,
+confidentiality or visibility rules, path or ownership scope, and other
+mandatory resource constraints are not client-declared filters for this rule.
+An endpoint may instead make filters mutually exclusive when their combined
+meaning would be invalid; it must state that behavior and its validation
+response explicitly.
+
 #### Enum Filter Validation
 
 Enum filter parameters accept a **single value** by default. Endpoints
@@ -426,7 +437,8 @@ Error codes are grouped by prefix:
 | `CVE_*` | CVE operations | `CVE_NOT_FOUND`, `CVE_FETCH_FAILED`, `CVE_INVALID_SOURCE`, `CVE_INVALID_FORMAT` |
 | `CVSS_*` | CVSS assessment operations | `CVSS_INVALID_VECTOR`, `CVSS_ASSESSMENT_NOT_FOUND`, `CVSS_RECALC_ALREADY_IN_PROGRESS` |
 | `RESOURCE_*` | Generic resource errors | `RESOURCE_NOT_FOUND`, `RESOURCE_CONFLICT`, `RESOURCE_GONE`, `RESOURCE_NOT_EDITABLE` |
-| `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED`, `PACKAGE_RESTORE_BLOCKED` |
+| `PACKAGE_*` | Package operations | `PACKAGE_NOT_FOUND_IN_SMELT`, `PACKAGE_TARGETS_UNRESOLVED`, `PACKAGE_ALREADY_EXCLUDED`, `PACKAGE_NOT_EXCLUDED` |
+| `PRODUCT_*` | Product catalog operations | `PRODUCT_CATALOG_NOT_READY` |
 | `ROLE_MAPPING_*` | Role mapping operations | `ROLE_MAPPING_GROUP_NOT_FOUND`, `ROLE_MAPPING_INVALID_GROUP_NAME` |
 | `FETCHER_*` | Fetcher operations | `FETCHER_NOT_FOUND`, `FETCHER_ALREADY_RUNNING`, `FETCHER_DEREGISTERED`, `FETCHER_DISABLED`, `FETCHER_SETTING_UNKNOWN`, `FETCHER_SETTING_INVALID` |
 | `USER_*` | User operations | `USER_NOT_FOUND`, `USER_ALREADY_EXISTS`, `USER_INACTIVE`, `USER_ALREADY_INACTIVE`, `USER_EXTERNAL_STATUS_READONLY`, `USER_EXTERNAL_FIELD_READONLY`, `USER_EXTERNAL_PASSWORD_FORBIDDEN`, `USER_EXTERNAL_ROLE_PROTECTED`, `USER_SELF_ROLE_REMOVAL`, `USER_SELF_DEACTIVATION`, `USER_PASSWORD_POLICY_VIOLATION` |
@@ -810,6 +822,24 @@ The CVE-ID format pattern used by this resolution function is the
 canonical `CVE_ID_PATTERN` defined in `backend/app/core/identifiers.py`
 (anchored regex `^CVE-[0-9]{4}-[0-9]{4,}$`). This is the single
 source of truth for CVE-ID format validation across all layers.
+
+### Product Identifier Resolution
+
+Product API representations use the canonical Product CPE as their public
+identity. The internal UUIDv7 `Product.id` is a database primary key and
+foreign-key target only; it is not serialized in API responses and is not
+accepted as an API input.
+
+This rule does not apply to ticket-scoped package-tree resources. A
+`TicketPackageProduct` is a mutable occurrence of one Product under one Ticket
+package and track. Its UUID identifies that occurrence in package-tree
+responses and mutation paths, while `product_cpe` identifies the related
+catalog Product. `TicketPackage` and `TicketPackageTrack` UUIDs similarly remain
+public mutation locators.
+
+`ProductRepository` is an internal catalog association. Its UUID is never
+serialized or accepted by the API; repository names are exposed only when an
+owning endpoint explicitly requires them.
 
 ## Mutation Conventions
 

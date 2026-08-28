@@ -10,7 +10,7 @@ ensures that:
 
 - `ticket_mutations.reconcile_ticket_status()` is always called after
   gate-relevant package changes
-- Orphan cleanup invariants are consistently enforced
+- Manual exclusion markers and derived actionability are evaluated consistently
 - Record creation logic (initial status, eligibility) is centralized
 - The complete package lifecycle (orchestration + mutation + query) is
   owned by a single module
@@ -49,12 +49,12 @@ This matches the `ticket_mutations` and `user_service` pattern — the
 module applies mutations and creates audit events, but the transaction
 boundary is the caller's decision. This enables callers to compose
 multiple operations within a single transaction when needed (e.g.,
-`add_package_to_ticket` creates records then calls orphan checks).
+`add_package_to_ticket` creates a complete package-tree delta atomically).
 
 ### Acting user convention
 
-All mutation operations accept an `acting_user_id: UUID | None`
-parameter:
+User-facing mutation operations accept an `acting_user_id: UUID | None`
+parameter where both user and system callers are supported:
 
 - `UUID` — action performed by an authenticated VA (enables
   auto-assignment on unassigned tickets)
@@ -109,9 +109,11 @@ signature and behavior.
 
 ## Package Mutation Operations
 
-Each function below follows the same pattern (except
-`set_product_released_at()`, which is system-only and omits
-auto-assignment — see its section for details):
+Each user-facing function below follows the same pattern. System-only
+operations such as `set_product_released_at()` and
+`recalculate_product_eligibility_for_ticket()` omit auto-assignment as stated
+in their sections. Exclusion and restoration operations are VA-only and require
+a non-null `acting_user_id`:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `ensure_ticket_operable(ticket)`
@@ -250,7 +252,7 @@ repository.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to modify |
 | `released_at` | `datetime` | Yes | Advisory issued date (UTC) |
 | `advisory_id` | `str` | Yes | Advisory identifier (e.g., `SUSE-SU-2025:1234-1`) |
 
@@ -273,8 +275,9 @@ repository.
    is irreversible; see below)
 4. Set `TicketPackageProduct.released_at` to the provided value
 5. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
-   with detail: `{"track": "...", "package": "...", "product_id": "...",
-   "advisory_id": "..."}`
+   with `new_value` equal to the `released_at` timestamp in UTC ISO 8601
+   format and with the event-time Product subject plus `advisory_id` in
+   `detail`, as defined in `ticket-audit-log.md`
 6. Call `reconcile_ticket_status()`
 7. Return updated product
 
@@ -302,7 +305,7 @@ Sets or resets the eligibility override of a `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to modify |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to modify |
 | `eligible` | `bool \| None` | Yes | New eligibility value (`true`/`false` for override, `None` to reset to automatic calculation) |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 
@@ -322,7 +325,10 @@ If `eligible` is `bool` (override):
 4. If `TicketPackageProduct.eligible == eligible` AND `is_eligible_override == true`, return (no-op)
 5. Update `TicketPackageProduct.eligible` to the given value
 6. Set `TicketPackageProduct.is_eligible_override = true`
-7. Create `TicketAuditEvent` (`product_eligibility_changed`)
+7. Create `TicketAuditEvent` (`product_eligibility_changed`) with the standard
+   Product subject, `reason = "va_override"`, and `override_action = "set"`
+   when the previous value was system-managed or `override_action = "changed"`
+   when an existing override changed value
 8. Call `reconcile_ticket_status()`
 9. Return updated product
 
@@ -334,9 +340,14 @@ If `eligible` is `None` (reset to automatic):
 4. Validate preconditions
 4. If `is_eligible_override == false`, return (no-op — already automatic)
 5. Set `TicketPackageProduct.is_eligible_override = false`
-6. Recalculate eligibility using `cvss.resolve_eligibility_score()` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) → compare against product threshold from AIMAAS
+6. Recalculate eligibility using all automatic rules in
+   `docs/features/packages/package-model.md` (Axis 2: Eligibility), including
+   the Reactive Support rule and the threshold comparison based on
+   `cvss.resolve_eligibility_score()`.
 7. Update `TicketPackageProduct.eligible` to the calculated value
-8. Create `TicketAuditEvent` (`product_eligibility_changed`)
+8. Create `TicketAuditEvent` (`product_eligibility_changed`) with the standard
+   Product subject, `reason = "va_override"`, and
+   `override_action = "cleared"`
 9. Call `reconcile_ticket_status()`
 10. Return updated product
 
@@ -355,6 +366,138 @@ If `eligible` is `None` (reset to automatic):
 
 ---
 
+### `recalculate_product_eligibility_for_ticket()`
+
+Recalculates system-managed eligibility for one catalog Product within one
+operable Ticket. This is the mutation boundary used after an AIMAAS threshold
+change or a Reactive Support lifecycle change. It is separate from
+`set_product_eligibility()`, whose boolean path creates a VA override, and
+from `ticket_mutations.recalculate_cvss_chain()`, which owns CVSS assessment
+changes and the platform-wide `default_cvss_version` batch.
+
+**Parameters**:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `db` | `AsyncSession` | Yes | Caller-owned database session |
+| `ticket_id` | `UUID` | Yes | Ticket whose matching package Products are recalculated |
+| `catalog_product_id` | `UUID` | Yes | Internal catalog `Product.id`, not a `TicketPackageProduct.id` |
+| `reason` | `Literal["threshold", "reactive_ltss", "reactivation"]` | Yes | System trigger recorded in each audit event |
+| `evaluation_date` | `date \| None` | No | UTC date used for lifecycle rules and final actionability reconciliation. If omitted, capture once at function entry |
+
+**Preconditions and guards**:
+
+- The Ticket and catalog Product must exist.
+- Tickets in `New`, `Analysis`, `Analyzed`, or `Resolved` are processed. A
+  Ticket that entered `Ignored` or `Duplicated` after candidate selection
+  returns a manual-zone skip result rather than raising
+  `TicketNotMutableError`. Including `Resolved` lets threshold and lifecycle
+  corrections invalidate resolution.
+- The calling task validates `reason` before invoking this typed service
+  boundary; callers pass only `threshold`, `reactive_ltss`, or `reactivation`.
+
+**Behavior**:
+
+1. Acquire `FOR UPDATE` on the Ticket row as the first database operation.
+2. If the locked Ticket is `Ignored` or `Duplicated`, return a manual-zone skip
+   result with zero changed records, without assignment, audit events, or
+   reconciliation.
+3. Call `ensure_ticket_operable(ticket)`, then load the catalog Product and
+   its current threshold and lifecycle inputs.
+4. Select every `TicketPackageProduct` in the Ticket that references the
+   catalog Product. Include records that are directly or effectively
+   soft-deleted and records under every track status. Skip records with
+   `is_eligible_override = true`.
+5. Resolve one `evaluation_date`, then resolve the Ticket's current eligibility score using the current persisted
+   `default_cvss_version`, then apply the complete eligibility rules in
+   `package-model.md` to every selected record. The task payload never
+   supplies a threshold, lifecycle phase, score, or expected result.
+6. For each record whose computed value differs, update `eligible` without
+   changing `is_eligible_override` and create one
+   `product_eligibility_changed` event in the same transaction. Set
+   `user_id = NULL`, `comment = NULL`, preserve the true old and new boolean
+   values, and populate the standard Product subject and `reason` detail keys
+   defined in `ticket-audit-log.md`.
+7. If at least one record changed, call `reconcile_ticket_status()` exactly
+   once after all updates and audit events, using that `evaluation_date` for
+   all actionability checks. If no value changed, return a no-op result without
+   reconciliation or audit creation.
+8. Flush and return the number of examined, override-skipped, and changed
+records plus whether the Ticket was skipped in the manual zone. Do not commit or
+   roll back; the caller owns the transaction.
+
+This system operation never calls `auto_assign_actor()` and never creates or
+clears a manual override.
+
+**TicketAuditEvent**: one `product_eligibility_changed` event per changed
+`TicketPackageProduct`; none for unchanged or override-skipped records.
+
+**Idempotency**: deterministic and idempotent. Re-invocation reads current
+persisted inputs and produces no mutation, audit event, or reconciliation once
+all automatic records already hold the computed value. Delayed or
+out-of-order invocations therefore converge to current state rather than
+replaying a historical threshold or lifecycle result.
+
+**Exceptions**: `TicketNotFoundError` or `ProductNotFoundError` when a required
+root does not exist; shared settings, database, eligibility-resolution,
+audit-validation, and reconciliation exceptions propagate unchanged. Any
+exception rolls back the caller's whole Ticket transaction, including its
+eligibility updates and audit events.
+
+---
+
+### `reconcile_lifecycle_actionability_for_ticket()`
+
+Reconciles one gate-zone Ticket after Product lifecycle data or the UTC date
+may have changed derived actionability. It does not persist a lifecycle phase
+or actionability value.
+
+```python
+async def reconcile_lifecycle_actionability_for_ticket(
+    db: AsyncSession,
+    ticket_id: UUID,
+    evaluation_date: date,
+) -> LifecycleReconciliationResult:
+```
+
+**Preconditions and guards**:
+
+- The Ticket must exist.
+- `evaluation_date` is the UTC calendar date chosen by the caller for its
+  complete lifecycle evaluation run.
+- `New`, `Ignored`, and `Duplicated` return a skipped result. This is a
+  defensive race guard; normal candidate selection includes only
+  `Analysis`, `Analyzed`, and `Resolved`.
+
+**Behavior**:
+
+1. Acquire `FOR UPDATE` on the Ticket as the first database operation. Raise
+   `TicketNotFoundError` if it does not exist.
+2. If status is `New`, `Ignored`, or `Duplicated`, return a skipped result with
+   no mutation, audit event, assignment, or task dispatch.
+3. Call `reconcile_ticket_status()` exactly once, passing `evaluation_date` so
+   all lifecycle and actionability predicates use the same temporal input.
+4. Flush and return the old and current Ticket statuses and whether a status
+   change occurred. Do not commit or roll back; the caller owns the
+   transaction.
+
+The delegated reconciliation creates the ordinary `status_change` event if
+the Ticket changes status and performs the established inactive-to-active
+catch-up if a `Resolved` Ticket regresses. This function creates no separate
+audit event because actionability itself is not persisted. It never calls
+`auto_assign_actor()` and never modifies exclusion markers, eligibility,
+affectedness, or delivery state.
+
+**Idempotency**: deterministic and idempotent for the supplied
+`evaluation_date` and current persisted data. A repeated call after status has
+converged produces no mutation or audit event.
+
+**Exceptions**: `TicketNotFoundError` when the Ticket does not exist; database,
+audit, reconciliation, and catch-up dispatch exceptions propagate according to
+the delegated contracts.
+
+---
+
 ### `add_package_records()`
 
 Creates `TicketPackage`, `TicketPackageTrack`, and
@@ -368,24 +511,55 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 | `db` | `AsyncSession` | Yes | Database session |
 | `ticket_id` | `UUID` | Yes | Target ticket |
 | `package_name` | `str` | Yes | Source package name |
-| `tracks` | `list[TrackData]` | Yes | Track/product data from SMELT resolution |
+| `tracks` | `list[ResolvedTrackData]` | Yes | Fully validated and locally resolved track/Product data; semantic shape defined below |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `audit_comment` | `str \| None` | No | System-generated context for `package_added`; `NULL` for user actions |
+| `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product catalog backfill |
+
+`ResolvedTrackData` names the semantic input boundary; it does not require a
+particular dataclass, `TypedDict`, Pydantic model, or other concrete in-memory
+representation. Each item contains:
+
+| Field | Type | Contract |
+|-------|------|----------|
+| `reference` | `str` | Unique SMELT codestream name, already validated against the persisted track-reference constraints |
+| `workflow_type` | `WorkflowType` | Already mapped from the supported authoritative `codestream.maintenance_process_type` value |
+| `catalog_product_ids` | non-empty collection of `UUID` | Distinct internal IDs of existing local Products resolved by exact CPE under this codestream |
+
+Before calling `add_package_records()`, the caller has completed all external
+I/O, JSend and response validation, unsupported-process filtering,
+channel/compose deduplication, exact CPE lookup, workflow mapping, and
+deduplication of `catalog_product_ids` within each track. Consequently this
+function
+does not parse SMELT data, infer a workflow, accept unknown Products, or decide
+whether a codestream is supported. The concrete collection and record types
+remain implementation choices as long as they preserve this contract.
 
 **Preconditions**:
 
-- Parent ticket must be operable (`ensure_ticket_operable`)
+- When `active_ticket_only` is false, the parent Ticket must be operable
+  (`ensure_ticket_operable`).
+- When `active_ticket_only` is true, only an active parent Ticket is eligible;
+  an inactive locked Ticket returns a no-op before the operability guard.
 
 **Behavior**:
 
 1. Acquire `FOR UPDATE` on the Ticket row
-2. Call `ensure_ticket_operable(ticket)`
-3. Call `auto_assign_actor()`
-4. Validate preconditions
-4. Create or skip `TicketPackage` (idempotent — skip if exists)
-5. For each track in `tracks`:
+2. If `active_ticket_only` is true and the locked Ticket status is not `New`,
+   `Analysis`, or `Analyzed`, return a no-op result before assignment,
+   reconciliation, or audit creation.
+3. Call `ensure_ticket_operable(ticket)`
+4. Validate preconditions and determine which package, track, and Product
+   records are missing under the lock.
+5. If no record is missing, return a no-op result before auto-assignment,
+   reconciliation, or audit creation.
+6. Call `auto_assign_actor()`
+7. Create or skip `TicketPackage` (idempotent — skip if exists)
+8. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
      including soft-deleted records)
-   - Initial status: `ANALYSIS`, delivery_status: `PENDING`
+   - If newly created, initial status: `ANALYSIS`, delivery_status:
+     `PENDING`. An existing track retains both values unchanged.
    - For each product under the track:
      - Create or skip `TicketPackageProduct` (idempotent — skip if
        exists, including soft-deleted records)
@@ -402,9 +576,9 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 > Hygiene Rules, even when creating dozens of products in a single
 > `add_package_records()` call.
 
-6. Create `TicketAuditEvent` (`package_added`)
-7. Call `reconcile_ticket_status()`
-8. Return created records
+9. Create one `TicketAuditEvent` (`package_added`) using `audit_comment`.
+10. Call `reconcile_ticket_status()`
+11. Return created records
 
 **TicketAuditEvent**: `package_added`
 
@@ -412,7 +586,8 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 record already exists for the given combination (including soft-deleted
 records), it is skipped without modification. Only missing records are
 created. This ensures re-running `add_package_to_ticket` after a
-partial failure does not produce duplicate records.
+partial failure does not produce duplicate records. A fully no-op invocation
+does not auto-assign or reconcile the Ticket and creates no audit event.
 
 ---
 
@@ -426,7 +601,7 @@ Soft-deletes a `TicketPackage` record (sets `deleted_at`).
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `package_id` | `UUID` | Yes | TicketPackage to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
@@ -441,7 +616,7 @@ Soft-deletes a `TicketPackage` record (sets `deleted_at`).
 4. Validate preconditions
 4. Set `package.deleted_at = now()`
 5. Create `TicketAuditEvent` (`package_excluded`)
-6. Call `reconcile_ticket_status()`
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated package
 
 Note: child tracks and products are NOT modified (hierarchical exclusion
@@ -461,7 +636,7 @@ Soft-deletes a `TicketPackageTrack` record.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `track_id` | `UUID` | Yes | TicketPackageTrack to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
@@ -476,11 +651,11 @@ Soft-deletes a `TicketPackageTrack` record.
 4. Validate preconditions
 4. Set `track.deleted_at = now()`
 5. Create `TicketAuditEvent` (`track_excluded`)
-6. Enforce package orphan rule (see Orphan Cleanup Invariants)
-7. Call `reconcile_ticket_status()`
-8. Return updated track
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
+7. Return updated track
 
-Note: child products are NOT modified (hierarchical exclusion model).
+Note: child Products are not modified; they become effectively VA-excluded
+through the track marker.
 
 **TicketAuditEvent**: `track_excluded`
 
@@ -495,14 +670,15 @@ Soft-deletes a `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to soft-delete |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to soft-delete |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
 - Product must exist and have `deleted_at IS NULL`
-- Parent track must have `deleted_at IS NULL`
+- No ancestor-exclusion guard applies; a direct Product marker can be changed
+  while its parent remains VA-excluded
 
 **Behavior**:
 
@@ -512,9 +688,9 @@ Soft-deletes a `TicketPackageProduct` record.
 4. Validate preconditions
 4. Set `product.deleted_at = now()`
 5. Create `TicketAuditEvent` (`product_excluded`)
-6. Enforce track orphan rule (see Orphan Cleanup Invariants)
-7. Call `reconcile_ticket_status()`
-8. Return updated product
+   with the standard event-time Product subject detail
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
+7. Return updated product
 
 **TicketAuditEvent**: `product_excluded`
 
@@ -530,17 +706,13 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `package_id` | `UUID` | Yes | TicketPackage to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
 - Package must exist and have `deleted_at IS NOT NULL`
-- At least one `TicketPackageTrack` under this package must have
-  `deleted_at IS NULL`, AND that track must have at least one
-  `TicketPackageProduct` with `deleted_at IS NULL`. If not satisfied,
-  raise application error corresponding to `422 PACKAGE_RESTORE_BLOCKED`
-  (see `package-model.md`)
+- No descendant-existence or actionability guard applies
 
 **Behavior**:
 
@@ -550,7 +722,7 @@ Restores a soft-deleted `TicketPackage` record (clears `deleted_at`).
 4. Validate preconditions
 4. Clear `package.deleted_at`
 5. Create `TicketAuditEvent` (`package_restored`)
-6. Call `reconcile_ticket_status()`
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated package
 
 **TicketAuditEvent**: `package_restored`
@@ -567,16 +739,13 @@ Restores a soft-deleted `TicketPackageTrack` record.
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
 | `track_id` | `UUID` | Yes | TicketPackageTrack to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist and have `deleted_at IS NOT NULL`
-- Parent package must have `deleted_at IS NULL`
-- At least one `TicketPackageProduct` under this track must have
-  `deleted_at IS NULL`. If not satisfied, raise application error
-  corresponding to `422 PACKAGE_RESTORE_BLOCKED` (see `package-model.md`)
+- No ancestor-exclusion, descendant-existence, or actionability guard applies
 
 **Behavior**:
 
@@ -586,7 +755,8 @@ Restores a soft-deleted `TicketPackageTrack` record.
 4. Validate preconditions
 4. Clear `track.deleted_at`
 5. Create `TicketAuditEvent` (`track_restored`)
-6. Call `reconcile_ticket_status()`
+   with the standard `track` and `package` detail keys
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated track
 
 **TicketAuditEvent**: `track_restored`
@@ -602,14 +772,14 @@ Restores a soft-deleted `TicketPackageProduct` record.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `db` | `AsyncSession` | Yes | Database session |
-| `product_id` | `UUID` | Yes | TicketPackageProduct to restore |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `ticket_package_product_id` | `UUID` | Yes | TicketPackageProduct to restore |
+| `acting_user_id` | `UUID` | Yes | VA performing the action |
 
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
 - Product must exist and have `deleted_at IS NOT NULL`
-- Parent track must have `deleted_at IS NULL`
+- No ancestor-exclusion or lifecycle-actionability guard applies
 
 No child-existence pre-check required (product is a leaf record).
 
@@ -621,7 +791,8 @@ No child-existence pre-check required (product is a leaf record).
 4. Validate preconditions
 4. Clear `product.deleted_at`
 5. Create `TicketAuditEvent` (`product_restored`)
-6. Call `reconcile_ticket_status()`
+   with the standard event-time Product subject detail
+6. Call `reconcile_ticket_status()` using the current UTC evaluation date
 7. Return updated product
 
 **TicketAuditEvent**: `product_restored`
@@ -647,55 +818,91 @@ async def add_package_to_ticket(
     ticket_id: UUID,
     package_name: str,
     acting_user_id: UUID | None = None,
+    audit_comment: str | None = None,
+    active_ticket_only: bool = False,
 ) -> AddPackageResult:
 ```
 
 **Behavior**:
 
-1. Query SMELT to resolve all currently maintained tracks and products
-   for the given package name (external I/O — no lock held).
-2. If SMELT is unreachable or returns a server error (HTTP 4xx/5xx),
-   raise an application error corresponding to `503 SMELT_UNAVAILABLE`.
-   No records are created.
-3. If SMELT returns a successful response but with zero tracks, raise an
-   application error corresponding to `422 PACKAGE_NOT_FOUND_IN_SMELT`.
-   No records are created.
-4. Create a `TicketPackage` record for the package if one does not
-   already exist. If a record already exists (active or soft-deleted),
-   skip creation and proceed.
-5. Infer `workflow_type` for each resolved track.
-6. Delegate record creation to `add_package_records()` — this is where
+1. Query the SMELT v2 maintained-package endpoint to resolve all currently
+   maintained tracks and products for the given package name (external I/O —
+   no lock held). Parse the response body regardless of HTTP status and
+   validate the JSend envelope structure.
+2. If connection, timeout, proxy, or remote-protocol failure remains after the
+   shared transport retries, or the response cannot be parsed as JSON or has
+   no recognized JSend `status` value, raise `SmeltUnavailableError`
+   corresponding to `503 SMELT_UNAVAILABLE`. The only recognized `status`
+   values are `success` and `error` (see `package-model.md`, SMELT Query for
+   Package Resolution); JSend `fail` and any other value are unrecognized. No
+   records are created.
+3. Verify that a complete Product catalog snapshot exists; if none exists,
+   raise `ProductCatalogNotReadyError` before interpreting the response
+   content further. Readiness failure takes precedence over both
+   package-not-found and targets-unresolved outcomes. Error precedence is
+   defined in `product-catalog.md` (Catalog Readiness and Freshness).
+4. If SMELT returns a package-not-found response (HTTP 404 with a valid
+   `status = "error"` envelope, or HTTP 200 with `status = "success"` and an
+   empty `data` array), raise `PackageNotFoundInSmeltError` corresponding to
+   `422 PACKAGE_NOT_FOUND_IN_SMELT`. Any other HTTP status and JSend `status`
+   combination — including a non-200 response and HTTP 200 with
+   `status = "error"` — raises `SmeltUnavailableError`. No records are
+   created.
+5. Filter known unsupported codestreams, map `workflow_type` from the
+   authoritative `codestream.maintenance_process_type`, and apply the
+   synthetic same-CPE channel/compose deduplication rule as specified in
+   `package-model.md` (SMELT Query for Package Resolution). Match the
+   remaining product CPEs directly against local `Product.cpe` before the
+   Ticket lock is acquired. Build the validated `ResolvedTrackData` input
+   defined by `add_package_records()`. If resolution is partial, emit the
+   required structured warnings before mutation. If no Product CPE resolves to
+   a local Product across supported codestreams, raise
+   `PackageTargetsUnresolvedError`. No records are created.
+6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-7. Resolve and cache the IBS bugowner for the package.
-8. Enqueue `discover_submissions_for_ticket_package()` for retroactive
-   SR/RR discovery.
-9. Return an `AddPackageResult` with creation/skip counts.
+7. If step 6 created at least one package, track, or Product record, register
+   the following best-effort post-commit effects with the workflow owner:
+   resolve and cache the IBS bugowner, then enqueue
+   `discover_submissions_for_ticket_package()` for retroactive SR/RR
+   discovery. A fully no-op or `active_ticket_only` skip registers no effects.
+   Neither effect executes before the database commit succeeds.
+8. Return an `AddPackageResult` with creation/skip counts.
+
+`audit_comment` is internal system context for `package_added`. API callers
+always pass `NULL`. Product catalog backfill passes
+`Product catalog backfill`. Other automatic callers pass the contextual
+comment defined by their owning workflow.
+
+`active_ticket_only` is false for normal API and automatic callers. Product
+catalog backfill sets it to true so a Ticket that became inactive after
+batch selection is skipped under the Ticket row lock.
 
 **Error handling**:
 
-- **Steps 1–3 (validation gate)**: blocking. If any of these steps fails,
+- **Steps 1–5 (validation gate)**: blocking. If any of these steps fails,
   the function raises without side effects (no database writes occur). The
   endpoint handler translates service-layer exceptions to the corresponding
   HTTP error codes defined in `package-model.md`.
-- **Steps 4–6 (record creation)**: transactional. Record creation occurs
+- **Step 6 (record creation)**: transactional. Record creation occurs
   under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
-  failure occurs during these steps, the transaction is rolled back and no
+  failure occurs during this step, the transaction is rolled back and no
   records are persisted.
-- **Steps 7–8 (post-record-creation)**: best-effort. These steps execute
-  after the transaction from steps 4–6 has committed successfully. Failures
-  do not roll back the created records.
-  - **Step 7 (bugowner resolution)**: if bugowner resolution fails (IBS
+- **Step 7 (post-commit effects)**: best-effort. The API transaction
+  dependency or other workflow owner executes these effects only after its
+  caller-owned transaction commits. Failures do not roll back the created
+  records.
+  - **Bugowner resolution**: if bugowner resolution fails (IBS
     unreachable, API error, timeout), log a warning and continue. The
     package addition is not rolled back. See
     `docs/features/packages/package-bugowner.md`: "Package addition to the
     ticket MUST NOT fail due to a bugowner resolution failure."
-  - **Step 8 (submission discovery enqueue)**: if the task enqueue fails
+  - **Submission discovery enqueue**: if the task enqueue fails
     (e.g., Redis unavailable), log a warning and continue. The periodic
     `SyncIbsRequests` (catch-up every 24h at 02:30 UTC) ensures
     eventual consistency.
 
-**Auto-assignment**: applied by `add_package_records()` (the function
-that acquires the lock), NOT by `add_package_to_ticket()`.
+**Auto-assignment**: applied by `add_package_records()` after it confirms that
+at least one record is missing. `add_package_to_ticket()` does not apply it.
 
 ## Query Operations
 
@@ -708,6 +915,7 @@ records (with `deleted_at` visible on each level).
 async def get_ticket_packages(
     db: AsyncSession,
     ticket_id: UUID,
+    evaluation_date: date,
 ) -> list[PackageDetail]:
 ```
 
@@ -717,7 +925,9 @@ async def get_ticket_packages(
    soft-deleted)
 2. For each package, load all tracks and products (including
    soft-deleted), with `deleted_at` visible
-3. Compute `delivery_relevant` for each track
+3. Compute `delivery_relevant`, `actionable`, and
+   `non_actionable_reason` for every level using the supplied UTC
+   `evaluation_date` and the canonical predicates from `package-model.md`
 4. Join bugowner data from `PackageBugowner`
 5. Return assembled `PackageDetail[]`, sorted alphabetically by
    `package_name`
@@ -740,6 +950,7 @@ confidentiality enforcement.
 async def search_packages(
     db: AsyncSession,
     confidentiality_filter: ColumnElement,  # from confidential_ticket_filter()
+    evaluation_date: date,
     search: str | None = None,
     name: str | None = None,
     ticket_status: list[TicketStatus] | None = None,
@@ -753,7 +964,8 @@ async def search_packages(
 **Behavior**:
 
 1. Build base query joining `TicketPackage` -> `Ticket`
-2. Exclude soft-deleted packages: filter `TicketPackage.deleted_at IS NULL`
+2. Exclude non-actionable packages using the canonical SQL actionability
+   predicate and the supplied UTC `evaluation_date`
 3. Apply `confidentiality_filter` (pre-built by the endpoint handler
    via `confidential_ticket_filter()` — see
    `docs/features/tickets/tickets.md`, Confidentiality Filtering)
@@ -766,67 +978,24 @@ async def search_packages(
 7. Execute paginated query
 8. Compute `track_summary` via SQL aggregation (`COUNT(*) FILTER (WHERE
    status = ...)`) in the same query — NOT as Python post-processing —
-   to avoid N+1 query patterns. Counts only tracks with
-   `deleted_at IS NULL` (active tracks)
+   to avoid N+1 query patterns. Count only actionable tracks using the same
+   `evaluation_date` as step 2
 9. Return paginated `PackageListItem[]`
 
 **No locking needed** — this is a read-only operation.
 
-## Orphan Cleanup Invariants
+## Exclusion and Actionability Invariant
 
-The module enforces automatic cleanup of empty parent records. These are
-generic rules that apply regardless of the trigger — any current or
-future feature that soft-deletes a product or track automatically
-benefits from these invariants. The orphan rule triggers **only on
-soft-deletion events**, not on restore or other mutations.
+Every package-tree `deleted_at` mutation in this module is a direct VA action
+on the selected package, track, or Product. No helper propagates exclusion to
+ancestors or descendants, and no system caller may invoke an exclusion or
+restore operation with a null actor.
 
-### Invariant 1 — Track orphan rule
-
-After every product soft-deletion, check whether the parent
-`TicketPackageTrack` has zero remaining products with
-`deleted_at IS NULL` (direct check). If zero directly-active products
-remain, the track receives its own `deleted_at` (direct soft-deletion).
-Products under the track are NOT modified — they already have their own
-`deleted_at`.
-
-### Invariant 2 — Package orphan rule
-
-After every track soft-deletion, check whether the parent
-`TicketPackage` has zero remaining tracks with `deleted_at IS NULL`
-(direct check). If zero directly-active tracks remain, the package
-receives its own `deleted_at`. Tracks and products under the package
-are NOT modified.
-
-### Chain composition
-
-The invariants compose naturally. Soft-deleting a product may trigger
-the track orphan rule, which may trigger the package orphan rule:
-
-```
-soft_delete_ticket_package_product(record, user)
-  -> TicketAuditEvent (product_excluded)
-  -> _enforce_track_orphan_rule()
-      -> if 0 directly-active products:
-          set track.deleted_at (direct)
-          -> TicketAuditEvent (track_excluded, user_id=NULL)
-          -> _enforce_package_orphan_rule()
-              -> if 0 directly-active tracks:
-                  set package.deleted_at (direct)
-                  -> TicketAuditEvent (package_excluded, user_id=NULL)
-  -> reconcile_ticket_status()   # once, after entire chain completes
-```
-
-> `reconcile_ticket_status()` is called once after the entire chain
-> completes — not at each intermediate level. The function is idempotent
-> and queries the current state of all active records, so only the final
-> invocation after all soft-deletions have been applied produces the
-> correct result. Calling it at intermediate levels would produce
-> redundant evaluations whose results are immediately overwritten.
-
-Orphan-triggered soft-deletions create `TicketAuditEvent` records with
-`user_id = NULL` (system action), distinguishing them from VA-initiated
-exclusions. Each orphan soft-deletion sets `deleted_at` only on the
-parent — no chain to children (per the hierarchical exclusion model).
+The module derives actionability through the shared SQL expressions specified
+in `package-model.md`. A track with no actionable Products and a package with
+no actionable tracks remain structurally present and retain their direct
+markers unchanged. This invariant keeps manual intent independent from EOL and
+other derived participation rules.
 
 ## Record Creation Logic
 
@@ -877,9 +1046,10 @@ Caught by endpoint handlers and mapped to HTTP responses:
 | `PackageNotFoundError` | 404 | `RESOURCE_NOT_FOUND` | Package ID does not exist |
 | `PackageAlreadyExcludedError` | 409 | `PACKAGE_ALREADY_EXCLUDED` | Soft-delete on record with `deleted_at IS NOT NULL` |
 | `PackageNotExcludedError` | 422 | `PACKAGE_NOT_EXCLUDED` | Restore on record with `deleted_at IS NULL` |
-| `PackageRestoreBlockedError` | 422 | `PACKAGE_RESTORE_BLOCKED` | Restore precondition not met (no valid child chain) |
-| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT API unreachable |
+| `SmeltUnavailableError` | 503 | `SMELT_UNAVAILABLE` | SMELT transport fails after shared retries or SMELT does not produce a valid expected response |
+| `ProductCatalogNotReadyError` | 503 | `PRODUCT_CATALOG_NOT_READY` | No complete SMELT Product catalog snapshot has committed |
 | `PackageNotFoundInSmeltError` | 422 | `PACKAGE_NOT_FOUND_IN_SMELT` | SMELT returns zero tracks |
+| `PackageTargetsUnresolvedError` | 422 | `PACKAGE_TARGETS_UNRESOLVED` | SMELT returns tracks but no target resolves through the current Product catalog snapshot |
 | `TrackFixedStatusRestrictedError` | 403 | `AUTH_INSUFFICIENT_PERMISSION` | VA attempts `status=FIXED` without force |
 
 † Shared exception — inherits from `ServiceError`, not from
@@ -893,10 +1063,10 @@ Handled by system callers directly (not mapped to HTTP responses):
 |-----------|-------------|----------|
 | `InvalidDeliveryStatusTransition` | Illegal delivery status transition (e.g., regression from `RELEASED`) | Caller logs warning and continues (`SyncIbsRequests`) or avoids via pre-check (`IBSEventConsumer`) |
 
-## Soft-Deleted Records and Mutations
+## Excluded and Non-Actionable Records
 
-This section distinguishes two distinct levels of soft-deletion that have
-different semantics:
+This section distinguishes Ticket operability, VA exclusion, and lifecycle
+actionability, which have different semantics:
 
 ### Ticket-level operability
 
@@ -910,27 +1080,24 @@ non-operable statuses); the guard fires only in race conditions.
 Required caller behavior: catch `TicketNotMutableError`, log a
 WARNING, and continue processing the next item.
 
-### Package/track/product-level soft-deletion
+### Package-tree exclusion and actionability
 
-Soft-deleted packages, tracks, and products on **operable tickets**
-continue to receive updates from all automated processes (release
-detection, eligibility recalculation, delivery status changes). The
-`deleted_at` field on child records controls only **exclusion from
-decision-making** (gate evaluation, anomaly detection, resolution
-logic) — not from mutations.
+Directly or effectively VA-excluded package-tree records and EOL Products on
+**operable tickets** continue to receive updates from automated processes
+(release detection, eligibility recalculation, delivery status changes).
+Exclusion and actionability control participation in decision-making, not
+whether factual state can be updated.
 
 Mutation functions (`set_track_status`, `set_track_delivery_status`,
 `set_product_eligibility`, `set_product_released_at`) do NOT require
 child-record `deleted_at IS NULL` as a precondition. This ensures that
-soft-deleted records remain current with reality, enabling accurate
-re-evaluation if the record is later restored.
+VA-excluded and EOL records remain current with reality, enabling accurate
+re-evaluation if a marker is restored or lifecycle data changes.
 
-Restore functions (`restore_ticket_package_track`,
-`restore_ticket_package_product`) DO require that all ancestor records
-(parent package for tracks, parent package and parent track for
-products) have `deleted_at IS NULL`. Restoring a record whose ancestor
-is still excluded would leave it effectively excluded with no observable
-effect.
+Restore functions require only that the targeted record is directly
+VA-excluded. A restore under an excluded ancestor, or a restore that leaves the
+record lifecycle-non-actionable, is valid because it removes one independent
+manual exclusion decision.
 
 ## Architectural Test Requirement
 
@@ -945,11 +1112,30 @@ transitions. The test must cover:
   products become ineligible also triggers Analyzed -> Resolved)
 - **Backward transitions**: package mutations breaking gate conditions
   (e.g., restoring a soft-deleted track with non-final status)
-- **Orphan chain**: soft-deleting the last product triggers track
-  deletion, then package deletion, with correct audit events at each
-  level
+- **Independent exclusion scopes**: excluding or restoring one level does not
+  modify ancestor or descendant markers; actionability and reason precedence
+  are recalculated correctly
 - **Auto-assignment**: mutations on unassigned tickets trigger assignment
   to the acting VA
+- **Automatic Product eligibility recalculation**: verify manual-override
+  records are skipped; an `Ignored` or `Duplicated` Ticket is skipped without
+  mutation, audit, or reconciliation; `Resolved` is processed; a fully
+  converged Ticket is a no-op; and multiple changed
+  `TicketPackageProduct` records produce one event per record followed by one
+  Ticket reconciliation
+- **Derived actionability**: verify Python/SQL lifecycle parity, all reason
+  precedence cases, parent actionability, EOL entry/exit, and one shared UTC
+  evaluation date across rows and aggregate counts; a pure EOL entry/exit
+  creates no package-tree exclusion/restoration audit event, while an actual
+  Ticket status change still creates the ordinary `status_change` event
+- **Public Product identity**: package-tree Product responses expose
+  `TicketPackageProduct.id` as `id`, the related Product CPE as `product_cpe`,
+  and no internal catalog `Product.id`; Product mutation paths resolve
+  `ticket_package_product_id` as the package-tree occurrence
+- **Human-readable Product audit subjects**: every Product event persists the
+  event-time Product name and CPE with package and track context; release
+  events preserve the actual `released_at`, and VA eligibility events
+  distinguish override set, change, and clear actions
 
 ## Cross-references
 
@@ -958,10 +1144,12 @@ transitions. The test must cover:
 - `docs/features/tickets/tickets.md` — ticket lifecycle, gate
   conditions, confidentiality filtering (`confidential_ticket_filter()`)
 - `docs/features/tickets/ticket-audit-log.md` — event type contract
+- `docs/features/packages/product-catalog.md` — current repository mappings
+  and Product catalog backfill
 - `docs/features/tickets/cvss-scoring.md` — CVSS resolution cascade,
   eligibility threshold comparison
-- `docs/features/packages/package-model.md` — track/product concepts,
-  hierarchical exclusion model, API endpoints
+- `docs/features/packages/package-model.md` — track/Product concepts,
+  exclusion and actionability model, API endpoints
 - `docs/features/packages/product-lifecycle-transitions.md` — AIMAAS
   threshold changes triggering eligibility mutations
 - `docs/features/packages/ibs-track-release-detection.md` — IBS

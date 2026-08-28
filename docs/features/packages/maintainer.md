@@ -46,6 +46,11 @@ the group.
 
 ## Filtering Criteria
 
+All three sections include only actionable tracks according to
+`package-model.md` (Exclusion and Actionability), evaluated with one UTC date
+shared by the result and pagination count. A manually excluded scope or a track
+with no actionable Products does not appear in the maintainer work queue.
+
 ### Pending Fixes
 
 Codestreams where:
@@ -381,17 +386,6 @@ return a significant number of rows. Mitigation strategies:
   fix to signal to other group members that someone is working on it
 - **Metrics**: aggregate statistics (average time to fix, submission
   success rate) per maintainer or team
-
-## Open Points
-
-1. **Soft-deleted packages in queries**: the endpoint queries (Pending
-   Fixes, In Progress, Completed) do not explicitly filter out
-   soft-deleted `TicketPackage` records
-   (`TicketPackage.deleted_at IS NULL`). Soft-deleted packages are
-   excluded from a ticket and should not appear in the maintainer's
-   work queue. While the filtering conditions (status, SR existence)
-   may implicitly exclude most soft-deleted records, an explicit filter
-   should be added for correctness.
 
 ## Dependencies
 

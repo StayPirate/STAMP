@@ -48,10 +48,10 @@ below for how `<repo_url>` is constructed):
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
     matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-    records reference P and have `released_at IS NULL`. Soft-deleted
-    products are included — release detection applies regardless of
-    exclusion status (see hierarchical exclusion model in
-    `docs/features/packages/package-model.md`).
+    records reference P and have `released_at IS NULL`. VA-excluded and EOL
+    Products are included because release detection records factual state
+    regardless of operational actionability (see Exclusion and Actionability
+    in `docs/features/packages/package-model.md`).
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received
@@ -251,7 +251,7 @@ not tracked in ticket, or no ticket exists at all) is described in
 | Class name | `DetectIbsProductReleases` |
 | Schedule | TBD |
 | Source | IBS download infrastructure (`download.suse.de`) |
-| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. Soft-deleted products are included |
+| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. VA-excluded and lifecycle-non-actionable Products are included |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |

@@ -193,6 +193,54 @@ at all times — there is no plan for cleanup, archival, or deletion.
 The expected volume of audit events over the lifetime of the system
 does not justify a retention mechanism.
 
+### Operational State Authority
+
+Audit events are append-only historical evidence. They are authoritative
+records of the events they contain, but they are not the authoritative source
+of current operational state. Application code MUST NOT use audit events to
+determine current state or as input to mutation, authorization, idempotency,
+or restoration decisions.
+
+Current operational state MUST instead be persisted on the owning entities or
+derived from sources that the owning feature specification explicitly
+designates as authoritative. If a future operation needs provenance or a
+current cause in order to behave correctly, that information belongs in the
+owning domain model; it must not be reconstructed from audit history.
+
+Audit events MAY be queried or projected into historical, forensic,
+analytical, or presentational read models, including timelines and historical
+intervals, provided those projections do not govern current operational
+decisions. For example, fetcher audit events may reconstruct disabled periods
+for the fetcher timeline, while `FetcherConfig.enabled` remains the authority
+for whether a fetcher is currently enabled.
+
+### Human-Readable Subjects
+
+An audit event intended for human review MUST identify its subject without
+requiring the reader to resolve an opaque internal UUID. Internal identifiers
+may remain as top-level event metadata or structured correlation fields when
+they serve a concrete machine or follow-up-operation need, but they are not a
+substitute for a stable domain identifier and readable label.
+
+Each owning audit specification defines the appropriate subject fields. When a
+label or canonical identifier can change or disappear from current operational
+state, the event stores an event-time snapshot in `old_value`, `new_value`, or
+`detail`; the audit API does not reconstruct historical meaning by joining the
+current entity. Examples include ticket identifiers, usernames carried as
+event *content* (e.g., the `username_changed` old/new values, or a username
+referenced in a `comment`), setting keys, fetcher names, Product CPEs, and
+Product display names.
+
+This rule governs event *content* — the subject the event is about. It does
+not apply to the actor/target *metadata* columns defined by `AuditEventMixin`
+(`user_id`) and its per-trail extensions (e.g., `target_user_id` in
+`IdentityAuditEvent`). Those columns intentionally resolve to the live,
+current user reference at read time, as specified by the owning audit trail
+(e.g., `docs/features/platform/system-settings.md`, "actor is always the
+complete current user reference object"). A user rename is therefore reflected
+retroactively in who is shown as having performed a historical action, which
+is a deliberate, separate design choice from this rule.
+
 ### Relationship to AuditEventMixin
 
 ```

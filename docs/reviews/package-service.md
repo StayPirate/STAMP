@@ -1,7 +1,7 @@
 # Review: package-service
 
 **Spec**: `docs/features/packages/package-service.md`
-**Last reviewed**: 2026-06-03
+**Last reviewed**: 2026-08-28
 **Reviewers**: Gap Analysis, Coherence, Design, Security, API Conventions
 
 ---
@@ -26,10 +26,9 @@
 
 ### PKS-GAP-05 — Product-to-ProductRepository lookup location unspecified (Medium)
 
-**Category**: Error paths
-**Status**: OPEN
-
-The `package-model.md` spec states: "If no matching product is found for a target, log a warning but do not fail." The spec does not clarify who is responsible for the product-to-`ProductRepository` lookup — `add_package_to_ticket()` (before the lock, consistent with I/O-then-Lock) or `add_package_records()` (inside the lock). The I/O-then-Lock invariant suggests the lookup must happen before the lock, but this is not stated.
+**Status**: RESOLVED — `add_package_to_ticket()` resolves target CPEs against the
+current Product catalog before acquiring the Ticket lock; `add_package_records()`
+receives only resolved track/product data. (2026-08-27)
 
 ### PKS-GAP-06 — Bugowner resolution and submission discovery failure behavior unspecified (Medium)
 
@@ -41,7 +40,11 @@ The `package-model.md` spec states: "If no matching product is found for a targe
 
 ### PKS-GAP-08 — Restore pre-checks from package-model.md not reflected in module spec (Medium)
 
-**Status**: RESOLVED — Spec updated: restore functions now include child-existence pre-checks with PACKAGE_RESTORE_BLOCKED error (2026-05-23)
+**Status**: SUPERSEDED — The derived-actionability design removed automatic
+orphan cleanup, child-existence restore pre-checks, and
+`PACKAGE_RESTORE_BLOCKED`. Restore now clears only the selected VA exclusion
+marker and is valid under an excluded ancestor or another non-actionability
+cause. (2026-08-28)
 
 ### PKS-GAP-09 — TicketPackage creation in step 1 of add_package_to_ticket outside FOR UPDATE lock (Medium)
 
@@ -49,10 +52,12 @@ The `package-model.md` spec states: "If no matching product is found for a targe
 
 ### PKS-GAP-10 — TrackData type not defined (Medium)
 
-**Category**: Data lifecycle
-**Status**: OPEN
-
-The `TrackData` type is referenced in the `add_package_records()` parameter table but never defined. What fields does it contain? The I/O-then-Lock pattern implies all external resolution happens before `add_package_records()`, so `TrackData` must contain fully resolved data — but this is not stated. Without a definition, implementers must reverse-engineer the structure.
+**Status**: RESOLVED — Replaced the undefined nominal reference with the
+defined semantic `ResolvedTrackData` boundary. The specification now requires
+a validated track reference, mapped `WorkflowType`, and distinct existing
+local Product IDs after all external I/O, response validation, filtering,
+deduplication, and CPE resolution. The concrete in-memory representation
+remains an implementation choice. (2026-08-28)
 
 ### PKS-GAP-11 — Mutations on effectively-excluded records not explicitly permitted or denied (Low)
 

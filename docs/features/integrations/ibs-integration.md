@@ -262,7 +262,7 @@ Full procedure is documented in
 3. The `IBSTrackReleaseDetector` only modifies records with status
    `AFFECTED` or `ANALYSIS` (soft-deleted tracks in these statuses are
    still modified — see `docs/features/packages/package-service.md`,
-   Package/track/product-level soft-deletion)
+   Package-tree exclusion and actionability)
 
 ## OBS Public Integration
 
