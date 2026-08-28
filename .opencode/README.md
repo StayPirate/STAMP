@@ -72,37 +72,10 @@ declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
 
 ### Model Tiering
 
-Subagents have no `model` pinned by default: they inherit the model of the
-primary agent that invoked them (`spec` or `code`, see Primary Agents above).
-Subagents whose task relies most heavily on adversarial or creative reasoning
-over a single artifact, or on synthesizing subtle detail across multiple
-long documents — finding non-obvious security flaws, discovering unspecified
-scenarios within a spec, or reconciling nuanced cross-document
-inconsistencies — are pinned to a more capable model with extended thinking
-enabled, since GitHub Copilot prices all Claude Opus versions identically per
-token regardless of version. All other reviewer subagents, including those
-performing structured or checklist-like verification (architectural judgment
-against stated criteria, diff-vs-issue conformance), are pinned to a mid-tier
-model with a high reasoning-effort preset, so their analytical depth is
-consistent regardless of the invoking primary agent, at lower cost/latency
-than the Opus tier. No subagent currently relies on the inherited-model
-default; any future subagent added without a `model` field falls back to it.
-
-| Tier | Model | Agents |
-|------|-------|--------|
-| 1 (pinned) | `github-copilot/claude-opus-4.6`, `variant: high` | `@security-reviewer`, `@spec-gap-analyzer`, `@spec-coherence-reviewer` |
-| 2 (pinned) | `github-copilot/claude-sonnet-5`, `variant: xhigh` | `@api-convention-reviewer`, `@api-parity-reviewer`, `@cicd-reviewer`, `@data-model-reviewer`, `@design-reviewer`, `@docs-placement-reviewer`, `@docs-reviewer`, `@external-contract-verifier`, `@fetcher-compliance-reviewer`, `@identity-integrity-reviewer`, `@spec-conformance-reviewer`, `@test-reviewer`, `@ticket-integrity-reviewer` |
-| 3 (inherited, no current members) | Invoking primary agent's model | — |
-
-Tier 1 and Tier 2 agents use the top-level `variant` frontmatter field, not a
-raw `options.thinking` block. `variant` selects one of the model's
-provider-defined reasoning-effort presets, and OpenCode translates it into
-whatever wire-level thinking configuration the specific model/provider pair
-requires. Hand-crafting `options.thinking` directly is discouraged for
-adaptive-thinking models (Opus ≥ 4.7, including `claude-opus-5`): their wire
-protocol differs from older Opus versions and from the API contract accepted
-by this model, and a hand-written thinking block can silently target the
-wrong protocol version.
+All reviewer subagents are pinned to
+`google-vertex/claude-sonnet-5@default`. A single default-model tier keeps
+review costs predictable while ensuring reviews do not inherit the invoking
+primary agent's model.
 
 ## Commands
 

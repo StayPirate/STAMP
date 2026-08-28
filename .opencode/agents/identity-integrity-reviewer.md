@@ -10,8 +10,7 @@ description: >
   mutate identity data, or after creating/modifying feature specs that
   describe identity operations. Read-only: does not modify files.
 mode: subagent
-model: github-copilot/claude-sonnet-5
-variant: xhigh
+model: google-vertex/claude-sonnet-5@default
 permission:
   edit: deny
   bash:
