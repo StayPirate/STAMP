@@ -604,9 +604,11 @@ eligibility and EOL-derived actionability when applicable.
      changed and mismatch sets, with reason `threshold`. A dispatch failure
      logs a structured warning containing the Product ID and continues with
      other Products; it does not roll back the committed threshold snapshot.
-     The next complete threshold run rediscovers any remaining mismatch and
-     can be triggered through the existing fetcher-operations API. No durable
-     dispatch state or dedicated recovery endpoint is added.
+     A successful dispatch for a mismatch-only Product is counted as updated;
+     a Product in both sets is counted at most once. The next complete
+     threshold run rediscovers any remaining mismatch and can be triggered
+     through the existing fetcher-operations API. No durable dispatch state
+     or dedicated recovery endpoint is added.
 - **Note**: only ~24 products currently have a threshold entry. Products
   without an entry have an implicit threshold of 0 (all CVEs eligible).
   A later change from `NULL` to an explicit threshold is a threshold change
@@ -963,7 +965,7 @@ metric failure.
 | Metric | Meaning |
 |--------|---------|
 | `record_created` | Not used; threshold synchronization never creates Products. |
-| `record_updated` | One for each distinct local Product with a threshold mutation, including clearing to NULL. |
+| `record_updated` | One for each distinct local Product with a threshold mutation, including clearing to NULL, or a successful mismatch-only eligibility-recalculation dispatch; a Product in both groups counts once. |
 | `record_failed` | One for each Product whose required post-commit eligibility-recalculation task cannot be dispatched. |
 
 A threshold mutation remains counted as updated when its later task dispatch
