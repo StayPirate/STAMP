@@ -97,12 +97,18 @@ MUST be invoked through `secbox`:
 - **Never pass credentials**: authentication is handled automatically by
   `secbox`. Do not pass `--user`, `--pass`, or attempt to configure
   `~/.oscrc`
-- The API URL (`-A`) must still be specified as usual when targeting a
-  specific OBS/IBS instance (e.g., `-A https://build.suse.de`)
+- **API URL (`-A`) MUST be `https://api.suse.de`**: `secbox` only has
+  credentials provisioned for the `api.suse.de` host. Passing
+  `-A https://build.suse.de` (the web/browsing host) fails with
+  "No user configured for apiurl ..." for every subcommand, including
+  read-only ones (`ls`, `api`). `build.suse.de` and `api.suse.de` are
+  the same OBS/IBS instance exposed on two hostnames — always use
+  `api.suse.de` with `secbox osc`, even when following a
+  `build.suse.de` URL found in a ticket or IBS request link
 
 Examples:
-- `secbox osc -A https://build.suse.de ls SUSE:SLE-15-SP6:Update`
-- `secbox osc -A https://build.suse.de api /source/SUSE:SLE-15-SP6:Update/kernel-default`
+- `secbox osc -A https://api.suse.de ls SUSE:SLE-15-SP6:Update`
+- `secbox osc -A https://api.suse.de api /source/SUSE:SLE-15-SP6:Update/kernel-default`
 
 ### GitLab CLI (`glab`)
 
