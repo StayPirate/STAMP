@@ -306,6 +306,7 @@ any active ticket.
 2. For each `package_name`, check if there exists at least one
    `TicketPackage` record where:
    - `TicketPackage.package_name` matches, AND
+   - `TicketPackage.deleted_at IS NULL` (not soft-deleted), AND
    - The parent `Ticket` is **active** (status in `New`, `Analysis`,
        `Analyzed`)
 3. If no active ticket references the package, delete the
@@ -313,11 +314,10 @@ any active ticket.
    records
 4. Call `self.record_updated()` for each removed record
 
-VA exclusion and lifecycle actionability do not participate in this cache
-retention test. A soft-deleted package or a package with only EOL Products
-remains associated while an active Ticket references it. This does not grant
-confidential Ticket access: the access predicate independently excludes a
-soft-deleted `TicketPackage`.
+Lifecycle actionability does not participate in this cache retention test. A
+package with only EOL Products remains associated while a non-deleted
+`TicketPackage` under an active Ticket references it. A directly soft-deleted
+package does not retain the cache record.
 
 ### Operation 2: Update
 
@@ -348,9 +348,9 @@ to the IBS resolver.
 Populate bugowner data for packages in active tickets that are missing
 from the cache.
 
-1. Query distinct package names that have at least one
-   `TicketPackageTrack.workflow_type = ibs` under an active Ticket. VA exclusion
-   and lifecycle actionability do not filter this repair scope
+1. Query distinct package names that have a non-deleted `TicketPackage` and at
+   least one `TicketPackageTrack.workflow_type = ibs` under an active Ticket.
+   Lifecycle actionability does not filter this repair scope
 2. For each `package_name` that does NOT have a corresponding
    `PackageBugowner` record:
    a. Execute the [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm)
