@@ -242,6 +242,12 @@ current IBS strategy, an eligible lookup proceeds as follows:
    d. Synchronize `PackageBugownerMember` records: add new members,
       remove members no longer in the group, update emails if changed
 
+The usable-record short circuit belongs only to the on-demand
+`ensure_bugowner()` operation and reactivation catch-up. Periodic maintenance
+Operation 2 deliberately bypasses that short circuit and executes the eligible
+lookup steps above to refresh an existing record. Operation 3 uses the same
+lookup steps to create a missing record.
+
 ### IBS Query Failure Handling
 
 If any IBS API call fails during bugowner resolution:
@@ -322,12 +328,16 @@ to the IBS resolver.
 
 1. For each `PackageBugowner` record not removed in Operation 1 whose package
    has at least one active-Ticket track with `workflow_type = ibs`:
-   a. Execute the [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm)
-      for the `package_name`
-   b. If the bugowner has changed (different type, name, or email),
-      update the record and call `self.record_updated()`
-   c. If the bugowner is a group, synchronize the member list: add new
-      members, remove departed members, update changed emails
+   a. Capture the existing type, name, email, and group-member set, then
+      execute the eligible lookup steps in the
+      [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm) for the
+      `package_name`, bypassing the on-demand usable-record short circuit
+   b. The lookup updates the bugowner record and, for a group, synchronizes the
+      member list: add new members, remove departed members, and update changed
+      emails
+   c. Compare the resulting record and member set with the captured values. If
+      the type, name, email, or member set changed, call
+      `self.record_updated()` exactly once; otherwise report no update
    d. If the IBS query fails, log the error, call
       `self.record_failed()`, and continue to the next package
    e. Respect `request_delay` from `FetcherConfig` between IBS API

@@ -126,7 +126,11 @@ by the real-time `IBSEventConsumer` during downtime — see
    successful IBS diff response alone is insufficient. If diff retrieval or
    any required downstream outcome fails, keep the previous checksum so the
    next run repeats the idempotent processing. See `package-model.md`
-   (Checkpoint Safety).
+   (Checkpoint Safety). Enqueuing `create_ticket_from_detection` for Case C is
+   not completion and does not advance the checksum. The next run repeats the
+   diff and re-evaluates current state: an existing Ticket is processed through
+   Case A or B, while an absent Ticket remains Case C. The checksum advances
+   only after a later run observes every relevant outcome as complete.
 
 ## Codestream Match Outcomes
 
@@ -210,8 +214,10 @@ No ticket exists in Sentinel for the extracted CVE-ID.
   the next run re-attempts it.
 - **Deduplication** (Case C): if multiple packages in the same run yield
   the same CVE-ID without a ticket, only one `create_ticket_from_detection`
-  task is enqueued. Subsequent packages with the same CVE-ID in the same
-  run are handled as Case B once the ticket is created.
+  task is enqueued. Every affected package remains an incomplete Case C outcome
+  for checkpoint purposes, so none of their checksums advances in that run. A
+  later run re-evaluates each package as Case A or B after the Ticket exists, or
+  as Case C if creation did not complete.
 
 ## Background Task
 
@@ -251,7 +257,10 @@ MUST NOT by itself suppress this per-ticket check.
 The detailed bounded current-state algorithm remains owned by this
 track-release specification and must be complete before implementation. Catch-up
 recovers whether the fix is currently present, not every intervening source
-revision.
+revision. It MUST NOT write `CodestreamPackageChecksum`: a targeted Ticket/CVE
+check has not processed every relevant outcome in the shared package revision,
+so only the periodic `execute()` flow or RabbitMQ package-event flow may advance
+that checkpoint after complete diff processing.
 
 #### Metrics
 

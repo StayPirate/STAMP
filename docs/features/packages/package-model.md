@@ -1391,10 +1391,14 @@ implementation choice. Reactivation work is idempotent. Per-item failures and
 final catch-up failure after the shared retry policy are logged with the
 sanitized cause, `ticket_id`, owning operation, affected item identity, and
 `celery_task_id`. No durable per-ticket catch-up progress table is introduced.
-Because there is no periodic full-tree SMELT scan and historical SR/RR recovery
-is intentionally targeted to reactivation, a permanently failed reactivation
-catch-up requires an observable operator rerun. The submission and RabbitMQ
-specification must define that rerun surface before implementation.
+A terminal failure of package enumeration, package-tree orchestration, catch-up
+dispatch, or an individual catch-up requires an observable operator-triggered
+rerun of the same complete idempotent workflow for `ticket_id`. Successful
+package units and catch-ups may repeat safely; the rerun does not resume from a
+persisted progress position. The concrete operator interface MUST be defined
+before the workflow is implemented. This is required in particular because
+there is no periodic full-tree SMELT scan and historical SR/RR recovery is
+intentionally targeted to reactivation.
 
 ### Checkpoint safety
 

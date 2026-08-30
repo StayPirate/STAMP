@@ -376,8 +376,14 @@ For each `suse.obs.package.commit` event:
    `CodestreamPackageChecksum` for this `(project, package)` pair only after
    every required local outcome from the diff has completed or remains
    discoverable by an independent permanent recovery path. A successful IBS
-   diff alone is insufficient. Otherwise retain the previous checksum so the
-   periodic fetcher re-attempts idempotent processing.
+   diff alone is insufficient. Enqueuing `create_ticket_from_detection` for
+   Case C is not completion and does not advance the checksum, because the
+   periodic fetcher could not rediscover the outcome after that checkpoint.
+   If one task is deduplicated across multiple packages that expose the same
+   CVE, every affected package remains incomplete and retains its previous
+   checksum. Otherwise retain the previous checksum so the periodic fetcher
+   re-attempts idempotent processing. See `package-model.md` (Checkpoint Safety)
+   and `ibs-track-release-detection.md` (Case C).
 
 7. **Acknowledge message**: acknowledge successful RabbitMQ processing only
    after local mutation commits and safe checksum advancement complete.

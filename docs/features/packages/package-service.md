@@ -70,7 +70,7 @@ reserved exclusively for system entry points.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service`. Post-transition catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` — no caller action needed |
+| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The code dependency remains unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT import `package_service`. `reconcile_ticket_status()` performs transactional CVSS recalculation and registers the package-service-owned reactivation workflow for execution by the post-commit workflow owner; the caller does not invoke package catch-up directly |
 | `services/cvss.py` | `package_service` delegates eligibility calculation to `resolve_eligibility_score()` in `cvss.py` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 
@@ -918,7 +918,10 @@ at least one record is missing. `add_package_to_ticket()` does not apply it.
 This workflow is the package-domain first phase after an inactive Ticket enters
 an active status. Its conceptual input is `ticket_id: UUID`; it returns no
 domain value. It is idempotent and creates audit events only through effective
-delegated `add_package_to_ticket()` mutations.
+delegated `add_package_to_ticket()` mutations. It is an orchestration boundary,
+not a caller-owned composable service function: the workflow owner opens and
+completes one independent transaction per package while the delegated
+`package_service` functions retain their module-wide no-commit contract.
 
 After the status-transition transaction commits, the workflow:
 
@@ -938,11 +941,26 @@ After the status-transition transaction commits, the workflow:
 
 If the Ticket does not exist or has no persisted package marker, package-tree
 resolution is a no-op and catch-up dispatch still proceeds. Errors propagated
-by an individual `add_package_to_ticket()` invocation are logged and isolated;
-an infrastructure failure that prevents enumeration or catch-up dispatch
-escapes to the workflow wrapper for its normal retry and observability policy.
-The workflow performs no audit logging of its own and does not restore any
-soft-deleted record.
+by an individual `add_package_to_ticket()` invocation are isolated only when
+they are package-specific resolution or validation failures; step 3 logs them
+and processing continues. An infrastructure failure that prevents reliable
+enumeration, completion of a package transaction, or catch-up dispatch escapes
+to the workflow wrapper. The wrapper retries the complete idempotent workflow
+according to the shared `run_catch_up` classification and limits: three retries
+with 5, 10, and 20 second backoff for retryable failures, and immediate terminal
+failure for non-retryable failures.
+
+Each dispatched catch-up then uses its own shared `run_catch_up` retry policy;
+its failure does not propagate back to the already-completed package-tree
+wrapper. A terminal wrapper or individual catch-up failure emits a structured
+ERROR log identifying `ticket_id`, the failed workflow phase or fetcher,
+sanitized cause, and `celery_task_id`. Either terminal outcome requires an
+operator-triggered rerun of the same complete workflow for `ticket_id`; it does
+not resume from partial progress because successful package units and catch-ups
+are idempotent. The concrete operator interface MUST be defined before this
+workflow is implemented; no durable progress table or periodic full-tree
+reconciliation is introduced. The workflow performs no audit logging of its
+own and does not restore any soft-deleted record.
 
 The post-commit registration and task/callback composition mechanism is an
 implementation choice. The behavioral ordering and per-package transaction

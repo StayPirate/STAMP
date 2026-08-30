@@ -1770,7 +1770,8 @@ a value requires an Alembic migration.
   process startup;
   `CodestreamPackageChecksum` uses `last_seen_at` instead of standard
   timestamp columns (operational cache — the timestamp records when the
-  checksum was last observed, not when the record was created))
+  checksum checkpoint was last accepted after complete or independently
+  recoverable processing, not when the record was created))
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
   use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
   DeliveryStatus, CveState, Role, FetcherRunStatus,
