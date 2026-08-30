@@ -507,16 +507,20 @@ changed during the inactive period:
    active tickets — inactive tickets are excluded, so per-ticket CVSS
    data may be stale.
 
-2. **Asynchronous — per-ticket fetcher catch-up**: catches up on
-   external data not fetched during the inactive period (e.g., Red Hat
-   CVSS updates — the `sync_redhat_cves` fetcher scopes to active
-   tickets and skips inactive ones). See
+2. **Asynchronous — package-tree then per-ticket fetcher catch-up**: first
+   re-resolves every persisted package marker through SMELT, including
+   soft-deleted markers without restoring them, then catches up on external
+   data against the resulting tree (e.g., Red Hat CVSS updates — the
+   `sync_redhat_cves` fetcher scopes to active tickets and skips inactive
+   ones). See `docs/features/packages/package-model.md` (Reactivation and
+   Convergence) and
    [fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
    ("Per-Ticket Catch-Up: `catch_up()` Method") for the method contract.
 
-Both mechanisms are handled internally by `reconcile_ticket_status()`
-(step 4) when it detects an inactive-state exit. No post-commit action
-is needed by endpoint handlers or callers. This applies to all three
+Both mechanisms are initiated internally by `reconcile_ticket_status()`
+(step 4) when it detects an inactive-state exit. CVSS recalculation is
+transactional; the package/fetcher workflow runs after commit. No action is
+needed by endpoint handlers or callers. This applies to all three
 inactive → active paths:
 
 - `reopen_from_ignored()` — Ignored → active (via

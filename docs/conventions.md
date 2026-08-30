@@ -770,15 +770,13 @@ as short as possible. Two categories of work are forbidden inside it:
    transaction is opened. This pattern is not subject to the
    prohibition above.
 
-   **Acknowledged deviation**: `reconcile_ticket_status()` step 4.2
-   enqueues Celery `catch_up()` tasks before the caller's commit.
-   This deviation has an explicit safety analysis in
-   `docs/features/platform/fetcher-infrastructure.md` (Post-commit
-   enqueue, Exception) demonstrating that the operation is harmless:
-   the task is idempotent, does not read uncommitted state as a
-   precondition, and delegates mutations to service modules with
-   independent locks. New deviations require an equivalent per-case
-   safety analysis — the exception is not a general precedent.
+   Ticket reactivation follows the normal rule:
+   `reconcile_ticket_status()` registers its recovery workflow during the
+   caller-owned transaction, but publication occurs only after commit. The
+   workflow then re-resolves the package tree before publishing per-fetcher
+   `catch_up()` tasks. See `docs/features/platform/fetcher-infrastructure.md`
+   (Post-commit enqueue) and `docs/features/packages/package-model.md`
+   (Reactivation and Convergence). No pre-commit enqueue exception applies.
 
 2. **No expensive queries**: analytical queries, aggregations over
    large tables, or computationally intensive operations MUST be

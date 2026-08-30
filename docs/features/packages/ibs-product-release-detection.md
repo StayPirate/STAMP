@@ -47,11 +47,13 @@ below for how `<repo_url>` is constructed):
 3. Download and parse `updateinfo.xml`.
 4. Iterate the `<update>` elements. For each `<update>` U, check whether its
    `<references>` block contains a `<reference type="cve" id="CVE-XXXX-YYYY">`
-    matching the CVE-ID of any active ticket whose `TicketPackageProduct`
-    records reference P and have `released_at IS NULL`. VA-excluded and EOL
-    Products are included because release detection records factual state
-    regardless of operational actionability (see Exclusion and Actionability
-    in `docs/features/packages/package-model.md`).
+   matching the CVE-ID of any active Ticket whose `TicketPackageProduct`
+   occurrence references P, has `released_at IS NULL`, and belongs to a parent
+   `TicketPackageTrack` with `workflow_type = ibs`. VA-excluded and EOL
+   Products are included because release detection records factual state
+   regardless of operational actionability (see IBS Workflow Applicability and
+   Convergence in `docs/features/packages/package-model.md`). The same catalog
+   Product below a Git track is not an IBS candidate.
 5. For each such advisory, apply the
    [Advisory ↔ Source Package Match](#advisory--source-package-match) chain
    below to identify which specific source package of the ticket received
@@ -61,6 +63,12 @@ below for how `<repo_url>` is constructed):
 
 - `TicketPackageProduct.released_at` is set to the `<issued date>` attribute
   of the advisory through the `package_service` module.
+
+A valid matching advisory is current authoritative release state regardless of
+whether it predates Ticket creation or was published while the Ticket was
+inactive. Sentinel sets `released_at` retroactively to the advisory's original
+issued time; it does not reconstruct every advisory transition that occurred
+before observation.
 
 ### Update Repository URL Resolution
 
@@ -251,7 +259,7 @@ not tracked in ticket, or no ticket exists at all) is described in
 | Class name | `DetectIbsProductReleases` |
 | Schedule | TBD |
 | Source | IBS download infrastructure (`download.suse.de`) |
-| Scope | All `TicketPackageProduct` records with `released_at IS NULL` belonging to active tickets. VA-excluded and lifecycle-non-actionable Products are included |
+| Scope | All `TicketPackageProduct` records with `released_at IS NULL`, below a parent track with `workflow_type = ibs`, and belonging to active Tickets. VA-excluded and lifecycle-non-actionable Products are included |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
@@ -265,11 +273,18 @@ override. See
 ("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
 contract.
 
-**Scope**: extracts the ticket's `TicketPackageProduct` records and
-checks `updateinfo.xml` from each product's update repository for
-advisories referencing the ticket's CVE.
+**Scope**: after package-tree re-resolution has committed, extracts the
+ticket's unreleased `TicketPackageProduct` occurrences whose parent track has
+`workflow_type = ibs`. It checks current `updateinfo.xml` data for valid
+advisories referencing the Ticket's CVE and applies the normal source-package
+match. Repository downloads may be deduplicated across occurrences. Products
+below Git tracks are excluded even when they reference the same catalog
+Product.
 
-**Detailed specification**: to be defined during implementation.
+Catch-up recognizes matching advisories that predate reactivation or Ticket
+creation and persists their original issued time. The remaining advisory
+validity and repository-caching details remain owned by this Product release
+specification and must be complete before implementation.
 
 #### Metrics
 
@@ -289,10 +304,10 @@ sessions before implementation begins.
 - **Repodata caching** — Strategy for caching `repomd.xml` /
   `updateinfo.xml` / `primary.xml` (ETag, Last-Modified, incremental
   parsing) to avoid redundant downloads.
-- **Backfill of pre-existing advisories** — Behavior when a new ticket is
-  opened for a CVE for which an advisory already exists in the product
-  repository (set `released_at` retroactively with a historical date, or
-  ignore advisories older than the ticket).
+- **Backfill of pre-existing advisories** — Resolved: a valid advisory that
+  predates Ticket creation or reactivation sets `released_at` to its historical
+  issued time. This specification must still define which advisory statuses
+  and shapes are valid before implementation.
 - **Formal definition of "relevant advisory"** — Edge cases (e.g.,
   `<update status>` values other than `stable`, advisories with empty
   `<pkglist>`, retracted advisories) need formalization.

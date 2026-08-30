@@ -81,8 +81,8 @@ by the real-time `IBSEventConsumer` during downtime — see
 
 1. **Identify active codestreams**: query the distinct `reference`
    values from `TicketPackageTrack` records with `status` in
-   (`ANALYSIS`, `AFFECTED`), belonging to **active tickets** (ticket
-    status in `New`, `Analysis`, `Analyzed`).
+   (`ANALYSIS`, `AFFECTED`) and `workflow_type = ibs`, belonging to
+   **active tickets** (ticket status in `New`, `Analysis`, `Analyzed`).
    VA-excluded and lifecycle-non-actionable tracks under active Tickets are
    included because release detection records factual state regardless of
    operational actionability (see Exclusion and Actionability in
@@ -97,11 +97,14 @@ by the real-time `IBSEventConsumer` during downtime — see
    compare the `srcmd5` with the value stored in
    `CodestreamPackageChecksum`. Packages with unchanged MD5 are skipped.
 
-4. **First-run behavior**: when no cached MD5 exists for a codestream
-   (first time the detector processes it), the current MD5 values are
-   saved to `CodestreamPackageChecksum` without performing any diffs. CVE
-   detection begins from the second run onward. This avoids spurious
-   matches from the entire package history.
+4. **First-run and long-gap behavior**: absence of a cached MD5, first
+   execution after feature enablement, and a gap beyond the normal
+   incremental history MUST reconcile current release state for the active IBS
+   scope. The current MD5 MUST NOT be saved as an unexamined baseline when that
+   would make an already-present relevant fix permanently undiscoverable. The
+   concrete bounded current-state procedure remains owned by this
+   track-release specification; it reuses this fetcher rather than an
+   enablement hook or generic backfill framework.
 
 5. **Diff changed packages**: for each package with a changed MD5, call
    `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
@@ -117,11 +120,13 @@ by the real-time `IBSEventConsumer` during downtime — see
    the match logic described in
    [Codestream Match Outcomes](#codestream-match-outcomes) below.
 
-7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` for
-   each successfully processed package. The cache is updated **only if the
-   IBS diff request succeeded** (HTTP 200). If IBS returned an error for
-   a specific package diff, the MD5 is NOT updated so the next run will
-   re-attempt the diff for that package.
+7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` only
+   after every relevant CVE outcome from the diff is completely processed or
+   remains discoverable through an independent permanent recovery path. A
+   successful IBS diff response alone is insufficient. If diff retrieval or
+   any required downstream outcome fails, keep the previous checksum so the
+   next run repeats the idempotent processing. See `package-model.md`
+   (Checkpoint Safety).
 
 ## Codestream Match Outcomes
 
@@ -190,24 +195,19 @@ No ticket exists in Sentinel for the extracted CVE-ID.
   `record_failed()`, do NOT update the MD5 cache (the next run will
   re-attempt the diff), continue with remaining packages.
 - **SMELT unreachable** (during Case B/C package resolution): log WARNING,
-  `record_failed()`, the package addition is skipped. The next run will
-  not re-trigger it (MD5 already cached). The `items_failed` counter and
-  `partial` run status surface the condition on the fetcher dashboard for
-  operator attention.
+  call `record_failed()`, skip the package addition, and retain the previous
+  MD5 so the next run re-attempts the diff and idempotent outcome processing.
 - **SMELT targets unresolved** (during Case B/C package resolution): handle
   `PackageTargetsUnresolvedError` identically to SMELT unavailability: log
-  WARNING, call `record_failed()`, and skip package addition. No
-  `TicketPackage` exists for Product catalog backfill to discover, and the
-  MD5 is already cached, so recovery requires a later CVE-ingestion package
-  resolution, manual VA addition, or operator-triggered rerun. This accepted
-  limitation is surfaced by the fetcher's failed-item metrics and `partial`
-  status.
+  WARNING, call `record_failed()`, skip package addition, and retain the
+  previous MD5. Product catalog backfill cannot discover a package marker that
+  was never created, so the unchanged checkpoint is the permanent automatic
+  retry path.
 - **Product catalog not ready** (during Case B/C package resolution): handle
   `ProductCatalogNotReadyError` identically to SMELT unavailability. No
-  package-tree records are written. The existing failed-item metric and
-  `partial` run status surface the skipped addition; recovery follows the same
-  later-ingestion, manual-addition, or operator-rerun paths as an unresolved
-  target.
+  package-tree records are written. Retain the previous MD5; the existing
+  failed-item metric and `partial` run status surface the skipped addition and
+  the next run re-attempts it.
 - **Deduplication** (Case C): if multiple packages in the same run yield
   the same CVE-ID without a ticket, only one `create_ticket_from_detection`
   task is enqueued. Subsequent packages with the same CVE-ID in the same
@@ -223,7 +223,7 @@ No ticket exists in Sentinel for the extracted CVE-ID.
 | Class name | `DetectIbsTrackReleases` |
 | Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
-| Scope | All codestreams with at least one `TicketPackageTrack` in `ANALYSIS` or `AFFECTED` status, belonging to active Tickets (New, Analysis, Analyzed). VA-excluded and lifecycle-non-actionable tracks are included |
+| Scope | All codestreams with at least one `TicketPackageTrack` where `workflow_type = ibs` and status is `ANALYSIS` or `AFFECTED`, belonging to active Tickets (New, Analysis, Analyzed). VA-excluded and lifecycle-non-actionable tracks are included |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
@@ -240,12 +240,18 @@ Catch-up mechanism for events missed by the real-time
 ("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
 contract.
 
-**Scope**: extracts the ticket's `TicketPackageTrack` records and
-checks IBS for source changes on each codestream, using the same
-diff-based detection logic as `execute()` but scoped to a single
-ticket.
+**Scope**: after package-tree re-resolution has committed, extracts only the
+ticket's `TicketPackageTrack` records with `workflow_type = ibs` and status in
+`ANALYSIS` or `AFFECTED`. It performs a targeted current-state release check
+for the Ticket's CVE and package on each track. The shared
+`CodestreamPackageChecksum` is global to `(codestream, package)` and may already
+have advanced because another Ticket was active; therefore checksum equality
+MUST NOT by itself suppress this per-ticket check.
 
-**Detailed specification**: to be defined during implementation.
+The detailed bounded current-state algorithm remains owned by this
+track-release specification and must be complete before implementation. Catch-up
+recovers whether the fix is currently present, not every intervening source
+revision.
 
 #### Metrics
 
@@ -255,9 +261,9 @@ ticket.
   `FIXED` (Case A), or a package was added to a ticket (Case B)
 - `record_failed`: a codestream could not be scanned (IBS API error)
 
-## Open Items
+## Remaining Specification Work
 
-All codestream-level open items have been resolved:
+Endpoint selection and diff matching are resolved:
 
 - **IBS endpoint** — Resolved: `GET /source/{project}?view=info` for
   change detection, `POST /source/{project}/{package}?cmd=diff` for CVE
@@ -267,3 +273,9 @@ All codestream-level open items have been resolved:
   explicit `CVE -> source package` link, so the Advisory ↔ Source Package
   Match chain (used by the product-level detector) is not needed at the
   codestream level.
+
+Before implementation, this specification must define the
+bounded first-run, long-gap, and per-ticket current-state procedures referenced
+above, including partial success for a diff containing multiple CVEs. These
+requirements belong to this detector and do not introduce a generic backfill
+framework.

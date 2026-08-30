@@ -178,7 +178,8 @@ Configuration:
       - If unreachable: log CRITICAL, exit with code 1
 
 4. Build monitored codestream set (initial load from PostgreSQL)
-   -> Query TicketPackageTrack records for active tickets
+   -> Query TicketPackageTrack records with workflow_type = ibs for active
+      tickets
    -> Cache result in memory (subsequent refreshes every 5 minutes)
    -> If the query fails (database error): log CRITICAL, exit with code 1
       (no previous set to fall back to — same fail-fast as step 3)
@@ -302,6 +303,10 @@ for construction). The filtering differs by event type:
   `project in set` (no additional filter — SR/RR events are processed
   for all tracked codestreams regardless of track affectedness status)
 
+Membership always requires at least one parent `TicketPackageTrack` with
+`workflow_type = ibs` under an active Ticket. A Git track never contributes
+its `reference` to this set and is never mutated by an IBS event.
+
 For each `suse.obs.package.commit` event:
 
 1. **Parse payload**: extract `project`, `package`, `srcmd5` from the JSON
@@ -311,9 +316,9 @@ For each `suse.obs.package.commit` event:
    monitored codestream set **and** `has_non_final_tracks` is `true`.
    The monitored codestream set is a `Dict[codestream_name,
    has_non_final_tracks: bool]` built from the distinct
-   `codestream_name` values of `TicketPackageTrack` records belonging to
-   active tickets (ticket status in New, Analysis, Analyzed). The
-    `has_non_final_tracks` flag is `true` if
+   `reference` values of `TicketPackageTrack` records with
+   `workflow_type = ibs` belonging to active tickets (ticket status in New,
+   Analysis, Analyzed). The `has_non_final_tracks` flag is `true` if
    the codestream has at least one track in `ANALYSIS` or `AFFECTED`.
    VA-excluded and lifecycle-non-actionable tracks are included because
    release detection records factual state regardless of operational
@@ -328,10 +333,10 @@ For each `suse.obs.package.commit` event:
 
 3. **Lookup cached MD5**: query `CodestreamPackageChecksum` for the
    `(codestream_name=project, package_name=package)` pair.
-   - If no cached entry exists (first time seeing this package): save the
-     `srcmd5` from the event to `CodestreamPackageChecksum` without
-     performing a diff. This mirrors the first-run behavior of the
-     periodic fetcher.
+   - If no cached entry exists (first time seeing this package): apply the
+     track detector's bounded current-state/first-run behavior. Do not save the
+     event `srcmd5` as an unexamined baseline when doing so could make a
+     relevant existing fix permanently undiscoverable.
    - If the cached `srcmd5` matches the event's `srcmd5` → **discard**
      (already processed, either by a previous event or by the periodic
      fetcher).
@@ -368,14 +373,18 @@ For each `suse.obs.package.commit` event:
    "Codestream Match Outcomes" for the complete specification of each case.
 
 6. **Update MD5 cache**: write the event's `srcmd5` to
-   `CodestreamPackageChecksum` for this `(project, package)` pair. This
-   update happens **only if the IBS diff request succeeded** (step 4
-   returned HTTP 200). If the diff failed, the MD5 is NOT updated, so
-   the periodic catch-up fetcher will re-attempt the diff for this
-   package on its next run.
+   `CodestreamPackageChecksum` for this `(project, package)` pair only after
+   every required local outcome from the diff has completed or remains
+   discoverable by an independent permanent recovery path. A successful IBS
+   diff alone is insufficient. Otherwise retain the previous checksum so the
+   periodic fetcher re-attempts idempotent processing.
 
-7. **Acknowledge message**: acknowledge the RabbitMQ message after
-   processing is complete (manual ack mode).
+7. **Acknowledge message**: acknowledge successful RabbitMQ processing only
+   after local mutation commits and safe checksum advancement complete.
+   Retry-versus-immediate-ack behavior for failed events remains owned by this
+   RabbitMQ specification. Whatever policy it chooses must not block the
+   consumer indefinitely, advance a recovery-blocking checkpoint, or hide the
+   failure from operational monitoring.
 
 ### Filtering: Application-side Only
 
@@ -401,7 +410,7 @@ The `IBSEventConsumer` and the `IBSTrackReleaseDetector` (periodic
 fetcher) share the same `CodestreamPackageChecksum` table. This is the
 key mechanism that prevents duplicate work:
 
-- When the consumer processes an event and updates the MD5 cache, the
+- When the consumer completely processes an event and updates the MD5 cache,
   periodic fetcher will see the updated MD5 on its next run and skip
   that package (no diff needed)
 - When the periodic fetcher processes a package that the consumer missed
@@ -446,9 +455,9 @@ The two mechanisms are fully independent:
 | SSL context creation failure (`TLSConfigurationError` from `build_tls_context()`) | Log ERROR with file path and error detail. Terminate process with non-zero exit code. Do NOT enter the reconnection loop — a corrupt CA file is a configuration error, not a transient network condition. Operator must fix the file and restart the process |
 | RabbitMQ broker unreachable at startup | Log ERROR, retry with exponential backoff |
 | Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
-| Invalid/unparseable message payload | Log WARNING with raw payload, acknowledge and discard |
+| Invalid/unparseable message payload | Log WARNING with routing key and sanitized parsing detail; do not log the raw payload because request and commit messages can contain personal identifiers. Acknowledge and discard |
 | IBS diff request fails (HTTP error, timeout) | Log ERROR, do NOT update MD5 cache. The periodic fetcher will retry on its next run |
-| SMELT unreachable during Case B/C | Log ERROR, package addition skipped. The MD5 cache IS updated (the IBS diff succeeded), so neither the consumer nor the periodic fetcher will re-attempt automatically. Same behavior as the periodic fetcher — the condition must be surfaced to operators via monitoring. See `docs/features/packages/ibs-track-release-detection.md` error handling |
+| Required downstream processing fails after a successful IBS diff, including SMELT unavailability during Case B/C | Log ERROR and do not advance the MD5 unless an independent permanent owner can still discover every omitted outcome. The periodic fetcher then re-attempts idempotent processing |
 | Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
 | PostgreSQL unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot build the monitored codestream set without PostgreSQL |
 | Redis unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot enqueue tasks or write heartbeat without Redis |
@@ -569,6 +578,11 @@ consumer is disconnected are permanently lost. The periodic catch-up
 fetcher (every 24 hours at 02:00 UTC) mitigates this, but events lost
 during downtime may not be detected for up to 24 hours.
 
+Disabling the corresponding periodic fetcher is an explicit operational choice
+that removes this recovery guarantee. The RabbitMQ consumer continues to
+operate, but missed or permanently failed events then have no polling safety
+net.
+
 ### No broker-level filtering
 
 The consumer receives all `suse.obs.package.commit` events from IBS,
@@ -605,7 +619,9 @@ connection and process the full event stream.
   whether the message is: (a) acknowledged and discarded (event lost),
   (b) NACKed/requeued (risks infinite retry loop if PG is down), or
   (c) acknowledged with the event skipped and logged for operator
-  alerting (similar to the SMELT-unreachable pattern).
+  alerting. The chosen policy must satisfy the shared non-blocking,
+  checkpoint-safety, and observability boundary above; this foundation does
+  not require per-message retries.
 
 - **Exchange declaration failure at step 6.** If the consumer connects
   to RabbitMQ successfully (step 5) but the `pubsub` exchange does not

@@ -1590,9 +1590,12 @@ change.
 
 Operational cache table shared by the `IBSEventConsumer` (real-time) and
 the `IBSTrackReleaseDetector` (periodic catch-up) to track source MD5
-checksums of packages in IBS codestream projects. By comparing the
-current `srcmd5` from IBS with the cached value, both mechanisms
-identify which packages have changed and need a diff analysis. The shared
+checksums of packages in IBS codestream projects. The stored value is the last
+source revision whose required local outcomes completed or remain recoverable
+through an independent permanent path; it is not merely the latest revision
+observed from IBS. Comparing current IBS `srcmd5` with this checkpoint
+identifies packages requiring diff analysis, while retaining the previous
+value after downstream failure makes idempotent retry possible. The shared
 cache prevents duplicate work between the two detection paths. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
 
@@ -1604,19 +1607,21 @@ of the release detection mechanism.
 | id              | UUID        | PK                   | Internal identifier                |
 | codestream_name | VARCHAR(255) | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
 | package_name    | VARCHAR(255) | NOT NULL             | Source package name                |
-| srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the package source revision from IBS |
-| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this checksum was last observed |
+| srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the last fully processed or independently recoverable IBS source revision |
+| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this accepted checkpoint was recorded |
 
 **Unique constraint**: (codestream_name, package_name)
 
 #### PackageBugowner
 
-Caches the current IBS bugowner for each source package actively tracked
-in Sentinel tickets. Shared across all tickets — all `TicketPackage`
-records with the same `package_name` reference the same bugowner. Records
-are created on-demand when a package is first added to a ticket, maintained
-by the `sync_ibs_bugowners` fetcher, and removed when the package no
-longer appears in any active ticket. See
+Caches one current bugowner for each source package actively tracked in
+Sentinel tickets. The value is global across workflows and Tickets: all
+`TicketPackage` records with the same `package_name` reference the same
+bugowner. The current resolver and maintenance fetcher use IBS; source
+authority and any fallback are finalized by the owning bugowner
+specification. Records are created on demand when resolution is requested,
+maintained by the current `sync_ibs_bugowners` fetcher, and removed when the
+package no longer appears in any active ticket. See
 `docs/features/packages/package-bugowner.md` for the full specification.
 
 | Column         | Type        | Constraints          | Description                        |

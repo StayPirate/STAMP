@@ -394,8 +394,9 @@ their affectedness and delivery states. Backfill may add missing Products
 beneath existing tracks and may create a previously omitted track; a new track
 starts in `ANALYSIS`/`PENDING`, and normal status reconciliation may regress
 an `Analyzed` Ticket to `Analysis`. The normal `add_package_to_ticket()`
-post-commit effects apply only when at least one package-tree record is
-created. A package-tree no-op performs no post-commit effects.
+post-commit effects apply only when the backfill creates at least one IBS
+track. Adding Products below existing tracks, adding only Git tracks, or a
+package-tree no-op performs no post-commit effects.
 
 Backfill completes only package trees represented by an existing active
 `TicketPackage`. A package addition that previously failed with
@@ -426,6 +427,16 @@ stuck packages. If the process is lost before this line is logged, the run's
 partial progress has no other observability signal, and the next qualifying
 trigger or a later `add_package_to_ticket()` invocation remains the only
 recovery path.
+
+The backfill is intentionally triggered by a newly current Product, not by a
+change to SMELT's per-package track topology. Sentinel does not periodically
+query the maintained-package endpoint for every active package. A new track
+whose Products were all already current in the previous catalog snapshot can
+therefore remain absent from a continuously active Ticket until another
+package-resolution trigger occurs. Ticket reactivation re-resolves all of that
+Ticket's persisted package markers and repairs this case. This is the accepted
+package-tree discovery gap defined in `package-model.md` (IBS Workflow
+Applicability and Convergence); no generic topology reconciler is added.
 
 ---
 

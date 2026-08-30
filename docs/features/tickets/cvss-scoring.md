@@ -777,15 +777,14 @@ mechanisms execute to reconcile CVSS-derived data:
    inactive. This provides immediate best-effort accuracy using
    whatever assessment data is already persisted.
 
-2. **Asynchronous** (enqueued during `reconcile_ticket_status()`
-   execution, before the caller's commit — safe because `catch_up()` is
-   idempotent by contract and does not read ticket status as a
-   precondition): `catch_up()` tasks are enqueued for every registered
-   fetcher via `get_catch_up_fetchers()` — not limited to CVSS fetchers.
-   This catches up on data that was not fetched during the inactive
-   period. Each `catch_up()` task operates independently; if it discovers
-   changed data, the normal mutation path handles the recalculation
-   chain.
+2. **Asynchronous**: `reconcile_ticket_status()` registers one post-commit
+   reactivation workflow. That workflow first re-resolves the Ticket's
+   persisted package markers through SMELT, then enqueues `catch_up()` for
+   every registered fetcher via `get_catch_up_fetchers()` — not limited to
+   CVSS fetchers. This catches up on data that was not fetched during the
+   inactive period, while ensuring package-oriented catch-up sees the current
+   tree. Each `catch_up()` task operates independently; if it discovers changed
+   data, the normal mutation path handles the recalculation chain.
 
 Both mechanisms are handled internally by `reconcile_ticket_status()`
 (step 4) — no caller or endpoint handler action is required.

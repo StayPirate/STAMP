@@ -127,10 +127,11 @@ promotes the ticket further in the same call and the audit event
 reflects the final target (e.g., `old_value = Ignored,
 new_value = Analyzed`).
 
-The post-transition catch-up (CVSS recalculation + fetcher catch-up
-enqueue) is handled internally by `reconcile_ticket_status()` step 4
-when it detects the inactive-state exit — no post-commit action is
-needed by the calling function or endpoint handler.
+The post-transition catch-up is initiated internally by
+`reconcile_ticket_status()` step 4 when it detects the inactive-state exit.
+Synchronous CVSS recalculation remains in the transaction; the function
+registers the package-tree and fetcher recovery workflow for post-commit
+execution. No action is needed by the calling function or endpoint handler.
 
 Only the two manual-zone exit functions (`reopen_from_ignored`,
 `revert_duplicate`) call this helper. It is never called directly by
@@ -155,8 +156,8 @@ current reality (gate conditions + data freshness).
 - May call `recalculate_cvss_chain()` when an inactive → active
   transition is detected (producing `severity_changed` and
   `product_eligibility_changed` audit events if derived values change)
-- May enqueue `catch_up()` Celery tasks for registered fetchers when an
-  inactive → active transition is detected
+- May register the package-tree and fetcher catch-up workflow for post-commit
+  execution when an inactive → active transition is detected
 
 Callers must be aware that invoking this function may produce mutations
 beyond status changes.
@@ -214,18 +215,28 @@ beyond status changes.
          If `ticket.cve_id IS NULL`: skip (tickets without a CVE derive
          severity from `severity_manual`, not from CVSS assessments —
          there is nothing to recalculate)
-      2. Enqueue `catch_up()` for every registered fetcher via
-         `get_catch_up_fetchers()` (wrapped in try/except — a transient
-         Redis failure does not roll back the DB transaction; catch-up is
-         deferred to the next periodic fetcher cycle). The enqueue proceeds
-         regardless of whether step 4.1 was skipped
+      2. Register one post-commit reactivation workflow. Its package-domain
+         phase first re-resolves every persisted package marker, including
+         soft-deleted markers, through `package_service`; after those
+         per-package transactions finish, it enqueues `catch_up()` for every
+         registered fetcher via `get_catch_up_fetchers()`. Registration does
+         not introduce a `ticket_mutations` → `package_service` import: the
+         post-commit workflow owner performs that orchestration. Registration
+         proceeds regardless of whether step 4.1 was skipped. The workflow and
+         failure isolation contract are defined in `package-service.md`
+         (Package-tree reactivation workflow) and `package-model.md`
+         (Reactivation and Convergence)
    - **Note**: step 4 is independent of step 3. In the
      `_reenter_gate_zone()` case, the caller has already set the status
      before invoking reconcile; step 3 sees no change but step 4
      correctly detects the inactive-state exit via `previous_status`.
-     The catch-up enqueue is unconditional after
+     Post-commit workflow registration is unconditional after
      `recalculate_cvss_chain()` returns — it does not re-check ticket
      status
+   - **Registration deduplication**: recursive reconciliation within the same
+     caller-owned transaction registers at most one reactivation workflow for
+     the Ticket. Duplicate workflows across separate transactions remain safe
+     because package resolution and all catch-ups are idempotent.
    - **Recursion termination**: `recalculate_cvss_chain()` calls
       `reconcile_ticket_status()` at its step 7. This inner call may
       re-trigger step 4 at most once: when the outer call set the ticket

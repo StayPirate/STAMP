@@ -337,8 +337,11 @@ whether update advisories have been published to product repositories.
   the periodic `detect_ibs_track_releases` fetcher (catch-up every 24
   hours at 02:00 UTC). Product-level release detection
   (`detect_ibs_product_releases`) runs as a periodic `BaseFetcher` subclass.
-  Package bugowner resolution uses the owner search, person, and group
-  endpoints — see `docs/features/packages/package-bugowner.md`
+  All IBS package operations require a parent track whose persisted
+  `workflow_type` is `ibs`; a Git reference is never interpreted as an IBS
+  project. The current package bugowner resolver uses the owner search, person,
+  and group endpoints behind a source-neutral package-level boundary — see
+  `docs/features/packages/package-bugowner.md`
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
@@ -423,8 +426,9 @@ near-real-time reactivity.
   **Request events (maintenance/submit requests):**
   - `*.obs.request.create` — new request created
   - `*.obs.request.change` — request modified
-  - `*.obs.request.statechange` — request state changed (e.g., new →
-    accepted → revoked)
+  - `*.obs.request.state_change` — request state changed (e.g., new →
+    accepted → revoked). **Currently consumed** by Sentinel alongside
+    `*.obs.request.create`
   - `*.obs.request.delete` — request deleted
   - `*.obs.request.reviews_done` — all reviews for a request completed
   - `*.obs.request.review_changed` — individual review changed
@@ -481,11 +485,12 @@ near-real-time reactivity.
     routing key filter, and consume messages. The exchange must be declared
     with `passive=True` and `durable=True` (consumers cannot create it)
 - **Integration status**: **Active**. Sentinel consumes
-  `suse.obs.package.commit` events from IBS for near-real-time
-  codestream-level release detection. The periodic polling fetcher
-  (`detect_ibs_track_releases`, every 24 hours at 02:00 UTC) serves as
-  a catch-up mechanism for events missed during consumer downtime, since
-  queues are exclusive and transient. See
+  `suse.obs.package.commit`, `suse.obs.request.create`, and
+  `suse.obs.request.state_change` events from IBS for near-real-time release
+  and request tracking on IBS tracks of active Tickets. The periodic polling
+  fetcher (`detect_ibs_track_releases`, every 24 hours at 02:00 UTC) serves as
+  a catch-up mechanism for events missed during consumer downtime, since queues
+  are exclusive and transient. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
@@ -1092,11 +1097,11 @@ feature documentation (not its implementation status):
 | `sync_smelt_products` | SMELT | Daily at 01:00 UTC | None | N/A (internal) | Product catalog and repository mappings; dispatches active-ticket Product catalog backfill when Products become newly current | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_smelt_products) | Complete |
 | `sync_aimaas_lifecycle` | AIMAAS | Daily at 02:15 UTC | None | N/A (internal) | Product lifecycle dates via paginated list with `all_fields=true`; field-level clearing on null change; lifecycle dates retained on product disappearance | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | Complete |
 | `sync_aimaas_thresholds` | AIMAAS | Daily at 02:45 UTC | None | N/A (internal) | CVSS thresholds per product via in-memory join (product list + threshold list); threshold clearing to NULL on disappearance with eligibility re-evaluation | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | Complete |
-| `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Codestream-level release detection (MD5 checksums) | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |
-| `detect_ibs_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Partial |
-| `sync_ibs_bugowners` | IBS | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.request_delay` | Package bugowner cache maintenance (cleanup, update, repair) | [package-bugowner.md](features/packages/package-bugowner.md#fetcher-properties) | Partial |
+| `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Active-Ticket IBS track release detection; shared MD5 is a fully processed checkpoint | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |
+| `detect_ibs_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection for occurrences below active-Ticket IBS tracks (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Partial |
+| `sync_ibs_bugowners` | IBS (current strategy; final source authority deferred) | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.request_delay` | Global package bugowner cache maintenance (cleanup, update, repair) | [package-bugowner.md](features/packages/package-bugowner.md#fetcher-properties) | Partial |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:15 UTC | N/A | N/A | Reconciles automatic eligibility and Ticket gate state from derived Product lifecycle and package-tree actionability | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Complete |
-| `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS submission request and release request tracking | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
+| `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS SR/RR state and correlation for active-Ticket IBS tracks; targeted historical catch-up on reactivation | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
 | `sync_epss_scores` | FIRST.org EPSS | Daily at 14:00 UTC | None | 1000 req/min (public) | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | Complete |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |
