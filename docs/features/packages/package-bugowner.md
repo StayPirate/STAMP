@@ -2,10 +2,10 @@
 
 ## Purpose
 
-Track the IBS bugowner (package maintainer) for each source package
-referenced in Sentinel tickets. The bugowner is the person or group
-responsible for maintaining a package in IBS, and is the primary contact
-for coordinating security update submissions.
+Track the current bugowner (package maintainer) for each source package
+referenced in Sentinel tickets. Bugowner is global package metadata: one
+current person or group applies to the source package regardless of whether a
+particular occurrence is maintained through an IBS or Git track.
 
 This feature enables:
 
@@ -17,9 +17,13 @@ This feature enables:
    can see pending submissions and track progress (separate spec)
 
 This specification is the authoritative source for bugowner resolution,
-caching, and maintenance. See `docs/features/packages/package-model.md` for
-package affectedness and release tracking. See
-`docs/features/integrations/ibs-integration.md` for IBS API integration details.
+caching, and maintenance. Its existing resolver uses IBS; source authority,
+fallback behavior, conflicts between sources, and the resulting fetcher name
+must be finalized in this bugowner specification before
+implementation. Callers use a source-neutral ensure-bugowner operation and do
+not select IBS or Git. See `docs/features/packages/package-model.md` for the
+shared workflow and convergence boundary, and
+`docs/features/integrations/ibs-integration.md` for the current IBS API details.
 
 ## Domain Concepts
 
@@ -61,9 +65,10 @@ lifetime of most tickets.
 However, because changes do happen, Sentinel uses a shared cache with two
 update mechanisms:
 
-1. **On-demand update**: when a package is added to a ticket, Sentinel
-   queries IBS for the current bugowner and creates or updates the
-   cache entry
+1. **On-demand availability**: when package addition creates a new IBS track,
+   Sentinel asks the bugowner feature to ensure a value is available. A usable
+   shared cache entry satisfies the request without external I/O; otherwise
+   the resolver applies the source strategy owned by this specification
 2. **Periodic maintenance**: a background fetcher runs every 14 days
    to verify and repair the cache (see [Maintenance Fetcher](#maintenance-fetcher))
 
@@ -79,12 +84,14 @@ feature are:
 
 ### PackageBugowner
 
-Caches the current IBS bugowner for each source package actively tracked
-in Sentinel tickets. This is a shared cache — all tickets referencing the
-same package point to the same bugowner record.
+Caches the current bugowner for each source package actively tracked in
+Sentinel tickets. This is a shared cache — all tickets and workflows
+referencing the same package point to the same bugowner record.
 
-Records are created on-demand when a package is first added to a ticket,
-and maintained by the periodic `sync_ibs_bugowners` fetcher.
+Records are created on demand when a new IBS track first requires a value and
+no usable shared value exists. The current periodic owner is the
+`sync_ibs_bugowners` fetcher; its final source strategy and name are deferred as
+described above.
 Records are removed when the package no longer appears in any active
 ticket.
 
@@ -194,8 +201,14 @@ not distinguish between group administrators and regular members.
 
 ## Bugowner Resolution Algorithm
 
-When a package is added to a ticket (via `add_package_to_ticket`), Sentinel
-resolves the bugowner as follows:
+The source-neutral caller invokes the conceptual operation
+`ensure_bugowner(package_name: str)`. If a usable `PackageBugowner` record
+already exists, return it without external I/O or mutation. Otherwise the
+resolver derives eligible external sources from the package's persisted track
+occurrences; the caller does not pass a workflow or source selector. In
+particular, IBS may be queried only when at least one relevant persisted track
+has `workflow_type = ibs`. A Git-only package is never sent to IBS. Under the
+current IBS strategy, an eligible lookup proceeds as follows:
 
 1. Query IBS: `GET /search/owner?package={package_name}&filter=bugowner`
 2. If the response is an empty `<collection/>`, set `bugowner_type`,
@@ -229,6 +242,12 @@ resolves the bugowner as follows:
    d. Synchronize `PackageBugownerMember` records: add new members,
       remove members no longer in the group, update emails if changed
 
+The usable-record short circuit belongs only to the on-demand
+`ensure_bugowner()` operation and reactivation catch-up. Periodic maintenance
+Operation 2 deliberately bypasses that short circuit and executes the eligible
+lookup steps above to refresh an existing record. Operation 3 uses the same
+lookup steps to create a missing record.
+
 ### IBS Query Failure Handling
 
 If any IBS API call fails during bugowner resolution:
@@ -256,7 +275,7 @@ performs periodic maintenance of the bugowner cache. It runs every
 | Class name | `SyncIbsBugowners` |
 | Schedule | Every 14 days at 03:00 UTC (`0 3 */14 * *`) |
 | Source | IBS (`build.suse.de`) |
-| Scope | All `PackageBugowner` records + packages in active tickets missing from the cache |
+| Scope | All `PackageBugowner` records + packages with at least one IBS track under an active Ticket that are missing from the cache |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | No |
@@ -268,11 +287,15 @@ performs periodic maintenance of the bugowner cache. It runs every
 ("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
 contract.
 
-**Scope**: extracts the ticket's package names and refreshes the
-bugowner cache for each package from IBS. While the ticket was
-inactive, bugowner assignments may have changed.
+**Scope**: after package-tree re-resolution has committed, extracts the
+Ticket's package names. A usable shared record is a no-op; otherwise the
+catch-up invokes the source-neutral resolver. The current implementation source
+is IBS, but catch-up callers do not encode that choice. For a package with no
+IBS track, the current resolver performs no IBS request.
 
-**Detailed specification**: to be defined during implementation.
+This specification must define cache usability, source selection, fallback,
+and complete per-item failure behavior before implementation. This foundation
+fixes only the source-neutral caller boundary and global per-package result.
 
 ### Operation 1: Cleanup
 
@@ -283,31 +306,38 @@ any active ticket.
 2. For each `package_name`, check if there exists at least one
    `TicketPackage` record where:
    - `TicketPackage.package_name` matches, AND
-   - `TicketPackage.deleted_at IS NULL` (not soft-deleted), AND
-    - The parent `Ticket` is **active** (status in `New`, `Analysis`,
-      `Analyzed`)
+   - The parent `Ticket` is **active** (status in `New`, `Analysis`,
+       `Analyzed`)
 3. If no active ticket references the package, delete the
    `PackageBugowner` record and its associated `PackageBugownerMember`
    records
 4. Call `self.record_updated()` for each removed record
 
-Lifecycle actionability does not participate in this association test. A
-package with only EOL Products remains associated for bugowner cache and
-confidential-access purposes until a VA directly excludes the
-`TicketPackage`.
+VA exclusion and lifecycle actionability do not participate in this cache
+retention test. A soft-deleted package or a package with only EOL Products
+remains associated while an active Ticket references it. This does not grant
+confidential Ticket access: the access predicate independently excludes a
+soft-deleted `TicketPackage`.
 
 ### Operation 2: Update
 
-Refresh bugowner data from IBS for all remaining `PackageBugowner`
-records.
+Refresh bugowner data from IBS only for remaining `PackageBugowner` records
+whose package has at least one IBS track under an active Ticket. A global cache
+record referenced only by Git tracks is retained by Operation 1 but is not sent
+to the IBS resolver.
 
-1. For each `PackageBugowner` record not removed in Operation 1:
-   a. Execute the [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm)
-      for the `package_name`
-   b. If the bugowner has changed (different type, name, or email),
-      update the record and call `self.record_updated()`
-   c. If the bugowner is a group, synchronize the member list: add new
-      members, remove departed members, update changed emails
+1. For each `PackageBugowner` record not removed in Operation 1 whose package
+   has at least one active-Ticket track with `workflow_type = ibs`:
+   a. Capture the existing type, name, email, and group-member set, then
+      execute the eligible lookup steps in the
+      [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm) for the
+      `package_name`, bypassing the on-demand usable-record short circuit
+   b. The lookup updates the bugowner record and, for a group, synchronizes the
+      member list: add new members, remove departed members, and update changed
+      emails
+   c. Compare the resulting record and member set with the captured values. If
+      the type, name, email, or member set changed, call
+      `self.record_updated()` exactly once; otherwise report no update
    d. If the IBS query fails, log the error, call
       `self.record_failed()`, and continue to the next package
    e. Respect `request_delay` from `FetcherConfig` between IBS API
@@ -318,9 +348,9 @@ records.
 Populate bugowner data for packages in active tickets that are missing
 from the cache.
 
-1. Query all distinct `package_name` values from
-   `TicketPackage` where `TicketPackage.deleted_at IS NULL` and the
-   parent `Ticket` is **active**
+1. Query distinct package names that have at least one
+   `TicketPackageTrack.workflow_type = ibs` under an active Ticket. VA exclusion
+   and lifecycle actionability do not filter this repair scope
 2. For each `package_name` that does NOT have a corresponding
    `PackageBugowner` record:
    a. Execute the [Bugowner Resolution Algorithm](#bugowner-resolution-algorithm)
@@ -437,6 +467,11 @@ visible to all users (same access level as package data in tickets).
   see all active tickets for packages they maintain, with submission
   status and progress tracking. Will be specified in a separate feature
   spec.
+- **Source strategy**: determine whether IBS is authoritative alone or whether
+  Git metadata participates as a fallback, how conflicting answers are
+  resolved, what makes a cache record usable, and whether a multi-source
+  strategy requires renaming the current source-specific fetcher. The result
+  remains one bugowner per package.
 
 ## Cross-references
 

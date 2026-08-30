@@ -70,7 +70,7 @@ reserved exclusively for system entry points.
 
 | Module | Relationship |
 |--------|-------------|
-| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The dependency is unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT depend on `package_service`. Post-transition catch-up (CVSS recalculation + fetcher enqueue) is handled internally by `reconcile_ticket_status()` — no caller action needed |
+| `services/ticket_mutations.py` | `package_service` imports `reconcile_ticket_status()`, `auto_assign_actor()`, and `ensure_ticket_operable()` from `ticket_mutations`. The code dependency remains unidirectional: `package_service` depends on `ticket_mutations`, but `ticket_mutations` does NOT import `package_service`. `reconcile_ticket_status()` performs transactional CVSS recalculation and registers the package-service-owned reactivation workflow for execution by the post-commit workflow owner; the caller does not invoke package catch-up directly |
 | `services/cvss.py` | `package_service` delegates eligibility calculation to `resolve_eligibility_score()` in `cvss.py` (SUSE-only, 2-step cascade — see Eligibility Score Resolution in `docs/features/tickets/cvss-scoring.md`) |
 | `core/filters.py` | `search_packages()` receives a `confidentiality_filter` (a SQLAlchemy `ColumnElement`) built by the endpoint handler via `confidential_ticket_filter()`. The service function is unaware of access rules |
 
@@ -860,13 +860,20 @@ async def add_package_to_ticket(
    `PackageTargetsUnresolvedError`. No records are created.
 6. Delegate all record creation to `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-7. If step 6 created at least one package, track, or Product record, register
-   the following best-effort post-commit effects with the workflow owner:
-   resolve and cache the IBS bugowner, then enqueue
-   `discover_submissions_for_ticket_package()` for retroactive SR/RR
-   discovery. A fully no-op or `active_ticket_only` skip registers no effects.
-   Neither effect executes before the database commit succeeds.
-8. Return an `AddPackageResult` with creation/skip counts.
+7. If step 6 created at least one track whose persisted `workflow_type` is
+   `ibs`, register two independent best-effort post-commit effects with the
+   workflow owner: ensure that a bugowner is available for `package_name`, and
+   enqueue `discover_submissions_for_ticket_package()` for retroactive SR/RR
+   discovery. Both effects are attempted regardless of the other's outcome;
+   their execution order is not part of the contract. A package-only,
+   Product-only, Git-track-only, fully no-op, or `active_ticket_only` skip
+   registers no effect. Neither effect executes before the database commit
+   succeeds.
+8. Return an `AddPackageResult` with creation/skip counts and the identities
+   plus persisted workflow types of newly created tracks, or an equivalent
+   semantic signal that lets the workflow owner determine whether step 7
+   applies. The result does not prescribe a concrete dataclass or collection
+   type.
 
 `audit_comment` is internal system context for `package_added`. API callers
 always pass `NULL`. Product catalog backfill passes
@@ -891,18 +898,74 @@ batch selection is skipped under the Ticket row lock.
   dependency or other workflow owner executes these effects only after its
   caller-owned transaction commits. Failures do not roll back the created
   records.
-  - **Bugowner resolution**: if bugowner resolution fails (IBS
-    unreachable, API error, timeout), log a warning and continue. The
-    package addition is not rolled back. See
-    `docs/features/packages/package-bugowner.md`: "Package addition to the
-    ticket MUST NOT fail due to a bugowner resolution failure."
+  - **Bugowner availability**: the generic bugowner operation accepts only the
+    package name. It may return a valid shared cache record without external
+    I/O or apply the source strategy owned by `package-bugowner.md`. A failure
+    is logged and does not roll back package addition or prevent submission
+    discovery.
   - **Submission discovery enqueue**: if the task enqueue fails
-    (e.g., Redis unavailable), log a warning and continue. The periodic
-    `SyncIbsRequests` (catch-up every 24h at 02:30 UTC) ensures
-    eventual consistency.
+    (e.g., Redis unavailable), log a warning and continue. Ordinary active
+    request state remains covered by `SyncIbsRequests`; targeted historical
+    discovery for a newly introduced IBS track may require an observable
+    operator rerun if this acceleration task fails permanently. See
+    `ibs-submission-tracking.md`.
 
 **Auto-assignment**: applied by `add_package_records()` after it confirms that
 at least one record is missing. `add_package_to_ticket()` does not apply it.
+
+### Package-tree reactivation workflow
+
+This workflow is the package-domain first phase after an inactive Ticket enters
+an active status. Its conceptual input is `ticket_id: UUID`; it returns no
+domain value. It is idempotent and creates audit events only through effective
+delegated `add_package_to_ticket()` mutations. It is an orchestration boundary,
+not a caller-owned composable service function: the workflow owner opens and
+completes one independent transaction per package while the delegated
+`package_service` functions retain their module-wide no-commit contract.
+
+After the status-transition transaction commits, the workflow:
+
+1. Reads every persisted package name for the Ticket, including soft-deleted
+   `TicketPackage` records.
+2. Calls `add_package_to_ticket()` once per distinct package name with system
+   attribution and reactivation audit context. It processes and commits each
+   package independently. Existing package, track, Product, and exclusion state
+   is preserved; only missing descendants are created.
+3. Logs each failed package with the sanitized cause, `ticket_id`, package
+   name, and `celery_task_id`, then continues. A failed package does not roll
+   back successful siblings.
+4. After every package has been attempted, dispatches the registered
+   per-ticket fetcher catch-ups. Catch-up therefore observes every package-tree
+   addition that committed successfully. Existing records remain eligible for
+   catch-up even when another package failed re-resolution.
+
+If the Ticket does not exist or has no persisted package marker, package-tree
+resolution is a no-op and catch-up dispatch still proceeds. Errors propagated
+by an individual `add_package_to_ticket()` invocation are isolated only when
+they are package-specific resolution or validation failures; step 3 logs them
+and processing continues. An infrastructure failure that prevents reliable
+enumeration, completion of a package transaction, or catch-up dispatch escapes
+to the workflow wrapper. The wrapper retries the complete idempotent workflow
+according to the shared `run_catch_up` classification and limits: three retries
+with 5, 10, and 20 second backoff for retryable failures, and immediate terminal
+failure for non-retryable failures.
+
+Each dispatched catch-up then uses its own shared `run_catch_up` retry policy;
+its failure does not propagate back to the already-completed package-tree
+wrapper. A terminal wrapper or individual catch-up failure emits a structured
+ERROR log identifying `ticket_id`, the failed workflow phase or fetcher,
+sanitized cause, and `celery_task_id`. Either terminal outcome requires an
+operator-triggered rerun of the same complete workflow for `ticket_id`; it does
+not resume from partial progress because successful package units and catch-ups
+are idempotent. The concrete operator interface MUST be defined before this
+workflow is implemented; no durable progress table or periodic full-tree
+reconciliation is introduced. The workflow performs no audit logging of its
+own and does not restore any soft-deleted record.
+
+The post-commit registration and task/callback composition mechanism is an
+implementation choice. The behavioral ordering and per-package transaction
+isolation are required. See `package-model.md` (IBS Workflow Applicability and
+Convergence) and `fetcher-infrastructure.md` (Per-Ticket Catch-Up).
 
 ## Query Operations
 
@@ -1082,11 +1145,13 @@ WARNING, and continue processing the next item.
 
 ### Package-tree exclusion and actionability
 
-Directly or effectively VA-excluded package-tree records and EOL Products on
-**operable tickets** continue to receive updates from automated processes
-(release detection, eligibility recalculation, delivery status changes).
+Directly or effectively VA-excluded package-tree records and EOL Products
+continue to receive updates within each owning process's Ticket-status scope.
+Local eligibility and lifecycle reconciliation may operate on all operable
+Tickets. External IBS release and delivery monitoring operates only on active
+Tickets; a Resolved Ticket is reconciled if it returns to an active status.
 Exclusion and actionability control participation in decision-making, not
-whether factual state can be updated.
+whether factual state can be updated within the applicable scope.
 
 Mutation functions (`set_track_status`, `set_track_delivery_status`,
 `set_product_eligibility`, `set_product_released_at`) do NOT require

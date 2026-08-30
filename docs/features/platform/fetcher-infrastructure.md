@@ -732,20 +732,22 @@ execution. The following additional rules apply:
     The method MUST only propagate an exception when all items have
     failed, indicating infrastructure failure. Partial failure (some
     items succeed, some fail) MUST result in a normal return — the
-    failed items are logged per-item and will be recovered by the next
-    periodic `execute()` run
+    failed items are logged per-item with `ticket_id`, fetcher name, affected
+    item identity, sanitized cause, and the task-bound `celery_task_id`.
+    Recovery then follows the owning feature's contract. When periodic
+    `execute()` cannot rediscover the same historical work, the owner MUST
+    document the accepted limitation and an explicit idempotent operator rerun
+    path rather than claim automatic periodic recovery
 - **Post-commit enqueue**: `run_catch_up` tasks MUST be enqueued
   after the caller's transaction commits, consistent with the
   post-commit enqueue pattern used by `trigger_on_demand_fetch()`.
   Enqueuing before commit risks catch-up tasks running against
   uncommitted data.
-  **Exception**: when enqueued from within `reconcile_ticket_status()`
-  as part of the internalized post-transition catch-up (step 4), the
-  enqueue occurs before the caller's commit. This is safe because:
-  (1) `catch_up()` does not read ticket status as a precondition,
-  (2) `catch_up()` is idempotent by contract, (3) mutations produced
-  by catch-up delegate to service modules that acquire independent
-  locks and respect the ticket's committed state at execution time
+  `reconcile_ticket_status()` registers, but does not publish, the
+  reactivation workflow during its caller-owned transaction. After commit,
+  that workflow completes package-tree re-resolution before it enqueues the
+  registered `run_catch_up` tasks. See `package-model.md` (Reactivation and
+  Convergence).
 - **Concurrency safety**: no guard on ticket status is required before
   executing `catch_up()`. If a ticket is re-deactivated after catch-up
   tasks are enqueued but before they execute, the tasks run to
@@ -765,17 +767,20 @@ execution. The following additional rules apply:
 
 ### Invocation points
 
-`catch_up()` is enqueued exclusively by `reconcile_ticket_status()`
-(step 4) when it detects an inactive-state exit (Resolved, Ignored, or
-Duplicated → active). All inactive → active transitions converge on
-this single invocation point:
+The reactivation workflow that eventually enqueues `catch_up()` is registered
+exclusively by `reconcile_ticket_status()` (step 4) when it detects an
+inactive-state exit (Resolved, Ignored, or Duplicated → active). All inactive
+→ active transitions converge on this single invocation point:
 
 - Gate-driven regression: Resolved → active (automatic)
 - Un-ignore: Ignored → active (via `_reenter_gate_zone()`)
 - Un-duplicate: Duplicated → active (via `_reenter_gate_zone()`)
 
-At the invocation point, the system calls `get_catch_up_fetchers()` and
-enqueues a `run_catch_up` Celery task for each registered fetcher.
+After the transition commits, the package-domain phase re-resolves persisted
+package markers. It then calls `get_catch_up_fetchers()` and enqueues a
+`run_catch_up` Celery task for each registered fetcher. Package-tree failure is
+isolated per package and does not prevent catch-up against existing or
+successfully added records.
 
 ### Fetcher inventory
 
@@ -790,11 +795,11 @@ enqueues a `run_catch_up` Celery task for each registered fetcher.
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_ghsa_advisories` | All advisories (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_osv_advisories` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call OSV API → upsert affected versions/refs/packages |
-| `detect_ibs_track_releases` | Tracks in active tickets | **Custom override** | Extract ticket's `TicketPackageTrack` records → check IBS for releases on each codestream |
-| `detect_ibs_product_releases` | Products in active tickets | **Custom override** | Extract ticket's `TicketPackageProduct` records → check `updateinfo.xml` for advisories |
-| `sync_ibs_requests` | Codestreams in active tickets | **Custom override** | Extract ticket's codestream names → query IBS Request Search API → correlate SRs/RRs |
+| `detect_ibs_track_releases` | IBS tracks in active tickets | **Custom override** | Extract Ticket's IBS tracks → verify current release state without relying only on the global checksum |
+| `detect_ibs_product_releases` | Product occurrences below IBS tracks in active tickets | **Custom override** | Check current `updateinfo.xml` data, including valid advisories that predate reactivation |
+| `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Perform targeted historical query → recover current SR/RR chain, correlations, and delivery state |
 | `evaluate_lifecycle_transitions` | Product eligibility and gate-zone Ticket lifecycle reconciliation | **Custom override** | Extract Ticket Products after manual-zone exit → recalculate lifecycle-driven eligibility; EOL actionability itself is derived |
-| `sync_ibs_bugowners` | Packages in active tickets | **Custom override** | Extract ticket's package names → refresh bugowner cache for each |
+| `sync_ibs_bugowners` | Packages in active tickets | **Custom override** | Current source-specific owner refresh; final source strategy and fetcher identity remain owned by `package-bugowner.md` |
 
 Note: for NVD, MITRE, and kernel CVE fetchers, `execute()` is global
 (not filtered by ticket status), but they still benefit from

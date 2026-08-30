@@ -133,10 +133,12 @@ package-tree `deleted_at` field. See [Exclusion and Actionability](#exclusion-an
 
 VA-excluded and lifecycle-non-actionable records are omitted from operational
 views and gates, but they **continue to receive factual and independently
-derived updates** from delivery tracking, eligibility recalculation, and
-release detection while their Ticket is operable. Their state remains current,
-eliminating restore-time reconciliation and allowing lifecycle actionability
-to change without replaying missed facts.
+derived updates** within the scope of each owning process. Local eligibility
+and lifecycle reconciliation continues while the Ticket is operable. External
+IBS delivery and release monitoring is limited to active Tickets and catches up
+if an inactive Ticket returns to an active status. This preserves dimension
+independence without imposing continuous external traffic for resolved
+history.
 
 ---
 
@@ -790,11 +792,14 @@ lifecycle; it does not modify affectedness, eligibility, or delivery.
 ### Continued Updates
 
 Directly or effectively VA-excluded records and EOL Products continue to
-receive eligibility recalculation, delivery updates, and release observations
-while their Ticket is operable (`New`, `Analysis`, `Analyzed`, or `Resolved`).
-Records under manual-zone Tickets are recovered through the applicable catch-up
-behavior when the Ticket re-enters an operable status. This keeps factual state
-current without making exclusion or lifecycle depend on another dimension.
+receive locally derived eligibility and lifecycle reconciliation while their
+Ticket is operable. External IBS delivery updates and release observations are
+limited to active Tickets (`New`, `Analysis`, or `Analyzed`). `Resolved`,
+`Ignored`, and `Duplicated` Tickets do not contribute recurring IBS work. When
+any inactive Ticket returns to an active status, the reactivation workflow
+reconciles its package tree and then runs the applicable per-ticket catch-up
+behavior. Exclusion and lifecycle state never suppress an update within the
+owning process's Ticket-status scope.
 
 ### Restore
 
@@ -911,20 +916,28 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 4. For each resolved Product under each track, delegate
    `TicketPackageProduct` record creation to `package_service` (if a
    record does not already exist, including soft-deleted).
-5. If at least one package, track, or Product record was created, register
-   these best-effort post-commit effects:
-   - Resolve and cache the IBS bugowner. If a `PackageBugowner` record already
-     exists for this `package_name`, update it with fresh data from IBS; if it
-     does not exist, create it. See
+5. If at least one new `TicketPackageTrack` with `workflow_type = ibs` was
+   created, register two independent best-effort post-commit effects:
+   - Ensure that a bugowner is available for `package_name`. Bugowner is global
+     package metadata; the caller does not select an external source. The
+     bugowner feature may satisfy the request from a valid local record or use
+     its configured resolution strategy. See
      `docs/features/packages/package-bugowner.md`.
    - Enqueue `discover_submissions_for_ticket_package(ticket_id,
      package_name)` to discover IBS submission requests (SRs) and release
-     requests (RRs) for the ticket's CVE created within the last 14 days. See
+     requests (RRs) for the newly relevant IBS scope. See
      `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
-   A fully no-op invocation registers neither effect.
+   Both effects are attempted after commit, neither depends on the other, and
+   failure of either does not roll back package creation. Creating only the
+   package marker, only Products, or only Git tracks registers neither effect.
+   A fully no-op invocation likewise registers neither effect.
 6. Return an `AddPackageResult` containing:
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
+   - The identities and persisted workflow types of newly created tracks, or
+     an equivalent semantic signal sufficient for the workflow owner to know
+     whether at least one IBS track was created. The concrete in-memory
+     representation is an implementation choice.
 
 `package_service` handles idempotency (skipping existing records,
 including soft-deleted), initial status determination, and eligibility
@@ -985,6 +998,13 @@ The following scenarios invoke `add_package_to_ticket`:
    scan because a currently EOL Product can later become actionable without a
    new catalog association. See `product-catalog.md` (Product Catalog
    Backfill).
+7. **Ticket reactivation**: after an inactive Ticket enters an active status,
+   the package reactivation workflow calls `add_package_to_ticket` once for
+   every persisted `TicketPackage.package_name`, including package markers that
+   are soft-deleted. Existing exclusion markers are preserved; missing tracks
+   and Products are created but no record is restored. The complete package
+   reactivation contract is defined in
+   [Reactivation and Convergence](#reactivation-and-convergence).
 
 ### Package Management Constraints
 
@@ -1264,8 +1284,10 @@ The following concerns are identical regardless of `workflow_type`:
 - Product eligibility (CVSS threshold, Reactive Support phase)
 - Soft-deletion and restore
 - UI — VA sees packages → tracks → products with no workflow distinction
-- Bugowner — `PackageBugowner` cache keyed by `package_name`; joined via
-  `TicketPackage.package_name`
+- Bugowner — one current package-level value, keyed by `package_name` and
+  joined via `TicketPackage.package_name`. The bugowner resolver owns source
+  selection; a workflow that requests resolution does not determine where the
+  resulting value applies
 
 The following concerns are workflow-specific (service layer only):
 
@@ -1275,9 +1297,136 @@ The following concerns are workflow-specific (service layer only):
 | Source retrieval for analysis | IBS API | src.suse.de git API |
 | Release detection (track) | IBS MD5 diff | TBD |
 | Release detection (product) | updateinfo.xml | TBD |
-| Bugowner resolution | IBS bugowner API | TBD (CODEOWNERS?) |
 | Real-time events | IBS RabbitMQ | TBD |
 | Submission tracking (SR/RR) | IBS submission tracking | TBD |
+
+Bugowner source precedence and any fallback are intentionally not represented
+in this workflow table because bugowner is global package metadata, not a
+per-track value. Those rules belong to
+`docs/features/packages/package-bugowner.md`.
+
+## IBS Workflow Applicability and Convergence
+
+This section owns the shared boundary used by all IBS package consumers.
+Consumer specifications define their own source-specific algorithms and refer
+to this section for scope, acceleration, and recovery semantics.
+
+### Strict workflow applicability
+
+The persisted `TicketPackageTrack.workflow_type` is the sole workflow
+discriminator after track creation. Every IBS REST source operation, source
+checksum or diff operation, SR/RR operation, and IBS RabbitMQ mutation MUST
+operate only on tracks with `workflow_type = ibs`. A Git track's `reference`
+MUST NOT be interpreted as an IBS project and a Git track MUST NOT receive an
+IBS checksum, SR/RR correlation, RabbitMQ-driven mutation, or IBS release
+mutation.
+
+Product-level IBS processing is scoped to a `TicketPackageProduct` occurrence
+through its parent `TicketPackageTrack.workflow_type = ibs`. A catalog Product
+may occur below both IBS and Git tracks; an IBS advisory updates only the
+occurrences below IBS tracks. No workflow discriminator is added to the global
+`Product` catalog.
+
+The bugowner value is the exception to occurrence-scoped data: it is one
+global value for a source package, regardless of the workflow that caused its
+resolution. A new IBS track may request generic bugowner resolution, but the
+caller supplies only `package_name` and does not prescribe IBS or Git as the
+resolver source. A Git-only track never causes an IBS API request merely
+because its `reference` resembles an IBS project.
+
+IBS polling and RabbitMQ processing consider active Tickets only (`New`,
+`Analysis`, `Analyzed`). `Resolved`, `Ignored`, and `Duplicated` Tickets do not
+contribute monitored tracks or Product occurrences. Within an active Ticket,
+VA exclusion, lifecycle actionability, and EOL do not narrow factual release
+or delivery observation. A consumer may omit records already in a conclusive
+state of its own dimension, such as `released_at IS NOT NULL` or track
+affectedness statuses that automatic release detection cannot change.
+
+### Acceleration and permanent recovery ownership
+
+Package addition and RabbitMQ reduce latency; they are not durable recovery
+mechanisms. The permanent ownership boundary is:
+
+| Concern | Acceleration | Permanent recovery owner | Applicable records |
+|---------|--------------|--------------------------|--------------------|
+| Package tree | Explicit package addition; Product catalog backfill when a Product becomes newly current | Re-resolution on Ticket reactivation; no periodic per-package SMELT scan | Every persisted package marker on the reactivated Ticket, including soft-deleted markers |
+| Bugowner | Generic ensure-bugowner request after creation of a new IBS track | Bugowner maintenance feature; current fetcher name and source strategy remain owned by `package-bugowner.md` | One global value per source package |
+| SR/RR discovery and correlation | New-IBS-track post-commit discovery; IBS RabbitMQ request events | `sync_ibs_requests` for ordinary active-ticket convergence; targeted historical catch-up on Ticket reactivation | IBS tracks of active Tickets |
+| Track release observation | IBS RabbitMQ `package.commit` | `detect_ibs_track_releases` | IBS tracks of active Tickets |
+| Product advisory observation | None | `detect_ibs_product_releases` | Product occurrences below IBS tracks of active Tickets |
+
+The first normal run after a feature is first enabled or re-enabled uses the
+same owning fetcher's algorithm; enabling a fetcher has no separate hook. Each
+owner MUST define first-run and long-gap behavior that converges current state
+for its active scope. State-based owners that already scan unresolved current
+records need no distinct first-run branch. Incremental windows, checksums, and
+cursors are optimizations and MUST NOT be presented as full recovery when they
+cannot rediscover skipped current state.
+
+### Reactivation and convergence
+
+When an inactive Ticket enters an active status, package-domain catch-up has
+two ordered phases:
+
+1. Re-resolve every persisted package name through the normal SMELT package
+   resolution and idempotent package mutation path. This includes soft-deleted
+   package markers. Existing records and exclusion markers are preserved;
+   only missing tracks and Product occurrences are created. Each package is an
+   independent unit so one failure does not roll back successful siblings.
+2. After the package-tree phase has committed its successful units, run the
+   bugowner, IBS request, IBS track-release, and IBS Product-release catch-up
+   operations against the resulting tree. Failure to resolve one package does
+   not prevent catch-up for records that already exist.
+
+The workflow recovers current authoritative facts needed to represent the
+active Ticket; it does not reproduce every external transition that occurred
+while the Ticket was inactive. For example, an already-published valid
+advisory sets `released_at` to its original issue time, and an SR/RR catch-up
+recovers the current request chain and resulting delivery status rather than
+every intermediate request state.
+
+The ordering above is a behavioral contract. Whether it is implemented with
+task chaining, post-commit callbacks, or another equivalent mechanism is an
+implementation choice. Reactivation work is idempotent. Per-item failures and
+final catch-up failure after the shared retry policy are logged with the
+sanitized cause, `ticket_id`, owning operation, affected item identity, and
+`celery_task_id`. No durable per-ticket catch-up progress table is introduced.
+A terminal failure of package enumeration, package-tree orchestration, catch-up
+dispatch, or an individual catch-up requires an observable operator-triggered
+rerun of the same complete idempotent workflow for `ticket_id`. Successful
+package units and catch-ups may repeat safely; the rerun does not resume from a
+persisted progress position. The concrete operator interface MUST be defined
+before the workflow is implemented. This is required in particular because
+there is no periodic full-tree SMELT scan and historical SR/RR recovery is
+intentionally targeted to reactivation.
+
+### Checkpoint safety
+
+A checksum, cursor, temporal boundary, or message acknowledgment may prevent
+future processing only after every required local outcome for that unit has
+completed or an independent permanent recovery owner can still discover the
+missing outcome. Otherwise the checkpoint remains at the last completely
+processed unit and the next run repeats idempotent work.
+
+For the shared IBS source checksum, a successful diff response alone is not
+completion. If processing any relevant CVE from that diff fails and no
+independent owner can reconstruct the missing result, the new `srcmd5` MUST NOT
+replace the last fully processed checksum. RabbitMQ uses the same rule before
+acknowledging successful package processing. The detailed per-item and
+message-failure policies remain in the track-release and RabbitMQ owning
+specifications.
+
+### Accepted package-tree discovery gap
+
+Sentinel deliberately performs no periodic SMELT request for every package of
+every active Ticket. Product catalog backfill re-resolves existing active
+package trees only when a Product becomes newly current. Consequently, a new
+SMELT track composed entirely of Products already present in the catalog can
+remain absent from a continuously active Ticket until another package
+resolution trigger occurs, such as Ticket reactivation, explicit addition, or
+another owning workflow. This is a known and accepted load-versus-freshness
+trade-off; no generic backfill framework, failed-resolution registry, or
+periodic full-tree reconciler is introduced.
 
 ---
 
@@ -1304,8 +1453,9 @@ POST /api/v1/tickets/{ticket_id}/packages
 Add a source package to a ticket. Sentinel queries SMELT to resolve all
 maintained tracks and products for the package, creates `TicketPackage`,
 `TicketPackageTrack`, and `TicketPackageProduct` records via
-`package_service`, and, when at least one record is created, performs the
-documented post-commit bugowner resolution and submission-discovery dispatch.
+`package_service`, and, when at least one new IBS track is created, registers
+the documented post-commit bugowner-resolution and submission-discovery
+effects.
 See [Adding Packages to a Ticket](#adding-packages-to-a-ticket) for the full
 behavior.
 
@@ -1909,7 +2059,8 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `ProductReleaseDetector` (`updateinfo.xml`-based) for
   `TicketPackageProduct` records and sets `released_at`. See
   `docs/features/packages/ibs-product-release-detection.md` for the
-  full procedure. Frequency and scope are TBD.
+  full procedure. The owning Product release specification will fix the
+  schedule; scope is Product occurrences below IBS tracks of active Tickets.
 - `create_ticket_from_detection`: on-demand task enqueued by the
   `IBSTrackReleaseDetector` or the `IBSEventConsumer` when a CVE fix
   is detected for a CVE that has no ticket in Sentinel. Fetches CVE
@@ -1949,10 +2100,11 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   openSUSE Tumbleweed and Leap will be addressed in a separate spec.
 - **Channel file parsing**: direct parsing of channel files from
   `SUSE:Channels` may be added if SMELT data is insufficient.
-- **Git workflow specifics**: release detection (track and product
-  level), bugowner resolution, real-time events, and submission tracking
-  for the git workflow are TBD and will be specified when the SLFO
-  workflow is better defined.
+- **Git workflow specifics**: release detection (track and product level),
+  real-time events, and submission tracking for the git workflow are TBD and
+  will be specified when the SLFO workflow is better defined. Bugowner is
+  global package metadata; source selection and fallback are owned by the
+  bugowner specification rather than by a Git track specification.
 - **Review Queue**: anomalous combinations of affectedness and delivery
   status will be integrated into a ticket review queue. See
   [Anomaly Detection](#anomaly-detection-future-review-queue).
@@ -1963,7 +2115,8 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 
 - [ ] Release detection mechanism for git workflow (track-level and
       product-level)
-- [ ] Bugowner resolution for git workflow (CODEOWNERS? maintainer file?)
+- [ ] Bugowner source authority and fallback, including whether Git metadata
+      participates in resolving the one global package bugowner
 - [ ] Real-time event source for git workflow (webhook? polling?)
 - [x] SMELT API evolution — the v2 `maintained` endpoint exposes
       `codestream.maintenance_process_type` as the authoritative workflow

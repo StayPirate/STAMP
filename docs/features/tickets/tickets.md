@@ -588,9 +588,12 @@ tickets may reference the same target.
 ### Status Categories
 
 - **Active tickets**: status `New`, `Analysis`, or `Analyzed`. Actively
-  monitored by background tasks.
+  monitored by ticket-scoped external background tasks.
 - **Inactive tickets**: status `Resolved`, `Ignored`, or `Duplicated`.
-  No longer monitored.
+  Excluded from ticket-scoped external monitoring. `Resolved` remains
+  operable and may receive local derived reconciliation that causes a
+  gate-driven return to an active status; `Ignored` and `Duplicated` remain in
+  the manual zone.
 
 ## Inactive Statuses and Mutability
 
@@ -624,8 +627,10 @@ See [Mutability Guard](#mutability-guard) for enforcement details.
 
 ### Modifications in Inactive Statuses
 
-Tickets in inactive statuses (`Resolved`, `Ignored`, `Duplicated`) are
-not monitored by background tasks.
+Tickets in inactive statuses (`Resolved`, `Ignored`, `Duplicated`) are not
+included in ticket-scoped external monitoring. Global source synchronization
+and local derived reconciliation may still update source-owned or derived data;
+they do not poll an inactive Ticket's external package scope.
 
 - **Resolved**: modifying gate-relevant data triggers centralized status
   evaluation, which may regress the ticket to Analyzed or Analysis
@@ -695,7 +700,7 @@ disclosure.
   Ticket entity that determines if the ticket is under embargo.
 - **Access Grants**: The mechanism determining who can access a
   confidential ticket. Access is granted via roles, automated maintainer
-  inheritance (from IBS bugowners), and explicit manual grants.
+  inheritance (from global package bugowners), and explicit manual grants.
 - **Confidentiality Filtering**: Confidential tickets are excluded at
   the database query level for unauthorized and unauthenticated users.
   They do not appear in list results, are not returned by detail

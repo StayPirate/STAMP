@@ -13,6 +13,26 @@ and release detection. Sentinel interacts with two separate OBS instances:
 
 ## IBS Integration
 
+### Workflow boundary
+
+Sentinel invokes IBS package, source, diff, request, and repository operations
+only for package-tree occurrences whose persisted parent
+`TicketPackageTrack.workflow_type` is `ibs`. `TicketPackageTrack.reference` is
+not sufficient evidence: it may instead identify a Git branch. An IBS consumer
+MUST filter by the workflow discriminator before passing the reference as an
+IBS project. Git tracks receive no IBS source checksum, diff, request
+correlation, RabbitMQ-driven mutation, or IBS release mutation.
+
+Product-level IBS repository processing qualifies each
+`TicketPackageProduct` through its parent IBS track. The same catalog Product
+below a Git track is outside IBS scope. Bugowner is global package metadata and
+uses a source-neutral resolver boundary; the IBS endpoints below describe the
+current IBS resolver, not a workflow-specific bugowner value.
+
+The complete active-ticket, reactivation, acceleration, and recovery ownership
+contract is defined in `docs/features/packages/package-model.md` (IBS Workflow
+Applicability and Convergence).
+
 ### Authentication
 
 - IBS API uses HTTP Basic Auth or API tokens
@@ -263,6 +283,10 @@ Full procedure is documented in
    `AFFECTED` or `ANALYSIS` (soft-deleted tracks in these statuses are
    still modified — see `docs/features/packages/package-service.md`,
    Package-tree exclusion and actionability)
+4. Every IBS consumer selects `TicketPackageTrack.workflow_type = ibs`; a Git
+   reference is never interpreted as an IBS project
+5. Ordinary IBS polling covers active Tickets only. Ticket reactivation first
+   reconciles its package tree, then runs targeted source-specific catch-up
 
 ## OBS Public Integration
 

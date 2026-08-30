@@ -31,6 +31,14 @@ SUSE has two processes for producing security updates:
 will require a separate tracking mechanism (Gitea API/webhooks) in the
 future.
 
+Every pipeline in this specification applies only to
+`TicketPackageTrack.workflow_type = ibs`. The persisted workflow discriminator
+is authoritative; a Git track's `reference` is never sent to an IBS request or
+diff endpoint. Product actionability, VA exclusion, and affectedness status do
+not narrow factual SR/RR tracking within an active Ticket. See
+`package-model.md` (IBS Workflow Applicability and Convergence) for the shared
+scope and recovery boundary.
+
 ### MU Lifecycle
 
 ```
@@ -469,6 +477,15 @@ updates:
 - When the RR is accepted, `delivery_status` transitions from
   `IN_PROGRESS` to `RELEASED`
 
+All request-event pipelines obey the shared transaction boundary. External IBS
+I/O occurs without a pessimistic database lock. Each local request,
+correlation, delivery, and audit mutation commits before the event is counted
+as successfully processed. Celery publication, including correlation work,
+occurs only after the mutation it depends on commits. Retry, ACK, or immediate
+failure behavior for an unsuccessful RabbitMQ event remains owned by
+`ibs-rabbitmq-integration.md`; it must be non-blocking, observable, and leave
+ordinary polling recovery possible.
+
 ### Pipeline 1: Real-Time (IBSEventConsumer)
 
 #### On `request.create` (type = maintenance_incident) — New SR
@@ -480,13 +497,14 @@ updates:
    - codestream_name = target_releaseproject
    - package_name = extract from sourcepackage by stripping the
      codestream suffix (see Package Name Extraction in Data Sources)
-4. Is codestream_name an active codestream from an active ticket
-   (ticket status in New, Analysis, Analyzed)?
+4. Is codestream_name the `reference` of a track with `workflow_type = ibs`
+   from an active ticket (ticket status in New, Analysis, Analyzed)?
    If no -> skip
 5. Is package_name tracked in at least one ticket for that
    codestream? If no -> skip
-6. Create SubmissionRequest record (state = open)
-7. Enqueue Celery task: correlate_submission_request(submission_id)
+6. Create and commit SubmissionRequest record (state = open)
+7. After commit, enqueue Celery task:
+   correlate_submission_request(submission_id)
 ```
 
 #### Celery Task: `correlate_submission_request`
@@ -622,9 +640,9 @@ both down).
 ```
 Step 1 — Discover missed open SRs and reconcile known ones:
 
-  1. Identify active codestreams (distinct codestream_name values from
-      TicketPackageTrack records belonging to active tickets — ticket
-      status in New, Analysis, Analyzed).
+  1. Identify active codestreams (distinct `reference` values from
+      TicketPackageTrack records with `workflow_type = ibs` belonging to
+      active tickets — ticket status in New, Analysis, Analyzed).
       VA-excluded and lifecycle-non-actionable tracks are included —
       submission tracking records factual state regardless of operational
       participation.
@@ -750,28 +768,40 @@ codestream, most already known (skipped immediately). Step 2 processes
 only requests in `open` state in Sentinel that were not seen in Step 1 —
 typically a small number.
 
+The 25-hour lookback is the permanent recovery window for ordinary continuous
+operation, not a claim that the daily path reconstructs an arbitrarily long
+inactive period. The periodic fetcher also reconciles known requests and owns
+finite reprocessing of known correlations that failed. Before implementation,
+this specification must define how a failed correlation reaches either a
+successful or observable terminal outcome; an unbounded daily retry set is not
+permitted.
+
 ### Pipeline 3: Retroactive Discovery (`discover_submissions_for_ticket_package`)
 
-A Celery sub-operation task (not a `BaseFetcher`) enqueued by
-`add_package_to_ticket` whenever a package is added to a ticket. Discovers
-SRs and RRs that were created before Sentinel started tracking the package.
+A Celery sub-operation task (not a `BaseFetcher`) registered as a post-commit
+effect when `add_package_to_ticket` creates at least one new IBS track.
+Discovers SRs and RRs that predate Sentinel's tracking of that IBS scope.
 
 This is the same architectural pattern as `create_ticket_from_detection`:
 an on-demand task triggered by a parent operation, with no independent
 schedule or dashboard presence.
 
-**Trigger**: `add_package_to_ticket` enqueues this task as its final step,
-after all `TicketPackageTrack` and `TicketPackageProduct` records have
-been created and the bugowner has been resolved. The task runs regardless of
-what triggered the package addition (VA manual action, CVE ingestion,
-release detection Case B/C).
+**Trigger**: after the package-tree transaction commits,
+`add_package_to_ticket` enqueues this task if it created at least one
+`TicketPackageTrack` with `workflow_type = ibs`. Bugowner availability is a
+separate independent post-commit effect: neither effect waits for or blocks the
+other. Creating only Products, creating only Git tracks, or a package-tree
+no-op does not enqueue discovery. The rule is independent of what triggered
+the record creation (VA manual action, CVE ingestion, release detection Case
+B/C, or Product catalog backfill).
 
 #### Procedure
 
 ```
 1. Retrieve the ticket's CVE-ID
-2. Retrieve ALL TicketPackageTrack records for (ticket, package)
-   — no status filter (includes ANALYSIS, AFFECTED, FIXED, etc.)
+2. Retrieve all TicketPackageTrack records for (ticket, package) where
+   workflow_type = ibs — no affectedness-status filter (includes ANALYSIS,
+   AFFECTED, FIXED, etc.)
     and no VA-exclusion or lifecycle-actionability filter (includes
     VA-excluded and lifecycle-non-actionable tracks)
 3. For each track:
@@ -825,6 +855,8 @@ release detection Case B/C).
   one that triggered the discovery. `correlate_submission_request` is
   idempotent: join records that already exist are skipped, and the SR
   is only deleted if it has zero correlations in total.
+- **Strict IBS scope**: discovery never queries a track with
+  `workflow_type = git`, even when its `reference` resembles an IBS project.
 
 ### Centralized Functions
 
@@ -836,8 +868,11 @@ this function instead of modifying the attribute directly.
 **Procedure**:
 
 ```
-1. Set submission_request.incident_number = incident_number
-2. Call discover_release_requests_for_incident(incident_number)
+1. Persist `submission_request.incident_number = incident_number` through the
+   submission mutation boundary.
+2. After the caller's transaction commits, invoke
+   `discover_release_requests_for_incident(incident_number)` as an independent
+   external-I/O phase.
 ```
 
 Note: currently all callers are within the submission tracking feature
@@ -850,9 +885,11 @@ boundary.
 
 #### `discover_release_requests_for_incident(incident_number)`
 
-A synchronous function that searches IBS for release requests associated
-with a given maintenance incident. Called automatically by
-`set_sr_incident_number` — not invoked directly by pipeline code.
+An orchestration function that searches IBS for release requests associated
+with a given maintenance incident. It performs IBS I/O before opening each
+short database mutation transaction. It is registered after the transaction
+that first persists the incident number commits; it is not invoked while a
+Ticket or request row lock is held.
 
 **Procedure**:
 
@@ -1023,7 +1060,7 @@ SR correlation: find SRs correlated to the ticket, collect their
 | Class name | `SyncIbsRequests` |
 | Schedule | Daily at 02:30 UTC (`30 2 * * *`) |
 | Source | IBS (`build.suse.de`) |
-| Scope | Active codestreams with `TicketPackageTrack` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
+| Scope | Active codestreams with `TicketPackageTrack.workflow_type = ibs` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
 | Auth | HTTP Basic / API token (internal) |
 | `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
 | Custom settings | Yes (see "sync_ibs_requests — Custom Settings" below) |
@@ -1040,12 +1077,22 @@ full procedure.
 ("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
 contract.
 
-**Scope**: extracts the ticket's codestream names and queries the IBS
-Request Search API to discover and correlate submission requests
-(SRs) and release requests (RRs) that were created or changed while
-the ticket was inactive.
+**Scope**: after package-tree re-resolution has committed, extracts only the
+Ticket's tracks with `workflow_type = ibs`. It performs a targeted historical
+search sufficient to reconstruct the current relevant SR/RR chain,
+correlations, and resulting `delivery_status` for those tracks, including
+requests older than the ordinary 25-hour periodic lookback. It does not import
+every intermediate upstream transition.
 
-**Detailed specification**: to be defined during implementation.
+The exact IBS query bounds and pagination strategy remain owned by this
+specification and must be complete before implementation. The operation
+uses per-item failure isolation and the shared `run_catch_up` retry policy. If
+historical catch-up still fails permanently, the daily 25-hour path is not
+claimed to recover the omitted history. The failure is an accepted operational
+risk: logs identify `ticket_id`, fetcher, affected track/request, sanitized
+cause, and `celery_task_id`; this specification must define an explicit
+idempotent operator rerun surface. No durable catch-up progress table or daily
+full-history scan is introduced.
 
 #### Metrics
 
@@ -1073,7 +1120,7 @@ dashboard presence.
 |--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
 | IBS diff API unreachable / timeout / HTTP 5xx / 429 (`correlate_submission_request`) | `is_retryable_condition()` returns `True` — Celery retry (3 retries, 5s → 10s → 20s backoff). After max retries, SR remains without correlations — recovery limited (see Open Question 4). |
 | IBS diff API returns HTTP 4xx (except 429) (`correlate_submission_request`) | `is_retryable_condition()` returns `False` — task fails immediately (non-retryable). SR remains without correlations. |
-| IBS REST API unreachable (`SyncIbsRequests`)              | Fetcher run fails, reported via `BaseFetcher` metrics. Next scheduled run covers the gap.    |
+| IBS REST API unreachable (`SyncIbsRequests`)              | Fetcher run fails, reported via `BaseFetcher` metrics. The next scheduled run covers ordinary open/recent/known-request work; it does not guarantee recovery of a permanently failed historical reactivation catch-up. |
 | RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
 | SR/RR references a codestream not tracked in any active ticket  | Silent skip (not relevant to Sentinel).                                                         |
 | IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
@@ -1223,15 +1270,16 @@ Pipeline 3 (`discover_submissions_for_ticket_package`) handles this case
 (re-enqueues correlation for SRs with zero join records), but only runs
 when a new package is added to a ticket — not periodically.
 
-**Impact**: an uncorrelated SR is a cosmetic gap (VA lacks visibility
-into the submission), not a correctness issue (no status transitions
-depend on SR correlation). The SR will eventually be reconciled by
-Pipeline 2 Step 2 when it transitions to a final state in IBS.
+**Impact**: an uncorrelated SR is a correctness gap, not merely a presentation
+gap: correlation is needed to derive the affected track's delivery state and
+to associate a later RR. The permanent owner is `SyncIbsRequests`.
 
-**Potential fix**: add a branch in Pipeline 2 Step 1: "If ALREADY present
-with state `open` and zero `SubmissionRequestTrack` join records →
-re-enqueue `correlate_submission_request`." To be evaluated during
-implementation.
+Before implementation, this specification must define finite reprocessing that
+distinguishes a temporarily failed correlation from a completed request that
+has no relevant Sentinel Ticket. It must provide an observable terminal
+outcome and MUST NOT retry every zero-join row forever. This issue deliberately
+does not add a correlation-status column or another progress table before that
+algorithm and real IBS contract are resolved.
 
 ## Cross-references
 
