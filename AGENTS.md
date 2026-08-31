@@ -965,10 +965,13 @@ request for any purpose (tracking issue context, deferral basis
 search, scope resolution, implementation notes, or general context
 gathering), always include the comments — they often contain
 important decisions, clarifications, and notes added during the work.
-Use `gh issue view <n> --comments` or `gh pr view <n> --comments` to
-retrieve both the description and all comments. Reading only the
-body/description is insufficient; treat comments as part of the
-issue/PR content.
+The `gh` CLI separates description and comments into distinct views:
+`gh issue view <n>` (or `gh pr view <n>`) shows metadata and
+description but no comments, while `--comments` shows only comments
+without the description. Always run both commands (they can be
+parallel tool calls) to get the complete picture. Reading only one of
+the two is insufficient; treat comments as part of the issue/PR
+content.
 
 **Automatic workflow initiation**: when the user issues a concrete
 modification request, the agent MUST autonomously:
