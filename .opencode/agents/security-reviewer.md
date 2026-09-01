@@ -212,8 +212,7 @@ Provide a structured summary with these sections:
    - Description of the vulnerability
    - Suggested remediation
 3. **Insecure patterns**: code that is not directly exploitable but introduces
-   risk (e.g., missing rate limiting, overly broad permissions, no input
-   length limits)
+   risk (e.g., overly broad permissions or missing input length limits)
 4. **Recommendations**: proactive improvements for defense in depth
 5. **Verdict**: one of:
    - **Clean** — no security issues found

@@ -240,8 +240,10 @@ issues, and sub-issues are optional; sources 1-4 work without them.
    "Celery signal binding is deferred to P1-06").
 2. **Issue `Acceptance criteria`** — the obligation is simply not among the
    criteria the issue commits to.
-3. **The owning specification itself** — an explicit deferral, "future phase",
-   "not yet implemented", or "known gap" note.
+3. **The owning specification itself** — an explicit ownership or scope
+   boundary expressed without roadmap phase, work-item, or
+   implementation-status coupling, such as a statement that another named
+   specification owns the operation.
 4. **`docs/drafts/implementation-plan.md`** — the piece tables (which pieces
    declare this specification as owning), the *Partially implementable
    specifications* section, and the *Specification and WIP Boundary* section.

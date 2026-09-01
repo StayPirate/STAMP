@@ -140,7 +140,9 @@ structural complexity without presenting it to the user for a decision.
 - UUID primary keys on all tables?
 - `created_at` and `updated_at` timestamps on all tables?
 - SQLAlchemy 2.0 style (`mapped_column`, `Mapped`, declarative base)?
-- ENUM types defined as PostgreSQL enums?
+- Are enumerated columns stored as `VARCHAR(N)`, with Python `StrEnum`
+  validation and CHECK constraints only for the categories required by the
+  Enum Storage Strategy?
 - Type hints on all mapped columns?
 
 ### Spec-code coherence
