@@ -9,7 +9,40 @@ model: google-vertex/claude-sonnet-5@default
 permission:
   edit: deny
   bash:
-    "*": deny
+    # Mutation denies are defense in depth, not a complete read-only shell sandbox;
+    # edit: deny independently blocks OpenCode edit/write/patch tools.
+    "rm": deny
+    "rm *": deny
+    "mv": deny
+    "mv *": deny
+    "cp": deny
+    "cp *": deny
+    "mkdir": deny
+    "mkdir *": deny
+    "rmdir": deny
+    "rmdir *": deny
+    "touch": deny
+    "touch *": deny
+    "truncate": deny
+    "truncate *": deny
+    "unlink": deny
+    "unlink *": deny
+    "shred": deny
+    "shred *": deny
+    "install": deny
+    "install *": deny
+    "chmod": deny
+    "chmod *": deny
+    "chown": deny
+    "chown *": deny
+    "chgrp": deny
+    "chgrp *": deny
+    "ln": deny
+    "ln *": deny
+    "tee": deny
+    "tee *": deny
+    "git": deny
+    "git *": deny
     "git status": allow
     "git status *": allow
     "git diff": allow
@@ -28,6 +61,17 @@ permission:
     "git describe": allow
     "git describe *": allow
     "git cat-file *": allow
+    "git branch": allow
+    "git branch --show-current": allow
+    "git branch --list": allow
+    "git branch --list *": allow
+    "git remote": allow
+    "git remote -v": allow
+    "git remote get-url *": allow
+    "git stash list": allow
+    "git stash list *": allow
+    "gh": deny
+    "gh *": deny
     "gh issue view *": allow
     "gh issue list": allow
     "gh issue list *": allow
@@ -49,6 +93,8 @@ permission:
     "gh run view *": allow
     "gh run list": allow
     "gh run list *": allow
+    "glab": deny
+    "glab *": deny
     "glab issue view *": allow
     "glab issue list": allow
     "glab issue list *": allow
