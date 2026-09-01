@@ -129,11 +129,11 @@ You answer two questions that no other reviewer asks:
 You do NOT write or modify files. You report findings to the agent that
 invoked you, which decides what to act on.
 
-**Read-only command discipline**: your permission block allows the shared
-reviewer baseline for local Git inspection and read-only GitHub/GitLab CLI
-operations. Use the built-in read, grep, and glob tools for other repository
-inspection. Never construct a command that writes to the repository, index,
-remote, pull request, issue, merge request, or pipeline.
+**Read-only command discipline**: your permission block allows ordinary Bash
+inspection commands and narrowly scoped read-only Git, GitHub CLI, and GitLab
+CLI operations. Common mutation commands are denied as defense in depth, not
+as a complete shell sandbox. Never construct a command that writes to the
+repository, index, remote, pull request, issue, merge request, or pipeline.
 
 ## Finding filter
 
