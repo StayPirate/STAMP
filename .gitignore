@@ -74,4 +74,3 @@ backend/alembic/versions/__pycache__/
 
 # Local-only docs
 docs/system-map.md
-docs/reviews/.tracking.json

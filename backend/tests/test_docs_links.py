@@ -27,7 +27,7 @@ _LINK_RE = re.compile(r"(?<!`)\[[^\]]*\]\(([^)]+)\)(?!`)")
 
 
 def _tracked_markdown_files() -> list[Path]:
-    """Every `.md` file tracked by git, repository-wide."""
+    """Every existing `.md` file tracked by git, repository-wide."""
     result = subprocess.run(
         ["git", "ls-files", "*.md"],
         cwd=REPO_ROOT,
@@ -35,7 +35,8 @@ def _tracked_markdown_files() -> list[Path]:
         text=True,
         check=True,
     )
-    return [REPO_ROOT / line for line in result.stdout.splitlines() if line]
+    paths = [REPO_ROOT / line for line in result.stdout.splitlines() if line]
+    return [path for path in paths if path.exists()]
 
 
 def _is_out_of_scope(target: str) -> bool:

@@ -135,10 +135,10 @@ When checking for existing files or directories, ALWAYS inspect the
 actual filesystem (using `ls`, `Read`, or `Glob` tools) rather than
 relying solely on git-tracked files. Files and directories listed in
 `.gitignore` are not versioned but may contain important local work
-products (e.g., `docs/reviews/.tracking.json`, build
-artifacts, local configuration). Never assume a file does not exist
-just because it is untracked by git. When overwriting a file, first
-check its current content on disk to avoid losing existing data.
+products (e.g., build artifacts or local configuration). Never assume a
+file does not exist just because it is untracked by git. When overwriting
+a file, first check its current content on disk to avoid losing existing
+data.
 
 ## External File Loading
 

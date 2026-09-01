@@ -136,9 +136,9 @@ A piece is complete only when all applicable conditions below are satisfied:
 
 ## Specification and WIP Boundary
 
-Implementation readiness is a versioned roadmap decision, not a property of
-the local review cache in `docs/reviews/.tracking.json`. The cache's `enabled`
-field controls review tooling only and MUST NOT authorize implementation.
+Implementation readiness is a versioned roadmap decision. Historical review
+records under `docs/reviews/` provide context only and MUST NOT authorize
+implementation.
 
 The groups below are currently classified as WIP by this roadmap because their
 own documents contain placeholders, unresolved review findings, or missing

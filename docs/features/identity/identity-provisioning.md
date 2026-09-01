@@ -345,7 +345,7 @@ When this spec is enabled and finalized:
 3. Finalize group validation rules for the provider
 4. Update SSO spec to remove "deferred" notes
 5. Add fetcher source_type value if a reconciliation fetcher is added
-6. Re-enable sso-authentication in .tracking.json
+6. Re-run the applicable reviewers for `sso-authentication.md`
 
 ## Cross-references
 
