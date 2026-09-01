@@ -14,15 +14,15 @@ They are configured in `opencode.json`.
 | Agent | Scope | Permissions |
 |-------|-------|-------------|
 | **Plan** | Analysis and planning | Read-only (built-in) |
-| **Spec** | Specifications and declarative configuration | Edit: `docs/**`, `AGENTS.md`, `.opencode/**`, `opencode.json`; shell: Git/GitHub workflow, read-only inspection, tests |
+| **Spec** | Specifications, project policy, and OpenCode configuration | Edit: `docs/**`, `AGENTS.md`, `.opencode/**`, `opencode.json`; shell: Git/GitHub workflow, read-only inspection, tests |
 | **Code** | Implementation, tests, CI/CD, infrastructure | Edit: all files (`docs/**` requires confirmation) |
 
 - **Plan** — read-only mode for analysis, planning, and discussion without
   making changes. Uses the OpenCode built-in Plan agent.
-- **Spec** — writes and maintains feature specifications, data model, API
-  spec, conventions, agent definitions, and all declarative project
-  configuration. It can run tests and manage its GitHub workflow, but cannot
-  modify implementation code. Prompt:
+- **Spec** — writes and maintains feature specifications, cross-cutting
+  documentation, project policy, and OpenCode configuration. It can run
+  non-mutating verification and manage its GitHub workflow, but cannot modify
+  implementation code. Prompt:
   `.opencode/prompts/spec.md`
 - **Code** — implements features from specifications, writes tests, and
   maintains all executable artifacts. Must signal unresolved behavioral or

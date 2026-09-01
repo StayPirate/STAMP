@@ -9,7 +9,7 @@
       "disable": true
     },
     "spec": {
-      "description": "Writes and maintains feature specifications and declarative project configuration. Cannot modify implementation code.",
+      "description": "Writes and maintains specifications, project policy, and OpenCode configuration. Cannot modify implementation code.",
       "model": "github-copilot/claude-opus-4.6",
       "mode": "primary",
       "color": "warning",
