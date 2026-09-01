@@ -3,8 +3,17 @@
 This directory contains the OpenCode agent, command, and skill definitions
 for the Sentinel project. This README serves as a quick-reference catalog.
 
-For details on how agents are triggered automatically, see the Guardrails
-section in `AGENTS.md`.
+`AGENTS.md` is the always-on operational kernel. It owns safety gates,
+reviewer triggers, and cumulative authority routing. Detailed product,
+architecture, and convention rules remain in their authoritative documents
+and are loaded explicitly when a task matches their routes.
+
+`opencode.json` does not inject `docs/architecture.md` or
+`docs/conventions.md` globally. Primary agents and fresh subagents apply the
+routes in `AGENTS.md` independently; a child session must not assume that it
+inherits files read by its parent. OpenCode configuration-time files are not
+hot-reloaded, so restart OpenCode after changing this policy, the project
+configuration, prompts, agents, commands, or skills.
 
 ## Primary Agents
 
@@ -38,11 +47,11 @@ findings without modifying files. All writing is owned by the primary
 agents.
 
 All reviewer agents apply the proportionality filter in `AGENTS.md`
-Guardrail 26 before reporting findings. Speculative, unnecessary,
+(legacy Guardrail 26) before reporting findings. Speculative, unnecessary,
 over-documenting, or disproportionate findings are omitted rather than turned
 into project requirements. The agent that invoked a reviewer independently
-evaluates every received finding before acting on it, per the Finding
-Evaluation Procedure in the same guardrail.
+evaluates every received finding before acting on it, per `AGENTS.md` (Quality
+and findings).
 
 Every reviewer keeps OpenCode file editing disabled while ordinary Bash
 commands inherit OpenCode's default allow behavior. Common mutation-oriented
@@ -81,8 +90,9 @@ across all reviewer definitions.
 rather than a kind of change: it runs on every pull request, before the pull
 request is opened or marked ready. It can also be invoked manually with an
 explicit pull request reference, including on closed pull requests. It is not
-yet backed by a guardrail — it is under calibration, and its invocation is
-declared in `.opencode/prompts/code.md` and `.opencode/prompts/spec.md`.
+conditional on changed paths; its trigger is owned by the `AGENTS.md` Reviewer
+Trigger Matrix and mirrored in `.opencode/prompts/code.md` and
+`.opencode/prompts/spec.md`.
 
 ### Model Tiering
 

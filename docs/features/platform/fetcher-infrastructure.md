@@ -3738,7 +3738,9 @@ finally the `FetcherConfig` row.
 
 ## Guardrail: Fetcher Base Class Compliance
 
-See AGENTS.md (Guardrail 14) for the full compliance rules.
+This specification owns the complete fetcher contract. `AGENTS.md` routes
+fetcher changes here before planning, editing, or review and retains the legacy
+Guardrail 14 reference for existing OpenCode definitions.
 
 ## Subagent: @fetcher-compliance-reviewer
 
