@@ -44,6 +44,13 @@ into project requirements. The agent that invoked a reviewer independently
 evaluates every received finding before acting on it, per the Finding
 Evaluation Procedure in the same guardrail.
 
+Every reviewer shares the same default-deny command baseline for local Git
+inspection and read-only GitHub and GitLab CLI operations. The CI/CD and test
+reviewers additionally run local verification commands, while the external
+contract verifier can query upstream services and inspect remote Git sources.
+`backend/tests/test_opencode_agent_permissions.py` keeps the baseline and these
+three role-specific profiles synchronized across all reviewer definitions.
+
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|
 | `@api-convention-reviewer` | Reviewer | Guardrail 20 | Verifies API endpoint definitions in specs conform to project conventions |

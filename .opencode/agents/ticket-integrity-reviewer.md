@@ -13,20 +13,63 @@ model: google-vertex/claude-sonnet-5@default
 permission:
   edit: deny
   bash:
-    "gh issue view*": allow
-    "gh issue list*": allow
-    "gh pr view*": allow
-    "gh pr list*": allow
-    "gh pr diff*": allow
-    "gh project view*": allow
-    "gh project list*": allow
-    "gh project item-list*": allow
-    "glab issue view*": allow
-    "glab issue list*": allow
-    "glab mr view*": allow
-    "glab mr list*": allow
-    "glab repo view*": allow
     "*": deny
+    "git status": allow
+    "git status *": allow
+    "git diff": allow
+    "git diff *": allow
+    "git log": allow
+    "git log *": allow
+    "git show": allow
+    "git show *": allow
+    "git grep *": allow
+    "git blame *": allow
+    "git rev-parse *": allow
+    "git merge-base *": allow
+    "git ls-files": allow
+    "git ls-files *": allow
+    "git ls-tree *": allow
+    "git describe": allow
+    "git describe *": allow
+    "git cat-file *": allow
+    "gh issue view *": allow
+    "gh issue list": allow
+    "gh issue list *": allow
+    "gh pr view": allow
+    "gh pr view *": allow
+    "gh pr list": allow
+    "gh pr list *": allow
+    "gh pr diff": allow
+    "gh pr diff *": allow
+    "gh pr checks": allow
+    "gh pr checks *": allow
+    "gh repo view": allow
+    "gh repo view *": allow
+    "gh project view *": allow
+    "gh project list": allow
+    "gh project list *": allow
+    "gh project item-list *": allow
+    "gh run view": allow
+    "gh run view *": allow
+    "gh run list": allow
+    "gh run list *": allow
+    "glab issue view *": allow
+    "glab issue list": allow
+    "glab issue list *": allow
+    "glab mr view": allow
+    "glab mr view *": allow
+    "glab mr list": allow
+    "glab mr list *": allow
+    "glab mr diff": allow
+    "glab mr diff *": allow
+    "glab repo view": allow
+    "glab repo view *": allow
+    "glab ci get": allow
+    "glab ci get *": allow
+    "glab ci list": allow
+    "glab ci list *": allow
+    "glab ci trace": allow
+    "glab ci trace *": allow
 ---
 
 ## Role
