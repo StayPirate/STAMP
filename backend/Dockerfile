@@ -11,7 +11,7 @@ ARG PYTHON_VERSION=3.14
 # only — see docs/conventions.md, Runtime Version (Version Bump
 # Checklist) — and is excluded from Renovate's automated updates by a
 # packageRule in renovate.jsonc.
-ARG PYTHON_BASE_DIGEST=sha256:ce40764625a4ff50df3548277632e7f96c4e77fe75fa848aae9885476e7df5a4
+ARG PYTHON_BASE_DIGEST=sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
 
 # Stage 1: Install dependencies and build the project (non-editable)
 FROM python:${PYTHON_VERSION}-slim@${PYTHON_BASE_DIGEST} AS builder
