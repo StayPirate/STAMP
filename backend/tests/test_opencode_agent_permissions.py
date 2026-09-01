@@ -11,8 +11,31 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".opencode" / "agents"
 COMMANDS_DIR = REPO_ROOT / ".opencode" / "commands"
 
-READ_ONLY_BASELINE = (
-    ("*", "deny"),
+MUTATION_COMMANDS = (
+    "rm",
+    "mv",
+    "cp",
+    "mkdir",
+    "rmdir",
+    "touch",
+    "truncate",
+    "unlink",
+    "shred",
+    "install",
+    "chmod",
+    "chown",
+    "chgrp",
+    "ln",
+    "tee",
+)
+MUTATION_DENIES = tuple(
+    rule
+    for command in MUTATION_COMMANDS
+    for rule in ((command, "deny"), (f"{command} *", "deny"))
+)
+GIT_BOUNDARY = (
+    ("git", "deny"),
+    ("git *", "deny"),
     ("git status", "allow"),
     ("git status *", "allow"),
     ("git diff", "allow"),
@@ -31,6 +54,19 @@ READ_ONLY_BASELINE = (
     ("git describe", "allow"),
     ("git describe *", "allow"),
     ("git cat-file *", "allow"),
+    ("git branch", "allow"),
+    ("git branch --show-current", "allow"),
+    ("git branch --list", "allow"),
+    ("git branch --list *", "allow"),
+    ("git remote", "allow"),
+    ("git remote -v", "allow"),
+    ("git remote get-url *", "allow"),
+    ("git stash list", "allow"),
+    ("git stash list *", "allow"),
+)
+GH_BOUNDARY = (
+    ("gh", "deny"),
+    ("gh *", "deny"),
     ("gh issue view *", "allow"),
     ("gh issue list", "allow"),
     ("gh issue list *", "allow"),
@@ -52,6 +88,10 @@ READ_ONLY_BASELINE = (
     ("gh run view *", "allow"),
     ("gh run list", "allow"),
     ("gh run list *", "allow"),
+)
+GLAB_BOUNDARY = (
+    ("glab", "deny"),
+    ("glab *", "deny"),
     ("glab issue view *", "allow"),
     ("glab issue list", "allow"),
     ("glab issue list *", "allow"),
@@ -69,6 +109,12 @@ READ_ONLY_BASELINE = (
     ("glab ci list *", "allow"),
     ("glab ci trace", "allow"),
     ("glab ci trace *", "allow"),
+)
+READ_ONLY_BASELINE = MUTATION_DENIES + GIT_BOUNDARY + GH_BOUNDARY + GLAB_BOUNDARY
+
+DEFENSE_IN_DEPTH_COMMENT = (
+    "# Mutation denies are defense in depth, not a complete read-only shell sandbox;",
+    "# edit: deny independently blocks OpenCode edit/write/patch tools.",
 )
 
 CLI_PARITY = (
@@ -98,6 +144,8 @@ MUTATING_PREFIXES = (
     "glab mr create",
     "glab mr merge",
 )
+
+AMBIGUOUS_GIT_ALLOWS = {"git branch *", "git remote *", "git stash *"}
 
 ROLE_EXTENSIONS = {
     "cicd-reviewer": (
@@ -133,6 +181,8 @@ def _bash_rules(frontmatter: list[str]) -> tuple[tuple[str, str], ...]:
     start = frontmatter.index("  bash:") + 1
     rules: list[tuple[str, str]] = []
     for line in frontmatter[start:]:
+        if line.lstrip().startswith("#"):
+            continue
         match = _BASH_RULE_RE.fullmatch(line)
         if not match:
             break
@@ -147,6 +197,8 @@ def test_reviewer_permissions_match_shared_baseline() -> None:
 
     errors: list[str] = []
     baseline_patterns = {pattern for pattern, _ in READ_ONLY_BASELINE}
+    if "*" in baseline_patterns:
+        errors.append("shared baseline must not globally deny ordinary Bash commands")
     for gh_pattern, glab_pattern in CLI_PARITY:
         if (gh_pattern in baseline_patterns) != (glab_pattern in baseline_patterns):
             errors.append(f"baseline CLI parity differs: {gh_pattern} / {glab_pattern}")
@@ -159,11 +211,24 @@ def test_reviewer_permissions_match_shared_baseline() -> None:
     for pattern in allowed_patterns:
         if pattern.startswith(MUTATING_PREFIXES):
             errors.append(f"reviewer permissions permit a mutating command: {pattern}")
+    ambiguous_allows = AMBIGUOUS_GIT_ALLOWS & allowed_patterns
+    if ambiguous_allows:
+        errors.append(
+            "reviewer permissions contain ambiguous Git allows: "
+            + ", ".join(sorted(ambiguous_allows))
+        )
 
     for path in agent_paths:
         frontmatter = _frontmatter(path)
         if "  edit: deny" not in frontmatter:
             errors.append(f"{path.name}: edit permission must be deny")
+        comments = {
+            line.strip() for line in frontmatter if line.lstrip().startswith("#")
+        }
+        if not set(DEFENSE_IN_DEPTH_COMMENT) <= comments:
+            errors.append(
+                f"{path.name}: defense-in-depth permission comment is missing"
+            )
 
         expected = READ_ONLY_BASELINE + ROLE_EXTENSIONS.get(path.stem, ())
         actual = _bash_rules(frontmatter)

@@ -44,12 +44,19 @@ into project requirements. The agent that invoked a reviewer independently
 evaluates every received finding before acting on it, per the Finding
 Evaluation Procedure in the same guardrail.
 
-Every reviewer shares the same default-deny command baseline for local Git
-inspection and read-only GitHub and GitLab CLI operations. The CI/CD and test
+Every reviewer keeps OpenCode file editing disabled while ordinary Bash
+commands inherit OpenCode's default allow behavior. Common mutation-oriented
+filesystem command families are denied as defense in depth; these rules are
+not a complete read-only shell sandbox, and `edit: deny` independently blocks
+OpenCode edit, write, and patch tools. The `git`, `gh`, and `glab` command
+families are default-denied, then narrowly scoped read-only forms are allowed
+afterward under OpenCode's last-match-wins evaluation. The CI/CD and test
 reviewers additionally run local verification commands, while the external
-contract verifier can query upstream services and inspect remote Git sources.
-`backend/tests/test_opencode_agent_permissions.py` keeps the baseline and these
-three role-specific profiles synchronized across all reviewer definitions.
+contract verifier can query upstream services and intentionally allows
+`git clone` for remote contract inspection. Role extensions follow the shared
+family denies. `backend/tests/test_opencode_agent_permissions.py` keeps the
+baseline, ordering, comment, and three role-specific profiles synchronized
+across all reviewer definitions.
 
 | Agent | Type | Trigger | Purpose |
 |-------|------|---------|---------|
