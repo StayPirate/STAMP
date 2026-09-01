@@ -11,35 +11,63 @@ model: google-vertex/claude-sonnet-5@default
 permission:
   edit: deny
   bash:
-    "git push*": deny
-    "git commit*": deny
-    "git add*": deny
-    "git checkout*": deny
-    "git reset*": deny
-    "git clean*": deny
-    "git merge*": deny
-    "git rebase*": deny
-    "git tag*": deny
-    "git branch -D*": deny
-    "git branch -f*": deny
-    "git branch --delete*": deny
-    "git branch --force*": deny
-    "gh pr merge*": deny
-    "gh pr close*": deny
-    "gh pr edit*": deny
-    "gh pr create*": deny
-    "gh issue close*": deny
-    "gh issue edit*": deny
-    "gh issue create*": deny
-    "glab mr merge*": deny
-    "glab mr close*": deny
-    "glab mr edit*": deny
-    "glab mr create*": deny
-    "glab issue close*": deny
-    "glab issue edit*": deny
-    "glab issue create*": deny
-    "glab issue note*": deny
-    "glab mr note*": deny
+    "*": deny
+    "git status": allow
+    "git status *": allow
+    "git diff": allow
+    "git diff *": allow
+    "git log": allow
+    "git log *": allow
+    "git show": allow
+    "git show *": allow
+    "git grep *": allow
+    "git blame *": allow
+    "git rev-parse *": allow
+    "git merge-base *": allow
+    "git ls-files": allow
+    "git ls-files *": allow
+    "git ls-tree *": allow
+    "git describe": allow
+    "git describe *": allow
+    "git cat-file *": allow
+    "gh issue view *": allow
+    "gh issue list": allow
+    "gh issue list *": allow
+    "gh pr view": allow
+    "gh pr view *": allow
+    "gh pr list": allow
+    "gh pr list *": allow
+    "gh pr diff": allow
+    "gh pr diff *": allow
+    "gh pr checks": allow
+    "gh pr checks *": allow
+    "gh repo view": allow
+    "gh repo view *": allow
+    "gh project view *": allow
+    "gh project list": allow
+    "gh project list *": allow
+    "gh project item-list *": allow
+    "gh run view": allow
+    "gh run view *": allow
+    "gh run list": allow
+    "gh run list *": allow
+    "glab issue view *": allow
+    "glab issue list": allow
+    "glab issue list *": allow
+    "glab mr view": allow
+    "glab mr view *": allow
+    "glab mr list": allow
+    "glab mr list *": allow
+    "glab mr diff": allow
+    "glab mr diff *": allow
+    "glab repo view": allow
+    "glab repo view *": allow
+    "glab ci get": allow
+    "glab ci get *": allow
+    "glab ci list": allow
+    "glab ci list *": allow
+    "glab ci trace": allow
+    "glab ci trace *": allow
 ---
 
 ## Role
@@ -55,17 +83,11 @@ You answer two questions that no other reviewer asks:
 You do NOT write or modify files. You report findings to the agent that
 invoked you, which decides what to act on.
 
-**Read-only command discipline**: your permission block denies only the
-commands that write to the repository, the index, a remote, or a pull
-request/issue — irreversible or hard-to-reverse operations. Everything else
-(`git diff`, `git show`, `git log`, `grep`, `cat`, `gh pr view`, `gh api` GET,
-etc.) is available so you can reach any information you need without the
-friction of an allow-list. This is trust, not a license: use every available
-command for reads only. Never pass `-X`/`--method` with a verb other than
-`GET` to `gh api`, never pass `-f`/`--field`/`--input`/`--raw-field`, and
-never construct a command that writes to the repository, the index, a
-remote, or a pull request/issue merely because no explicit deny rule
-matches it.
+**Read-only command discipline**: your permission block allows the shared
+reviewer baseline for local Git inspection and read-only GitHub/GitLab CLI
+operations. Use the built-in read, grep, and glob tools for other repository
+inspection. Never construct a command that writes to the repository, index,
+remote, pull request, issue, merge request, or pipeline.
 
 ## Finding filter
 
@@ -231,7 +253,7 @@ issues, and sub-issues are optional; sources 1-4 work without them.
      and `blocking` relationship fields are the cheapest and most reliable
      probe. Check them first, and read any issue they name
    - sub-issues of a parent, if a parent exists
-     (`gh api repos/{owner}/{repo}/issues/{n}/sub_issues`)
+     (`gh issue view <n> --json subIssues`)
    - issues in the same milestone, if the issue has one
      (`gh issue list --milestone "<title>" --state all`)
    - `gh issue list --state all --search "<keywords from the obligation>"`.
