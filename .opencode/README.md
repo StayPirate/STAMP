@@ -91,7 +91,6 @@ Commands are defined in `.opencode/commands/` and invoked with `/command-name`.
 | Command | Purpose |
 |---------|---------|
 | `/idea` | Add a new idea to the brainstorming list in `docs/drafts/ideas.md` |
-| `/review-spec` | Interactive spec review and finding resolution workflow |
 
 ## Skills
 

@@ -9,6 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".opencode" / "agents"
+COMMANDS_DIR = REPO_ROOT / ".opencode" / "commands"
 
 READ_ONLY_BASELINE = (
     ("*", "deny"),
@@ -173,3 +174,17 @@ def test_reviewer_permissions_match_shared_baseline() -> None:
             )
 
     assert not errors, "OpenCode reviewer permission drift:\n" + "\n".join(errors)
+
+
+@pytest.mark.unit
+def test_opencode_command_definitions_are_direct_children() -> None:
+    nested_commands = sorted(
+        path.relative_to(COMMANDS_DIR)
+        for path in COMMANDS_DIR.glob("**/*.md")
+        if path.parent != COMMANDS_DIR
+    )
+
+    assert not nested_commands, (
+        "Nested Markdown files are registered as unintended OpenCode commands:\n"
+        + "\n".join(str(path) for path in nested_commands)
+    )
