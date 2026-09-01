@@ -152,8 +152,9 @@ For each `TicketAuditEvent` creation, verify:
 #### Atomicity
 
 - The `TicketAuditEvent` must be created in the **same database transaction**
-  as the ticket mutation — same `session`, no intermediate `commit()` or
-  `flush()` that could separate them
+  as the ticket mutation — same `session`, with no intermediate commit. A
+  flush does not end the transaction and is permitted or required by the
+  caller-owned transaction contract
 - If the mutation and event creation happen in different functions, verify
   they share the same session and transaction scope
 - Flag any pattern where the event could be lost if the transaction rolls
@@ -196,10 +197,10 @@ For each `TicketAuditEvent` creation, verify:
 - If a new type of gate-relevant mutation is needed and no suitable
   function exists in the appropriate module, flag it as **Needs revision**
   and propose adding a new function
-- Note: operations that do NOT modify gate-relevant data (assignment,
-  duplicate set/remove, CVE association, soft-delete, restore)
-  are NOT required to go through either module — they create
-  `TicketAuditEvent` records in their own services
+- Note: non-package lifecycle operations such as assignment, duplicate
+  set/remove, and CVE association route through `ticket_service`. Package,
+  track, and `Product` soft-delete/restore operations MUST route through
+  `package_service`
 
 #### Locking compliance
 

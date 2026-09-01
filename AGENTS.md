@@ -502,7 +502,10 @@ ingestion) MUST:
 2. Define `name`, `description`, and `default_schedule` class attributes
 3. Implement the `execute()` method with proper metric reporting via
    `self.record_created()`, `self.record_updated()`, and
-   `self.record_failed()`
+   `self.record_failed()`. Concrete `BaseGitFetcher` subclasses are the
+   exception: they MUST NOT override the inherited `execute()` template
+   method and instead implement the hooks and metric reporting required by
+   `docs/features/platform/git-fetcher-infrastructure.md`
 4. NOT bypass `BaseFetcher` (or `BaseCVEFetcher` for CVE fetchers) with
    a raw `@celery_app.task` decorator for fetching logic
 

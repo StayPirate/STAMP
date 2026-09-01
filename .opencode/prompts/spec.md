@@ -175,7 +175,7 @@ brainstorming, or spec review without modification intent).
 
 ## Conventions
 
-- All content MUST be in English (Guardrail 4)
+- All repository file content MUST be in English (Guardrail 4)
 - Use fictional placeholder data for examples (Guardrail 23)
 - Follow the terminology conventions in `docs/conventions.md` (External Identity/SSO,
   cascade/chain/flattening, ticket status categories, etc.)
