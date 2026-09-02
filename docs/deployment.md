@@ -23,6 +23,10 @@ For architectural decisions and design constraints, see
   - [Workflow Conventions](#workflow-conventions)
   - [Container Build Conventions](#container-build-conventions)
 - [Release Process](#release-process)
+  - [Platform Version and Source of Truth](#platform-version-and-source-of-truth)
+  - [Semantic Versioning Policy](#semantic-versioning-policy)
+  - [Pre-1.0 Policy](#pre-10-policy)
+  - [1.0.0 Graduation](#100-graduation)
   - [How It Works](#how-it-works)
   - [Creating a Release](#creating-a-release)
   - [Squash Merge](#squash-merge)
@@ -515,6 +519,109 @@ to automate versioning, changelog generation, and GitHub Releases. The
 process is driven entirely by Conventional Commit messages on the
 `master` branch.
 
+### Platform Version and Source of Truth
+
+Sentinel uses a single platform version following [Semantic Versioning
+2.0.0](https://semver.org/). All runtime process roles are built from the same
+Docker image and share that version. Fetchers are built-in classes rather than
+independently deployable plugins, so per-component versioning would not match
+the deployment model.
+
+The version in `backend/pyproject.toml` is the source of truth for released
+application code. `backend/app/main.py` reads it dynamically through
+`importlib.metadata.version("sentinel")`. Release-please updates that version,
+the matching `backend/uv.lock` entry, and its current-version record in
+`.release-please-manifest.json` atomically in a Release PR. It creates
+`v<major>.<minor>.<patch>` tags after that PR is merged; downstream image and
+API-documentation workflows consume those tags.
+
+The release-please package remains scoped to `backend/`. A commit is considered
+for a platform release only when it changes a path under `backend/`. Expanding
+release participation to repository-wide commits requires a separate policy
+decision.
+
+### Semantic Versioning Policy
+
+Sentinel is a deployed platform, not a library. Release signals and resulting
+version changes are:
+
+| Commit on `master` | Current version | Result |
+|--------------------|-----------------|--------|
+| `fix:` | Any | Patch (`X.Y.Z` → `X.Y.Z+1`) |
+| `feat:` | Any | Minor (`X.Y.Z` → `X.Y+1.0`) |
+| `fix!:` or `feat!:` | `0.x.y` | Next minor (`0.x.y` → `0.x+1.0`) |
+| `fix!:` or `feat!:` | `1.x.y` or later | Next major (`X.y.z` → `X+1.0.0`) |
+| `docs:`, `chore:`, `ci:`, `test:`, `refactor:` | Any | No release on their own |
+
+The semantic meaning of the three release levels is:
+
+| Bump | Product meaning |
+|------|-----------------|
+| Major | Breaking REST API changes, database migrations requiring manual operator intervention, or fundamental architectural changes after `1.0.0` |
+| Minor | New API endpoints, fetchers, features, non-breaking database migrations, or CLI commands |
+| Patch | Bug fixes, security patches, performance improvements, or operational fixes |
+
+Only `feat` and `fix` appear in generated release notes, under Features and Bug
+Fixes. The other accepted repository commit types are hidden, so a set
+containing only those types does not create or keep a non-empty Release PR.
+Sentinel uses `!` as its only supported breaking-change marker and permits it
+only on `feat` and `fix` in PR titles and local commit subjects. Maintainers
+review every generated Release PR before merge; that review is the final check
+that the proposed version and release notes match the merged changes.
+
+### Pre-1.0 Policy
+
+While the version is `0.x.y`:
+
+- the API is not considered stable;
+- breaking `feat!` and `fix!` changes advance the minor version and never
+  produce `1.0.0` automatically; and
+- consumers should pin exact versions rather than version ranges.
+
+No ordinary Conventional Commit can graduate Sentinel to `1.0.0`. Graduation
+is an intentional operator decision using the procedure below.
+
+### 1.0.0 Graduation
+
+Sentinel reaches `1.0.0` only when all of these conditions are verified:
+
+1. **Production operational**: a production instance is deployed and serving
+   real users.
+2. **Core ingestion functional**: the NVD and MITRE fetchers and at least one
+   additional core CVE source are implemented and running in production.
+3. **Ticket lifecycle complete**: ingestion, analysis, and resolution work
+   end-to-end.
+4. **Authentication operational**: local authentication and SSO are implemented
+   and operational in production.
+5. **API stability demonstrated**: the REST API v1 surface has had no breaking
+   changes for at least four weeks of production operation.
+6. **Schema stability demonstrated**: the database schema has had no breaking
+   migration requiring manual intervention for at least two consecutive minor
+   releases.
+
+After recording evidence for every criterion in a dedicated work item, use a
+substantive `feat` or `fix` PR that genuinely changes `backend/` and add this
+standalone footer to the final squash commit body:
+
+```
+Release-As: 1.0.0
+```
+
+The PR title remains an accurate `feat` or `fix` description of its substantive
+change; `Release-As` supplies the exceptional target version. Before confirming
+the squash merge, verify that GitHub's generated commit body contains the
+footer. A footer present only in the PR description is not sufficient. A
+`chore` commit cannot be used for graduation because hidden changelog types do
+not keep a Release PR non-empty. Do not create an artificial backend marker or
+edit release-please configuration or manifest state to force participation; if
+no substantive releasable backend change is appropriate, create a dedicated
+work item to decide the release mechanism instead.
+
+After that PR reaches `master`, review and merge the generated `1.0.0` Release
+PR through the normal explicit merge-authorization gate. From `1.0.0` onward,
+breaking changes require a major version and the API versioning policy in
+`docs/api-spec.md` (Versioning) takes full effect.
+
 ### How It Works
 
 1. Developers merge PRs to `master` using conventional commits
@@ -544,14 +651,20 @@ process is driven entirely by Conventional Commit messages on the
 To create a release, merge the open Release PR. No manual version
 bumping, tagging, or changelog editing is required.
 
-To force a specific version (e.g., to reach `1.0.0`), use the
-`Release-As` footer in a commit message:
+To request a specific version outside the ordinary mapping, use the
+`Release-As` footer in the final squash commit message:
 
 ```
-chore: prepare 1.0.0 release
+feat: complete the final pre-1.0 backend capability
 
 Release-As: 1.0.0
 ```
+
+Use the accurate `feat` or `fix` description of the substantive backend change
+that carries the footer. This footer does not require or authorize hand-editing
+`release-please-config.json` or `.release-please-manifest.json`. For `1.0.0`,
+follow the graduation gate above. The commit must genuinely touch `backend/`
+to participate in the currently scoped release package.
 
 ### Squash Merge
 
@@ -566,8 +679,9 @@ Conventions).
 ### Changelog
 
 `CHANGELOG.md` (repository root) is maintained automatically by
-release-please. Do not edit it manually. It groups changes by type
-(Features, Bug Fixes, etc.) and links to commits and PRs. It lives at
+release-please. Do not edit it manually. New release entries contain only
+Features and Bug Fixes and link to commits and PRs; historical entries are not
+rewritten when this policy changes. The changelog lives at
 the repository root while the version bump it accompanies
 (`backend/pyproject.toml`, `backend/uv.lock`) stays scoped to the
 `backend` release-please package — see `changelog-path` in
@@ -654,18 +768,18 @@ as a side effect of re-tagging on every push) is bounded.
 
 ### Configuration Files
 
-The release-please configuration lives in two files at the repository
-root:
+Release automation uses two files at the repository root with distinct
+ownership:
 
-- `release-please-config.json` — release strategy and package
-  configuration
-- `.release-please-manifest.json` — current version tracking
+- `release-please-config.json` — hand-authored release policy and package
+  configuration; change it only through a reviewed policy/automation PR
+- `.release-please-manifest.json` — release-please-maintained current-version
+  state; do not edit it manually
 
-These files are managed by release-please and should not be edited
-manually except during initial setup, to force a version via
-`Release-As`, or to maintain the hand-authored `extra-files` entry in
-`release-please-config.json` (see Version Locations above,
-`backend/uv.lock`).
+`Release-As` is commit metadata and requires no edit to either file. The
+`extra-files` entry that keeps `backend/uv.lock` atomic with
+`backend/pyproject.toml` is part of the hand-authored policy (see Version
+Locations above).
 
 ### Repository Secrets
 

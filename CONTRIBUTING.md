@@ -74,7 +74,7 @@ What the hooks do:
 | Hook | Checks |
 |------|--------|
 | `pre-commit` | ruff lint, ruff format, mypy, unit tests, shellcheck/shfmt (if installed), gitleaks secret scanning |
-| `commit-msg` | Validates Conventional Commits format and 72-character subject limit |
+| `commit-msg` | Validates Conventional Commits format, breaking-marker policy, and 72-character subject limit |
 | `pre-push` | Full test suite; blocks direct pushes to `master` and local tag pushes |
 | `post-checkout` / `post-merge` / `post-rewrite` | Auto-syncs the Python virtualenv when `uv.lock` changes |
 
@@ -126,6 +126,8 @@ type[(scope)]: description
 ```
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
+- Add `!` before `:` only to `feat` or `fix` when the change is breaking:
+  `feat!: description` or `fix(scope)!: description`
 - Keep the first line under 72 characters
 - Use imperative mood: "add feature" not "added feature"
 
@@ -134,11 +136,17 @@ Examples:
 ```
 feat: add CVE severity filtering to dashboard
 fix: correct CVSS score parsing for NVD API v2
+feat(api)!: remove a deprecated response field
 docs: update data model with Product table
 test: add integration tests for CVE sync service
 ```
 
 Pull request titles follow the same format and must stay under 72 characters (validated by CI).
+Only `feat` and `fix` commits trigger releases or appear in generated release
+notes. Before `1.0.0`, a breaking `feat!` or `fix!` advances the minor version;
+after `1.0.0`, it advances the major version. See the authoritative
+[Release Process](docs/deployment.md#release-process), including the intentional
+`1.0.0` graduation procedure.
 
 ## Testing
 

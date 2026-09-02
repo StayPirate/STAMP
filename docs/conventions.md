@@ -53,10 +53,6 @@
   - [Workflow](#workflow)
   - [Pull Request Requirements](#pull-request-requirements)
   - [Versioning](#versioning)
-    - [Version Source of Truth](#version-source-of-truth)
-    - [SemVer Interpretation](#semver-interpretation)
-    - [Pre-1.0 Rules](#pre-10-rules)
-    - [1.0.0 Graduation Criteria](#100-graduation-criteria)
 - [Specification Writing](#specification-writing)
   - [Function Specification Completeness](#function-specification-completeness)
     - [Required Information](#required-information-by-function-category)
@@ -1521,84 +1517,32 @@ The 72-character hard-wrapping convention remains scoped to:
 
 - Use conventional commits format: `type: description`
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
+- Use `!` only with `feat` or `fix` to signal a breaking change:
+  `feat!: description`, `fix(scope)!: description`
 - Keep the first line under 72 characters
 - Use imperative mood: "add feature" not "added feature"
 - Examples:
   - `feat: add CVE severity filtering to dashboard`
   - `fix: correct CVSS score parsing for NVD API v2`
+  - `feat(api)!: remove a deprecated response field`
   - `docs: update data model with Product table`
   - `test: add integration tests for CVE sync service`
 
 ### Versioning
 
-Sentinel uses a single platform version following [Semantic Versioning
-2.0.0](https://semver.org/). All components (API server, Celery worker,
-Git worker, Celery Beat, IBS RabbitMQ consumer) are built from the same Docker
-image and share the same version number.
+PR titles become commit subjects on `master` through squash merge and therefore
+carry the release signal used by release-please:
 
-#### Version Source of Truth
+| Commit type | Release signal |
+|-------------|----------------|
+| `fix` | Patch |
+| `feat` | Minor |
+| `fix!`, `feat!` | Breaking release; the resulting version depends on whether Sentinel is pre-1.0 or stable |
+| `docs`, `chore`, `ci`, `test`, `refactor` | No release on their own; `!` is not permitted |
 
-The version in `backend/pyproject.toml` is the single source of truth.
-`backend/app/main.py` reads it dynamically via
-`importlib.metadata.version("sentinel")`. Git tags
-(`v<major>.<minor>.<patch>`) are created automatically by the release
-process (see `docs/deployment.md`, Release Process) and consumed by the
-Docker image build pipeline.
-
-#### SemVer Interpretation
-
-Sentinel is a deployed platform, not a library. SemVer bumps are
-interpreted as follows:
-
-| Bump | Trigger |
-|------|---------|
-| MAJOR | Breaking REST API changes (removal/renaming of fields, changes to response structure, semantic changes to existing behavior, error code changes), database migrations requiring manual operator intervention, fundamental architectural changes |
-| MINOR | New API endpoints, new fetchers, new features, non-breaking database migrations, new CLI commands |
-| PATCH | Bug fixes, security patches, performance improvements, operational fixes |
-
-Only `feat:` and `fix:` commits (and their `!` breaking variants)
-trigger version bumps. Commits with `docs:`, `chore:`, `test:`,
-`refactor:`, or `ci:` types do not produce a release on their own.
-
-#### Pre-1.0 Rules
-
-While the version is `0.x.y`:
-
-- The API is not considered stable
-- Breaking changes MAY occur in minor version bumps (`0.x` → `0.x+1`)
-- Consumers should pin to exact versions, not ranges
-
-#### 1.0.0 Graduation Criteria
-
-The project reaches `1.0.0` when ALL of the following conditions are
-met:
-
-1. **Production operational**: a production instance is deployed and
-   serving real users
-2. **Core ingestion functional**: all core CVE fetchers (NVD, MITRE, and
-   at least one additional source) are implemented and running in
-   production
-3. **Ticket lifecycle complete**: the full ticket lifecycle — from CVE
-   ingestion through analysis to resolution — is functional end-to-end
-4. **Authentication operational**: both local authentication and SSO are
-   implemented and operational in production
-5. **API stability demonstrated**: the REST API v1 surface has had no
-   breaking changes for at least 4 weeks of production operation
-6. **Schema stability demonstrated**: the database schema has had no
-   breaking migrations (requiring manual intervention) for at least 2
-   consecutive minor releases
-
-From `1.0.0` onward, breaking REST API changes require a major version
-bump and the API versioning policy in `docs/api-spec.md` (Versioning)
-takes full effect.
-
-#### Why Single Version
-
-All runtime process roles share the single image described in
-`docs/architecture.md` (Single Docker image, multiple entrypoints) and
-`docs/deployment.md` (Container Images), so they cannot be deployed at
-different versions. Fetchers are built-in classes rather than independently
-deployable plugins; per-component versioning would add no practical benefit.
+The complete Semantic Versioning interpretation, pre-1.0 policy, changelog
+policy, version source of truth, and intentional `1.0.0` graduation procedure
+are defined in `docs/deployment.md` (Release Process).
 
 ## Specification Writing
 
