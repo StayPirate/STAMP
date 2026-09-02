@@ -5,9 +5,12 @@
     "build": {
       "disable": true
     },
+    "plan": {
+      "model": "github-copilot/gpt-5.6-sol@high"
+    },
     "spec": {
       "description": "Writes and maintains specifications, project policy, and OpenCode configuration. Cannot modify implementation code.",
-      "model": "github-copilot/claude-opus-4.6",
+      "model": "github-copilot/gpt-5.6-sol@high",
       "mode": "primary",
       "color": "warning",
       "prompt": "{file:./.opencode/prompts/spec.md}",
@@ -24,7 +27,7 @@
     },
     "code": {
       "description": "Implements features from specifications. Signals unresolved behavioral or contract gaps while choosing compliant internal technical mechanisms.",
-      "model": "github-copilot/claude-sonnet-5",
+      "model": "google-vertex/claude-sonnet-5@xhigh",
       "mode": "primary",
       "color": "error",
       "prompt": "{file:./.opencode/prompts/code.md}",
