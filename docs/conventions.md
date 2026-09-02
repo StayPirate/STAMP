@@ -82,19 +82,13 @@ section and related authority must be loaded.
 - Follow the principle of least surprise: code should do what a reader expects
 - Prefer explicit over implicit
 - Keep functions short and focused on a single responsibility
-- **API-first**: the REST API is the primary interface of the platform.
-  Every operation must be achievable through the API alone, with
-  equivalent filtering, pagination, and sorting capabilities
-- **HTTP APIs over CLIs**: when integrating with external services (IBS/OBS,
-  SMELT, AIMAAS, Bugzilla, etc.), Sentinel MUST use their HTTP/REST APIs
-  directly. Command-line tools (`osc`, `secbox`, etc.) are available on the
-  development machine for ad-hoc exploratory testing only (e.g., verifying an
-  API response format) and MUST NOT be used in application code or background
-  tasks. This prohibition targets service-wrapper CLIs that add a process
-  dependency on top of APIs already directly usable — it does not apply to
-  transport-protocol clients where the data source has no HTTP API equivalent
-  (e.g., the `git` binary for cloning MITRE cvelistV5 and Linux Kernel
-  vulns.git repositories)
+- Apply the **API-first** and **HTTP APIs for external services** design
+  constraints in `docs/architecture.md`. That document owns the consumer
+  parity requirement and the distinction between prohibited service-wrapper
+  CLIs and permitted transport-protocol clients. Service-wrapper CLIs available
+  on the development machine MAY be used for ad-hoc exploratory testing, such
+  as verifying an API response format, but never in application code or
+  background tasks
 
 ## Terminology
 
@@ -381,19 +375,17 @@ exemption removal there so it is not forgotten.
 - **Functions/methods**: `snake_case`
 - **Constants**: `UPPER_SNAKE_CASE`
 - **Private**: prefix with single underscore `_`
-- **Fetchers**: `BaseFetcher` subclass naming follows the
-  `<verb>_<source>_<noun>` convention — see
-  `docs/features/platform/fetcher-infrastructure.md` (Naming Convention)
-- **CVE fetchers**: inherit from `BaseCVEFetcher`
-  (`backend/app/services/base_cve_fetcher.py`). Declare
-  `cve_source_type` and implement `fetch_single()` (unless
-  `supports_fetch_single = False`). See
+- **Fetchers**: `BaseFetcher` registry and class names follow the complete
+  naming convention in `docs/features/platform/fetcher-infrastructure.md`:
+  external-source names use `<verb>_<source>_<noun>`, while local `evaluate`
+  fetchers omit the source and use `<verb>_<noun>`
+- **CVE fetchers**: inherit from `BaseCVEFetcher`; follow the attributes,
+  `fetch_single()`, and opt-out contracts in
   `docs/features/platform/cve-fetcher-infrastructure.md`
-- **Git-based CVE fetchers (delta-flow)**: inherit from `BaseGitFetcher`
-  (`backend/app/services/base_git_fetcher.py`). Only implement
-  `process_item()`, `_construct_candidate_paths()`, and optionally
-  `filter_delta_files()` / `deduplicate_items()`. Do NOT override
-  `execute()`. See `docs/features/platform/git-fetcher-infrastructure.md`
+- **Git-based CVE fetchers (delta flow)**: inherit the `BaseGitFetcher`
+  template, declare the required class attributes, and override only its
+  documented hook methods. They MUST NOT override `execute()`. See
+  `docs/features/platform/git-fetcher-infrastructure.md`
 
 ## API and Schema Conventions
 
@@ -528,25 +520,18 @@ Every async workflow function repeatedly invoked this way MUST `await
 engine.dispose()` once its work is complete, on success or failure, before
 returning control to its `asyncio.run()` caller. This drains connections tied
 to the closing loop. The obligation belongs to the outermost workflow function
-that owns the invocation's event loop; generic Celery task wrappers are the
-canonical example. `run_fetcher` is documented in
-`docs/features/platform/fetcher-infrastructure.md` (Celery Integration), and
-`cleanup_sessions` in `docs/features/identity/authentication.md` (Session
-cleanup). The obligation never belongs to a nested service function or a
-fetcher method (`execute()`, `fetch_single()`, `catch_up()`) that may be invoked
-from more than one wrapper and does not itself own the loop.
+that owns the invocation's event loop, never to a nested service or fetcher
+method that may be invoked through different wrappers. Owning workflow
+specifications identify the concrete disposal boundary.
 
 A synchronous entry point is exempt when its process exits after one
-`asyncio.run()` call (CLI commands, Alembic migrations), so the pool is
-discarded with the process, or when it provably does not share the
-process-lifetime pooled engine. The test harness, for example, constructs and
-disposes its own `NullPool`-backed engine within one event loop; see
-`docs/features/platform/testing-strategy.md` (Sync Entry-Point Tests). A worker
-or Beat startup handler that disposes the shared engine after one-time
-bootstrap work (see Worker Startup Handler in `fetcher-infrastructure.md`)
-satisfies the same invariant because prefork children must not inherit live
-parent connections and Beat must not reuse a connection from its bootstrap
-loop.
+`asyncio.run()` call (for example, a CLI command or Alembic migration), or when
+it provably does not share the process-lifetime pooled engine. A one-time
+worker or Beat startup handler that uses the shared engine still disposes it
+after bootstrap, so prefork children do not inherit live parent connections
+and Beat does not reuse a bootstrap-loop connection. See the owning workflow
+specification and `docs/features/platform/testing-strategy.md` (Sync
+Entry-Point Tests).
 
 See `docs/features/platform/testing-strategy.md` (Cross-Loop Engine Lifecycle)
 for the required regression and structural test coverage.
@@ -633,19 +618,11 @@ in the schema.
 
 ### Audit Trail
 
-Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
-(`backend/app/models/mixins.py`). Every audit trail MUST be implemented
-as a `BaseAuditLog` subclass
-(`backend/app/services/base_audit_log.py`).
-
-Audit events are historical evidence, not operational state. They MUST NOT be
-used to determine current state or drive mutation, authorization, idempotency,
-or restoration decisions.
-
-See `docs/features/platform/audit-trail-infrastructure.md` for the
-full specification, including permitted historical read models, base class
-interface, mixin columns, naming conventions, atomicity rules, and the Audit
-Trail Index.
+`docs/features/platform/audit-trail-infrastructure.md` is the single canonical
+source for shared audit rules, including `AuditEventMixin`, `BaseAuditLog`,
+atomicity, operational-state separation, permitted historical read models,
+naming, and the Audit Trail Index. Domain audit specifications extend that
+shared contract with their event types and data.
 
 ### Transaction and Locking
 
@@ -799,13 +776,11 @@ as short as possible. Two categories of work are forbidden inside it:
    transaction is opened. This pattern is not subject to the No Network I/O
    prohibition.
 
-   Ticket reactivation follows the normal rule:
-   `reconcile_ticket_status()` registers its recovery workflow during the
-   caller-owned transaction, but publication occurs only after commit. The
-   workflow then re-resolves the package tree before publishing per-fetcher
-   `catch_up()` tasks. See `docs/features/platform/fetcher-infrastructure.md`
-   (Post-commit enqueue) and `docs/features/packages/package-model.md`
-   (Reactivation and Convergence). No pre-commit enqueue exception applies.
+   Ticket reactivation is not an exception: its recovery publication occurs
+   only after commit, as defined in
+   `docs/features/platform/fetcher-infrastructure.md` (Per-Ticket Catch-Up,
+   Post-commit enqueue) and `docs/features/packages/package-model.md`
+   (Reactivation and convergence). No pre-commit enqueue exception applies.
 
 2. **No expensive queries**: analytical queries, aggregations over
    large tables, or computationally intensive operations MUST be
@@ -1556,22 +1531,11 @@ an endpoint error table") and are not restated here.
 
 ### Fetcher Documentation
 
-Every `BaseFetcher` subclass MUST have its specification documented
-following the fetcher documentation requirements defined in
-`docs/features/platform/fetcher-infrastructure.md` (section "Fetcher
-Documentation Requirements"). This includes the classification rule
-(dedicated spec vs. embedded section), the minimum documentation
-template, and the Fetcher Registry maintenance obligation.
-
-**Test-only exception**: a concrete `BaseFetcher` subclass that exists
-exclusively under `backend/tests/support/` for the local process
-system test suite is exempt from the per-fetcher specification
-template and the Fetcher Registry documentation obligation. Its
-complete contract is defined in
-`docs/features/platform/testing-strategy.md` (Local Process System
-Testing). This exception does not extend to production fetchers,
-stubs, internal fetchers, or any class outside that specific test
-support module.
+Every `BaseFetcher` subclass follows the classification, minimum template,
+cross-reference, registry, placement, and narrowly scoped test-only exception
+rules in `docs/features/platform/fetcher-infrastructure.md` (Fetcher
+Documentation Requirements). That specification is the single source of truth
+for the complete documentation contract.
 
 ### Function Specification Completeness
 
@@ -1837,10 +1801,8 @@ exception classes — one per distinct error code.
 Domain-specific validation exceptions (e.g., `PasswordValidationError`,
 `ApiKeyNameValidationError`) use domain-specific error codes (e.g.,
 `USER_PASSWORD_POLICY_VIOLATION`, `AUTH_API_KEY_NAME_INVALID`) — NOT the
-generic `VALIDATION_ERROR` code. The `errors` array in the response body
-remains exclusive to `VALIDATION_ERROR` responses (Pydantic schema
-validation). Domain validation errors use the standard `code` + `detail`
-envelope format.
+generic `VALIDATION_ERROR` code. Response-envelope and Pydantic validation
+semantics are defined in `docs/api-spec.md`.
 
 #### Mapping authority chain
 
@@ -1882,14 +1844,10 @@ MUST log a warning (indicates a missing specific handler).
 
 #### Endpoint error tables (post-standardization)
 
-Endpoint-level error tables in feature specs document errors specific to
-the endpoint's logic. They reference the error code and condition for
-traceability — the authoritative HTTP status mapping for service
-exceptions lives in the owning service spec's exception table.
-
-Global and scoped responses (defined in `api-spec.md`) are never
-included as table rows — they are derivable from the endpoint's access
-level and path (see Response Applicability Derivation in `api-spec.md`).
+Endpoint error-table membership, including global and scoped response
+derivation, is defined in `docs/api-spec.md` (What belongs in an endpoint error
+table and Response Applicability Derivation). The authoritative HTTP/code
+mapping for a service exception remains in its owning service specification.
 
 ### Roadmap Independence
 
