@@ -5,6 +5,7 @@ description: >
   generalization. Use after adding potentially shared rules. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
+variant: high
 permission:
   edit: deny
   bash:

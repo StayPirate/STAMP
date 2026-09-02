@@ -5,6 +5,7 @@ description: >
   updating every PR, or on demand with a PR reference. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
+variant: high
 permission:
   edit: deny
   bash:

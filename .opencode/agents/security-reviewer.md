@@ -5,6 +5,7 @@ description: >
   dependencies. Use after security-relevant changes. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
+variant: high
 permission:
   edit: deny
   bash:
