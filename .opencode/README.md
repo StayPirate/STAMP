@@ -105,9 +105,9 @@ Trigger Matrix and mirrored in `.opencode/prompts/code.md` and
 ### Model Tiering
 
 All reviewer subagents are pinned to
-`google-vertex/claude-sonnet-5@default` with the `high` variant. A single
-high-thinking tier keeps review costs predictable while ensuring reviews do
-not inherit the invoking primary agent's model.
+`google-vertex/claude-sonnet-5@default`. A single default-model tier keeps
+review costs predictable while ensuring reviews do not inherit the invoking
+primary agent's model.
 
 ## Commands
 

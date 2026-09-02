@@ -4,7 +4,6 @@ description: >
   SQLAlchemy models, Alembic migrations, or `docs/data-model.md`. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
-variant: high
 permission:
   edit: deny
   bash:
