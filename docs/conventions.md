@@ -2,14 +2,83 @@
 
 ## Contents
 
+- [Document Scope, Authority, and Navigation](#document-scope-authority-and-navigation)
 - [General Principles](#general-principles)
 - [Terminology](#terminology)
+  - [External Identity / SSO Terminology](#external-identity--sso-terminology)
+  - [Cascade / Chain / Flattening Terminology](#cascade--chain--flattening-terminology)
+  - [Ticket Status Category Terminology](#ticket-status-category-terminology)
+  - [Ecosystem Naming](#ecosystem-naming)
 - [Cross-Cutting Rules](#cross-cutting-rules)
+  - [Example Data in Documentation](#example-data-in-documentation)
+  - [Username Format](#username-format)
+  - [Timestamps & Timezones](#timestamps--timezones)
+  - [Configuration Management](#configuration-management)
 - [Python (Backend)](#python-backend)
+  - [Style](#style)
+  - [Type Hints](#type-hints)
+  - [Static Type Checking](#static-type-checking)
+  - [Naming](#naming)
+- [API and Schema Conventions](#api-and-schema-conventions)
+  - [FastAPI Conventions](#fastapi-conventions)
+  - [Pydantic Conventions](#pydantic-conventions)
+- [Database, Transactions, and State](#database-transactions-and-state)
+  - [SQLAlchemy Conventions](#sqlalchemy-conventions)
+    - [Async-only Database Access](#async-only-database-access)
+    - [Sync-to-Async Bridging](#sync-to-async-bridging)
+    - [Cross-Loop Pooled Connection Lifecycle](#cross-loop-pooled-connection-lifecycle)
+  - [Enum Storage Strategy](#enum-storage-strategy)
+  - [Audit Trail](#audit-trail)
+  - [Transaction and Locking](#transaction-and-locking)
+    - [Caller-Owned Service Transactions](#caller-owned-service-transactions)
+    - [API Transaction Dependency Scope](#api-transaction-dependency-scope)
+    - [Pessimistic Locking Pattern](#pessimistic-locking-pattern)
+    - [Transaction Hygiene Rules](#transaction-hygiene-rules)
+  - [Redis](#redis)
+    - [Redis Key Conventions](#redis-key-conventions)
+    - [Redis Error Handling](#redis-error-handling)
+- [Runtime, Integration, and Verification](#runtime-integration-and-verification)
+  - [Secret Field Typing](#secret-field-typing)
+  - [Logging](#logging)
+  - [Testing Conventions](#testing-conventions)
+  - [External Integration Contract Verification](#external-integration-contract-verification)
+  - [Runtime Version](#runtime-version)
+    - [Source of Truth](#source-of-truth)
+    - [Dockerfile Convention](#dockerfile-convention)
+    - [Version Bump Checklist](#version-bump-checklist)
 - [CLI Conventions](#cli-conventions)
+  - [Output Contract](#output-contract)
 - [Shell Scripting](#shell-scripting)
 - [Git Conventions](#git-conventions)
+  - [Workflow](#workflow)
+  - [Pull Request Requirements](#pull-request-requirements)
+  - [Versioning](#versioning)
+    - [Version Source of Truth](#version-source-of-truth)
+    - [SemVer Interpretation](#semver-interpretation)
+    - [Pre-1.0 Rules](#pre-10-rules)
+    - [1.0.0 Graduation Criteria](#100-graduation-criteria)
 - [Specification Writing](#specification-writing)
+  - [Function Specification Completeness](#function-specification-completeness)
+    - [Required Information](#required-information-by-function-category)
+    - [Decision rule](#decision-rule)
+    - [Scope and Exclusions](#scope-and-exclusions)
+  - [Service Exception Conventions](#service-exception-conventions)
+  - [Roadmap Independence](#roadmap-independence)
+
+## Document Scope, Authority, and Navigation
+
+This document defines Sentinel's technical, documentation, and Git
+conventions. It owns reusable engineering patterns, naming, repository
+workflow, and specification-writing rules. Product behavior and specialist
+contracts for the API, data model, configuration, external sources, deployment,
+and feature-specific operational outcomes remain in their corresponding
+authorities.
+
+Summaries and examples here explain how to apply a convention; they do not
+replace a more specific owning contract. When this document names such an
+authority, follow that authority for behavior and use this document for the
+shared implementation or writing pattern. `AGENTS.md` defines when each
+section and related authority must be loaded.
 
 ## General Principles
 
@@ -205,10 +274,10 @@ Sentinel uses four configuration artifacts with distinct roles:
 
 | Artifact | Role | Authority |
 |----------|------|-----------|
-| Feature spec (`Defined in` column) | Defines semantics, name, type, default, bounds | Source of truth — wins in case of conflict |
-| `docs/configuration.md` | Aggregated operational index for operators | Mirrors feature specs; all artifacts MUST agree |
-| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of the env var name defined in the feature spec |
-| `backend/.env.example` | Developer quickstart template | Subset of `config.py` fields — see inclusion criteria below |
+| Feature spec named in the `Defined in` column | Defines feature-specific semantics, name, type, default, bounds | Source of truth for that feature setting |
+| `docs/configuration.md` | Aggregated operational index; directly defines core infrastructure variables whose `Defined in` value is `—` | Mirrors feature specs and owns the documented core exceptions; all artifacts MUST agree |
+| `backend/app/config.py` | Implementation (Pydantic `Settings` class) | Field names are the `lower_snake_case` form of the environment variable name defined by its owning authority |
+| `backend/.env.example` | Developer quickstart template | Subset of `config.py` fields selected by the `.env.example` Inclusion Criteria |
 
 **Invariant**: every field in `config.py` MUST correspond to an entry in
 `docs/configuration.md`. A field that exists in code but not in the
@@ -231,7 +300,8 @@ it for local development. Variables excluded:
 **Feature development workflow** (configuration aspect):
 
 1. Define the variable in the owning feature spec (authoritative
-   semantics)
+   semantics). Core infrastructure variables without a feature owner are
+   defined directly in `docs/configuration.md`
 2. Add an entry to `docs/configuration.md` (operator reference)
 3. Implement the field in `config.py` when the feature is implemented
 4. Add to `.env.example` only if it meets the inclusion criteria
@@ -284,9 +354,9 @@ mode is a mandatory CI gate, equivalent in authority to linting — a pull
 request with type errors cannot merge.
 
 **Scope**: application code (`app/`), tests (`tests/`), and Alembic
-migration scripts (`alembic/`) are checked. Excluding tests from static
-type checking would allow type errors to accumulate silently in the test
-suite, which is exempt from this rule only where explicitly noted below.
+migration scripts (`alembic/`) are checked so type errors cannot accumulate
+silently outside application modules. Exemptions are limited to the explicitly
+documented cases below.
 
 **Async-await verification**: type checking flags a coroutine that is
 never awaited or otherwise consumed. This catches a real class of bug in
@@ -329,22 +399,23 @@ exemption removal there so it is not forgotten.
   `filter_delta_files()` / `deduplicate_items()`. Do NOT override
   `execute()`. See `docs/features/platform/git-fetcher-infrastructure.md`
 
+## API and Schema Conventions
+
 ### FastAPI Conventions
 
 - Endpoint handlers should be thin: validate, call service, return response
 - Use dependency injection (`Depends()`) for database sessions, auth, etc.
-- All endpoints must have OpenAPI documentation (summary, description)
+- All endpoints must have OpenAPI documentation through at least a summary or
+  description
 - Use appropriate HTTP status codes and response models
-- **User identifier resolution**: all parameters that identify a user accept
-  either a UUID or a username (see `docs/api-spec.md`, "User Identifier
-  Resolution"). The owning domain service resolves the value: parse a valid
-  UUID as the primary key; otherwise perform an exact stored-username lookup;
-  raise `UserNotFoundError` when no row matches. API dependencies may parse or
-  pass through the path value, but MUST NOT execute the ORM query themselves.
-  A pure shared parser may live in Core; a resolver that loads `User` belongs
-  to the service layer because Core has no application imports. Identity
-  consumers use `user_service.resolve_user_identifier()` as specified in
-  `docs/features/identity/user-service.md`.
+- **User identifier resolution**: parameters that identify a user follow
+  `docs/api-spec.md` (User Identifier Resolution), including its distinction
+  between target resources and optional list filters. API dependencies may
+  parse or pass through the value, but MUST NOT execute the ORM lookup. A pure
+  parser may live in Core; a resolver that loads `User` belongs to the service
+  layer because Core has no application imports. Identity consumers use
+  `user_service.resolve_user_identifier()` as specified in
+  `docs/features/identity/user-service.md`
 
 - **Capability-based authorization**: use `require_capability()` as the
   standard authorization dependency for capability-protected endpoints.
@@ -363,8 +434,8 @@ exemption removal there so it is not forgotten.
   The dependency returns an `AuthenticatedPrincipal` carrying both the
   active `User` and the `CredentialKind` (`jwt` or `api_key`) — see
   `docs/features/identity/authentication.md` (Authenticated Principal).
-  Scope filtering (confidential ticket visibility) is handled by shared
-  query utilities (`confidential_ticket_filter()`,
+  Scope filtering (confidential ticket visibility) is handled by shared query
+  utilities and API dependencies (`confidential_ticket_filter()`,
   `require_accessible_ticket`), not per-endpoint logic. See
   `docs/features/identity/rbac.md` for the full authorization model
 
@@ -374,6 +445,16 @@ exemption removal there so it is not forgotten.
   level, rather than repeating validation logic in individual endpoint
   handlers. This ensures consistent enforcement across all endpoints and
   reduces the risk of omission
+
+### Pydantic Conventions
+
+- Separate schemas for Create, Update, and Response
+- Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
+- Validate transport shape, types, and transport-specific constraints in
+  Pydantic schemas. Services enforce domain and data-integrity invariants for
+  every caller; endpoint handlers do not duplicate either validation layer
+
+## Database, Transactions, and State
 
 ### SQLAlchemy Conventions
 
@@ -387,92 +468,92 @@ exemption removal there so it is not forgotten.
   timestamp in its most-significant bits, which gives near-sequential
   B-tree index insertion (no random page splits) and makes `ORDER BY id`
   equivalent to chronological order. `uuidv7()` requires PostgreSQL 18+
-- Always include `created_at` and `updated_at` timestamps
+- Include `created_at` and `updated_at` timestamps by default. Semantic
+  exceptions and alternate lifecycle timestamps MUST be documented in
+  `docs/data-model.md` (Notes)
 - Define relationships explicitly with `back_populates`
-- **Async-only**: Sentinel uses async-only database access everywhere —
-  API handlers, service modules, Celery tasks, and CLI commands all use
-  `AsyncSession` backed by the `asyncpg` driver. No synchronous database
-  driver or engine is maintained. Introducing one (e.g., for a CLI
-  command "for performance" or "simplicity") requires explicit written
-  justification that the async-only model is insufficient for the
-  specific use case, and MUST be approved by a human reviewer before
-  implementation — do not introduce a synchronous driver/engine
-  autonomously
-- **Sync-to-async bridging**: synchronous entry points (CLI commands,
-  Celery signal handlers, management scripts) that need to call async
-  code MUST follow this pattern:
 
-  1. Extract the async logic into a named `async def` function — this
-     is the independently testable unit (tests `await` it directly
-     without going through `asyncio.run()`)
-  2. The synchronous caller wraps the extracted function in exactly one
-     `asyncio.run()` call per invocation
-  3. Nested or multiple `asyncio.run()` calls within a single invocation
-     are not supported — each `asyncio.run()` creates and destroys an
-     event loop; multiple calls add overhead and risk subtle state leaks
-     between loops
+#### Async-only Database Access
 
-  **Celery signal handler placement**: worker startup
-  (`celeryd_after_setup`) and Beat startup (`beat_init`) signal handlers
-  live under `app/tasks/`, not `app/core/`, because they import and call
-  service-layer functions (`bootstrap_fetcher_configs`, reconciliation).
-  Core has no application-level imports (see `docs/architecture.md`,
-  Backend Layer Architecture). The handlers are thin synchronous
-  wrappers that use the sync-to-async bridging pattern above and
-  `sys.exit(1)` on failure (explicit fail-fast).
+Sentinel uses async-only database access everywhere. API handlers, service
+modules, Celery tasks, and CLI commands all use `AsyncSession` backed by the
+`asyncpg` driver. No synchronous database driver or engine is maintained.
+Introducing one (e.g., for a CLI command "for performance" or "simplicity")
+requires explicit written justification that the async-only model is
+insufficient for the specific use case and MUST be approved by a human
+reviewer before implementation. Do not introduce a synchronous driver or
+engine autonomously.
 
-  See `docs/features/platform/testing-strategy.md` (Sync Entry-Point
-  Tests) for the corresponding test convention (why sync entry-point
-  tests must be `def`, not `async def`).
+#### Sync-to-Async Bridging
 
-- **Cross-loop pooled connection lifecycle**: the production database
-  engine (`app/database.py`) is a process-lifetime singleton using
-  SQLAlchemy's default pooled connection implementation. A pooled
-  `asyncpg` connection is bound to the event loop that created it —
-  reusing it after that loop has closed raises `RuntimeError`
-  (`... attached to a different loop`) or `InterfaceError`. This is an
-  upstream SQLAlchemy constraint, not a Sentinel-specific one.
+Synchronous entry points (CLI commands, Celery signal handlers, management
+scripts) that need to call async code MUST follow this pattern:
 
-  A single `asyncio.run()` call per invocation (per the bridging pattern
-  above) is safe on its own — the risk appears when the same **process**
-  repeats the bridging pattern across multiple invocations over its
-  lifetime (the defining trait of a Celery prefork worker child, which
-  executes an unbounded sequence of task invocations). Each invocation's
-  `asyncio.run()` creates and destroys its own event loop; a pooled
-  connection checked back in by one invocation remains bound to that
-  invocation's now-closed loop and can be handed to the next invocation's
-  new loop.
+1. Extract the async logic into a named `async def` function. This is the
+   independently testable unit; tests `await` it directly without going
+   through `asyncio.run()`.
+2. The synchronous caller wraps the extracted function in exactly one
+   `asyncio.run()` call per invocation.
+3. Nested or multiple `asyncio.run()` calls within a single invocation are not
+   supported. Each call creates and destroys an event loop; multiple calls add
+   overhead and risk subtle state leaks between loops.
 
-  Every async workflow function that is repeatedly invoked this way MUST
-  `await engine.dispose()` once its own work is complete — success or
-  failure — before returning control to its `asyncio.run()` caller. This
-  drains the pool of connections tied to the closing loop so the next
-  invocation cannot check one out. The obligation belongs to the
-  outermost workflow function that owns the invocation's event loop —
-  generic Celery task wrappers are the canonical example. `run_fetcher`
-  is documented in `docs/features/platform/fetcher-infrastructure.md`
-  (Celery Integration); `cleanup_sessions` is documented in
-  `docs/features/identity/authentication.md` (Session cleanup) — never
-  to a nested service function, or a fetcher method (`execute()`,
-  `fetch_single()`, `catch_up()`) that may be invoked from more than one
-  such wrapper and does not itself own the loop.
+**Celery signal handler placement**: worker startup
+(`celeryd_after_setup`) and Beat startup (`beat_init`) signal handlers live
+under `app/tasks/`, not `app/core/`, because they import and call service-layer
+functions (`bootstrap_fetcher_configs`, reconciliation). Core has no
+application-level imports (see `docs/architecture.md`, Backend Layer
+Architecture). The handlers are thin synchronous wrappers that use the
+Sync-to-Async Bridging pattern and `sys.exit(1)` on failure (explicit
+fail-fast).
 
-  A synchronous entry point is exempt from this obligation when its
-  process exits after one `asyncio.run()` call (CLI commands, Alembic
-  migrations) — the pool is discarded with the process — or when it
-  provably does not share the process-lifetime pooled engine (e.g., it
-  constructs and disposes its own `NullPool`-backed engine entirely
-  within one event loop, as the test harness does — see
-  `docs/features/platform/testing-strategy.md`, Sync Entry-Point Tests).
-  A worker or Beat startup handler that disposes the shared engine after
-  one-time bootstrap work (see Worker Startup Handler in
-  `fetcher-infrastructure.md`) satisfies this same invariant for a
-  different reason: forked prefork children must not inherit live parent
-  connections, and Beat's own tick loop must not reuse a connection left
-  over from its bootstrap loop.
+See `docs/features/platform/testing-strategy.md` (Sync Entry-Point Tests) for
+the corresponding test convention (why sync entry-point tests must be `def`,
+not `async def`).
 
-  See `docs/features/platform/testing-strategy.md` (Cross-Loop Engine
-  Lifecycle) for the required regression and structural test coverage.
+#### Cross-Loop Pooled Connection Lifecycle
+
+The production database engine (`app/database.py`) is a process-lifetime
+singleton using SQLAlchemy's default pooled connection implementation. A
+pooled `asyncpg` connection is bound to the event loop that created it. Reusing
+it after that loop has closed raises `RuntimeError` (`... attached to a
+different loop`) or `InterfaceError`. This is an upstream SQLAlchemy
+constraint, not a Sentinel-specific one.
+
+A single `asyncio.run()` call per invocation (per Sync-to-Async Bridging) is
+safe on its own. The risk appears when the same **process** repeats the pattern
+across multiple invocations over its lifetime, as a Celery prefork worker child
+does. Each invocation creates and destroys its own event loop; a pooled
+connection checked back in by one invocation remains bound to that
+invocation's now-closed loop and can be handed to the next invocation's new
+loop.
+
+Every async workflow function repeatedly invoked this way MUST `await
+engine.dispose()` once its work is complete, on success or failure, before
+returning control to its `asyncio.run()` caller. This drains connections tied
+to the closing loop. The obligation belongs to the outermost workflow function
+that owns the invocation's event loop; generic Celery task wrappers are the
+canonical example. `run_fetcher` is documented in
+`docs/features/platform/fetcher-infrastructure.md` (Celery Integration), and
+`cleanup_sessions` in `docs/features/identity/authentication.md` (Session
+cleanup). The obligation never belongs to a nested service function or a
+fetcher method (`execute()`, `fetch_single()`, `catch_up()`) that may be invoked
+from more than one wrapper and does not itself own the loop.
+
+A synchronous entry point is exempt when its process exits after one
+`asyncio.run()` call (CLI commands, Alembic migrations), so the pool is
+discarded with the process, or when it provably does not share the
+process-lifetime pooled engine. The test harness, for example, constructs and
+disposes its own `NullPool`-backed engine within one event loop; see
+`docs/features/platform/testing-strategy.md` (Sync Entry-Point Tests). A worker
+or Beat startup handler that disposes the shared engine after one-time
+bootstrap work (see Worker Startup Handler in `fetcher-infrastructure.md`)
+satisfies the same invariant because prefork children must not inherit live
+parent connections and Beat must not reuse a connection from its bootstrap
+loop.
+
+See `docs/features/platform/testing-strategy.md` (Cross-Loop Engine Lifecycle)
+for the required regression and structural test coverage.
 
 ### Enum Storage Strategy
 
@@ -485,7 +566,7 @@ strategies:
 | **State-machine** | `VARCHAR(N)` + `CHECK` constraint | Alembic migration (reversible) |
 | **Classification** | `VARCHAR(N)` + Python `StrEnum` in `app/core/enums.py` | Code change only |
 
-**Migration reversibility note**: "reversible" in the table above means
+**Migration reversibility note**: "reversible" in the strategy table means
 the migration file contains both `upgrade()` and `downgrade()` functions
 so that the CHECK constraint change can be rolled back during
 development. It does not imply that `alembic downgrade` is supported in
@@ -511,9 +592,9 @@ description or in a dedicated enum section.
 `chk_{table}_` prefix. Beyond the prefix, the suffix depends on what the
 constraint validates:
 
-- **Enum-validation constraints** (restrict a single column to the
-  values of a Category A `StrEnum`, as in the Enum Storage Strategy
-  above): `chk_{table}_{column}_valid`. Example: `chk_ticket_status_valid`.
+- **Enum-validation constraints** (restrict a single column to the values of a
+  Category A `StrEnum`): `chk_{table}_{column}_valid`. Example:
+  `chk_ticket_status_valid`.
 - **Logical/structural constraints** (any other invariant — typically
   spanning multiple columns, such as mutual exclusivity between two
   nullable columns): `chk_{table}_{semantic_description}`, where the
@@ -554,55 +635,6 @@ source: Mapped[str] = mapped_column(String(100), nullable=False)
 See `docs/data-model.md` (Notes) for the classification of every enum
 in the schema.
 
-### Pydantic Conventions
-
-- Separate schemas for Create, Update, and Response
-- Use `model_config = ConfigDict(from_attributes=True)` for ORM integration
-- Validate at the schema level, not in endpoints or services
-
-### Secret Field Typing
-
-Configuration fields in `backend/app/config.py` (`Settings` class) that
-contain secrets MUST use Pydantic's `SecretStr` type instead of plain
-`str`. This prevents accidental exposure of secret values via `repr()`,
-tracebacks, debug logging, or serialization (`model_dump()` renders
-`SecretStr` fields as `'**********'`).
-
-Classification:
-
-| Field nature | Type | Example |
-|---|---|---|
-| Pure secret (signing key, password, token, API key) | `SecretStr` | `jwt_secret_key: SecretStr` |
-| URL that may embed credentials (`user:password@host`) | `str` with `Field(..., repr=False)` | `database_url: str = Field(default="...", repr=False)` |
-| Non-secret configuration (usernames, public URLs, flags) | plain type (default) | `ibs_api_url: str = "..."` |
-
-Rules:
-
-- Access the real value of a `SecretStr` field exclusively via
-  `.get_secret_value()`. Never rely on implicit `str()` conversion,
-  which returns the masked representation (`'**********'`), not the
-  real value
-- Validators (`@model_validator`) that inspect a `SecretStr` field MUST
-  call `.get_secret_value()` before performing checks (e.g., length
-  validation, emptiness checks)
-- URL fields that may embed credentials use `Field(..., repr=False)`
-  rather than `SecretStr`, because downstream libraries (SQLAlchemy's
-  `create_async_engine`, Celery, httpx) require a plain `str` argument.
-  `repr=False` hides the field from `repr(settings)` and from
-  Pydantic's default logging integrations while preserving direct
-  string compatibility with those libraries
-- A username field (e.g., `ibs_username`) is NOT treated as a secret
-  by this convention — only the paired credential (e.g., `ibs_password`)
-  is
-- When adding a new field to `Settings` that holds credential material,
-  apply this classification before implementation. If genuinely
-  uncertain whether a value counts as a secret, treat it as a secret
-- Never serialize the full `Settings` object (`model_dump()`,
-  `model_dump_json()`) in API responses, health endpoints, or error
-  payloads — credential-bearing URL fields remain plain strings and are
-  not masked by serialization; only `repr()` is affected by
-  `Field(..., repr=False)`
-
 ### Audit Trail
 
 Every audit event SQLAlchemy model MUST inherit from `AuditEventMixin`
@@ -634,8 +666,8 @@ The workflow entry point owns completion of that transaction:
 - an API database-transaction dependency commits exactly once after the
   handler and all delegated services succeed, and rolls back exactly once when
   an exception escapes — in both cases, before the response is transmitted to
-  the client (see API Transaction Dependency Scope below for the FastAPI
-  mechanism that guarantees this ordering);
+  the client (see API Transaction Dependency Scope for the FastAPI mechanism
+  that guarantees this ordering);
 - a mutating CLI async workflow follows the transaction contract in
   `docs/features/platform/cli-infrastructure.md`; and
 - a Celery task or other synchronous process entry point wraps one complete
@@ -653,7 +685,7 @@ orchestrators into caller-owned services.
 External effects remain outside the PostgreSQL transaction. A service may
 return the data needed for a post-commit effect, but the workflow owner invokes
 that effect only after its database commit succeeds and the row lock is
-released, following Transaction Hygiene Rules below. For API workflows, the
+released, following Transaction Hygiene Rules. For API workflows, the
 transaction boundary preserves or registers the returned effect data until the
 dependency has committed, then runs the effect. The internal callback or
 framework mechanism used to bridge handler return and dependency completion is
@@ -670,7 +702,8 @@ HTTP response through the dependency's `scope`:
 - `scope="request"` — FastAPI's default when a `yield` dependency does not
   specify a scope: the exit phase runs after the response has already been
   transmitted to the client. This does NOT satisfy the ordering guarantee
-  above — a client can observe a success response before the commit (or a
+  defined by Caller-Owned Service Transactions — a client can observe a
+  success response before the commit (or a
   commit failure) has been resolved.
 - `scope="function"`: the exit phase runs after the path operation function
   returns but before the response is transmitted. A commit failure at this
@@ -691,12 +724,12 @@ performs transaction-completion work. It does not apply to plain
 (non-`yield`) dependencies, which have no exit phase to order against the
 response.
 
-When a service module centralizes all mutations on an entity (e.g.,
-`ticket_mutations` for tickets), concurrent transactions can produce
-lost updates or stale audit trail values. To prevent this, apply
-pessimistic locking at the module boundary.
-
 #### Pessimistic Locking Pattern
+
+When a service module centralizes all mutations on an entity (e.g.,
+`ticket_mutations` for tickets), concurrent transactions can produce lost
+updates or stale audit trail values. To prevent this, apply pessimistic locking
+at the module boundary.
 
 Every public function in a centralized mutation module that performs a
 state-dependent mutation of an existing root entity MUST acquire a row-level
@@ -756,19 +789,19 @@ as short as possible. Two categories of work are forbidden inside it:
    5. Post-commit side effects: cache invalidation, task enqueue (best-effort)
    ```
 
-   Post-commit side effects (step 5) use data returned by the
-   transactional phase (e.g., a list of invalidated session IDs) to
-   perform the necessary Redis or broker operations. If the process
-   crashes between commit and post-commit side effects, TTL-based
-   expiry or periodic reconciliation provides eventual consistency.
+   Post-commit side effects (step 5) use data returned by the transactional
+   phase (e.g., a list of invalidated session IDs) to perform the necessary
+   Redis or broker operations. The owning feature defines recovery when the
+   process crashes between commit and the side effect, such as TTL expiry,
+   reconciliation, idempotent retry, or an observable operator rerun.
 
    **Pre-transaction guards** are a distinct pattern: a Redis
    operation that serves as a distributed lock or precondition gate
    (e.g., `SET key NX EX ttl` to prevent concurrent batch processing)
    executes BEFORE the transaction — it gates entry into the
    transaction, not as a side effect of it. If the guard fails, no
-   transaction is opened. This pattern is not subject to the
-   prohibition above.
+   transaction is opened. This pattern is not subject to the No Network I/O
+   prohibition.
 
    Ticket reactivation follows the normal rule:
    `reconcile_ticket_status()` registers its recovery workflow during the
@@ -845,15 +878,14 @@ Redis-dependent tests follow `docs/features/platform/testing-strategy.md`
 (Redis Strategy), including isolated worker databases and replaceable
 consumer boundaries for deterministic failure simulation.
 
-**Scope**: this convention applies to application code that directly
-calls the Redis client. It does NOT apply to:
+**Scope**: this convention applies to application code that directly calls the
+Redis client. It does NOT define error handling for library-managed operations:
 
 - Celery broker operations (managed by the Celery framework; errors
   surface as task publish failures with Celery's own retry logic)
-- Redbeat operations (managed by the library; errors in `tick()` are
-  handled by the Beat fail-fast mechanism — see
-  `docs/features/platform/fetcher-infrastructure.md`, "Runtime: Redis
-  Data Loss")
+- Redbeat operations, whose owning specifications define behavior through the
+  library API, including Beat fail-fast and post-commit propagation paths; see
+  `docs/features/platform/fetcher-infrastructure.md` and the consuming feature
 
 **Illustrative async pattern**:
 
@@ -864,6 +896,46 @@ except RedisError as exc:
     # Apply the degradation behavior defined by the owning feature spec.
     logger.warning("redis_operation_failed", error=str(exc))
 ```
+
+## Runtime, Integration, and Verification
+
+### Secret Field Typing
+
+Configuration fields in `backend/app/config.py` (`Settings` class) that
+contain secrets MUST use Pydantic's `SecretStr` type instead of plain `str`.
+This prevents accidental exposure through `repr()`, tracebacks, debug logging,
+or JSON serialization. A Python-mode `model_dump()` retains `SecretStr`
+objects; it does not make a complete settings dump safe to expose.
+
+Classification:
+
+| Field nature | Type | Example |
+|---|---|---|
+| Pure secret (signing key, password, token, API key) | `SecretStr` | `jwt_secret_key: SecretStr` |
+| URL that may embed credentials (`user:password@host`) | `str` with `Field(..., repr=False)` | `database_url: str = Field(default="...", repr=False)` |
+| Non-secret configuration (usernames, public URLs, flags) | plain type (default) | `ibs_api_url: str = "..."` |
+
+Rules:
+
+- Access the real value of a `SecretStr` field exclusively via
+  `.get_secret_value()`. Never rely on implicit `str()` conversion, which
+  returns the masked representation (`'**********'`), not the real value
+- Validators (`@model_validator`) that inspect a `SecretStr` field MUST call
+  `.get_secret_value()` before performing checks such as length or emptiness
+  validation
+- URL fields that may embed credentials use `Field(..., repr=False)` to retain
+  direct string compatibility with downstream libraries. `repr=False` hides
+  the field from `repr(settings)` but is not a serialization or logging
+  boundary
+- A username field (e.g., `ibs_username`) is NOT treated as a secret by this
+  convention; only the paired credential (e.g., `ibs_password`) is
+- When adding a new `Settings` field that holds credential material, apply
+  this classification before implementation. If genuinely uncertain whether
+  a value counts as a secret, treat it as a secret
+- Never serialize the full `Settings` object (`model_dump()` or
+  `model_dump_json()`) in API responses, health endpoints, logs, or error
+  payloads. Credential-bearing URL fields remain plain strings, and
+  Python-mode dumps retain secret-bearing objects
 
 ### Logging
 
@@ -876,12 +948,12 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 logger.info("fetcher_run_started", fetcher_name=self.name)
-logger.warning("retrying_http_call", url=url, attempt=attempt)
+logger.warning("retrying_http_call", service="example", attempt=attempt)
 ```
 
 Log statements MUST NOT include secret or PII values — see
 `docs/features/platform/logging.md` (Secrets and PII Discipline) and
-Secret Field Typing above. `docs/features/platform/logging.md` is the
+Secret Field Typing. `docs/features/platform/logging.md` is the
 authoritative specification for log format, levels, correlation IDs,
 and the full secrets/PII policy — it is not restated here.
 
@@ -891,17 +963,20 @@ For the full testing strategy — test pyramid, database setup, fixture
 catalog, coverage policy, audit trail testing, and execution model — see
 `docs/features/platform/testing-strategy.md`.
 
-Style rules (kept here for proximity with other Python conventions):
+Style rules:
 
 - Test files mirror the `app/` directory structure
 - Use `pytest` with async support (`pytest-asyncio`)
-- Use fixtures for database sessions, test data, authenticated clients
+- Use the canonical session, client, and Redis fixtures at the boundaries
+  defined by the testing strategy. Create test data with factories where
+  available or by direct model instantiation
 - Test naming: `test_<what>_<condition>_<expected_result>`
 - Example: `test_get_cve_not_found_returns_404`
-- **User identifier resolution**: every endpoint that accepts a user
-  identifier MUST be tested with both UUID and username inputs. See
-  `docs/features/platform/testing-strategy.md` (Mandatory Test
-  Scenarios, User Identifier Resolution) for the required test cases
+
+Mandatory behavioral scenarios, including UUID and username forms for user
+identifiers, are owned by `docs/features/platform/testing-strategy.md`. The API
+contract distinguishes target-resource identifiers from optional list filters;
+see `docs/api-spec.md` (User Identifier Resolution).
 
 ### External Integration Contract Verification
 
@@ -1039,8 +1114,8 @@ handling, signal handling) backing the contract defined in this section.
 - Commands that modify data MAY check a configuration guard before
   executing. If a guard is defined and not enabled, the command MUST exit
   with a clear error message explaining which setting to enable
-- Commands MUST be idempotent where practical — running the same command
-  twice should not produce errors or duplicate data
+- Commands follow the complete idempotency rules in Output Contract —
+  Idempotency
 - Use `--flag` for boolean options and `--option VALUE` for parameterized
   options
 - Repeatable options use multiple `--option` flags (e.g.,
@@ -1052,7 +1127,7 @@ handling, signal handling) backing the contract defined in this section.
   semantics defined in `docs/api-spec.md`
 - **Username normalization**: all CLI commands that accept a username
   argument MUST normalize it (trim whitespace, lowercase) before lookup.
-  See Username Format (above) for the full format specification
+  See Username Format for the full format specification
 - **Thin command boundary**: follow `docs/architecture.md` (Backend Layer
   Architecture) for service delegation and the narrowly scoped read-only query
   exception
@@ -1060,7 +1135,7 @@ handling, signal handling) backing the contract defined in this section.
 ### Database Access
 
 - CLI commands bridge into the async database layer via the
-  sync-to-async pattern above (see SQLAlchemy Conventions). See
+  Sync-to-Async Bridging pattern in SQLAlchemy Conventions. See
   `docs/features/platform/cli-infrastructure.md` (Database Session
   Management) for CLI-specific details (session factory injection,
   transaction lifecycle).
@@ -1183,7 +1258,7 @@ are not duplicated here.
 ## Shell Scripting
 
 This section governs standalone shell scripts and shell embedded in CI
-workflows. It is distinct from the CLI Conventions above, which cover the
+workflows. It is distinct from CLI Conventions, which cover the
 Python (Click) `sentinel` command. Shell scripts in Sentinel are limited
 to repository orchestration and developer/CI tooling — application and
 background-task logic MUST be Python (see Backend Layer Architecture in
@@ -1367,8 +1442,8 @@ branch from the updated `origin/master`.
 **Issue linkage**: every non-exempt pull request uses `Closes #<issue>` in
 its body so merge completion closes the tracking issue. Exempt
 human-authored PRs declare `N/A - <specific reason>` instead; approved
-automated PRs (Renovate, release-please) are exempt entirely. See
-Pull Request Requirements below for the accepted formats. If a
+automated PRs (Renovate, release-please) are exempt entirely. Pull Request
+Requirements defines the accepted formats. If a
 specification gap blocks implementation, resolve it in a separate
 documentation issue, branch, and merged PR before creating or resuming
 the implementation branch — unless the combined-PR exception in
@@ -1384,10 +1459,6 @@ of a reviewed PR. The pre-push hook enforces this locally.
 **Squash merge**: the only allowed merge method. The PR title becomes
 the commit message on `master`.
 
-**PR title**: must follow the Conventional Commits format
-(`type[(scope)][!]: description`) and remain under 72 characters because it
-becomes the squash commit subject. Format and length are validated by CI.
-
 **Branch deletion**: branches are deleted automatically after merge.
 
 ### Pull Request Requirements
@@ -1399,7 +1470,7 @@ becomes the squash commit subject. Format and length are validated by CI.
   results, manual verification notes.
 - **Issue linkage**: `Closes #<issue>` for normal work, `N/A - <specific
   reason>` for an exempt human-authored PR under "Issues and work units"
-  above. Use the template's `- Issue linkage:` field, or a standalone
+  in Workflow. Use the template's `- Issue linkage:` field, or a standalone
   `Closes #<issue>` line anywhere in the body. Approved automated PRs
   (Renovate, release-please) are exempt from this field. Validated by
   CI.
@@ -1407,7 +1478,7 @@ becomes the squash commit subject. Format and length are validated by CI.
   If no meaningful manual path exists, record `N/A` with a reason.
 - **External contracts**: when an external integration is changed, record the
   live verification evidence, sanitized fixture, and any unverified fields per
-  External Integration Contract Verification above.
+  External Integration Contract Verification.
 - **CI**: all checks must pass on the latest commit before merge is
   requested.
 - **Reviewers**: applicable reviewer agents must be invoked and
@@ -1523,12 +1594,11 @@ takes full effect.
 
 #### Why Single Version
 
-All runtime process roles (see above) run from the same Docker image
-with different entrypoints (see `docs/deployment.md`, Container
-Images). They cannot be deployed at different versions. Per-component
-versioning (e.g., per-fetcher) would add overhead without practical
-benefit since fetchers are built-in classes, not independently
-deployable plugins.
+All runtime process roles share the single image described in
+`docs/architecture.md` (Single Docker image, multiple entrypoints) and
+`docs/deployment.md` (Container Images), so they cannot be deployed at
+different versions. Fetchers are built-in classes rather than independently
+deployable plugins; per-component versioning would add no practical benefit.
 
 ## Specification Writing
 
@@ -1562,10 +1632,8 @@ support module.
 ### Function Specification Completeness
 
 Every function documented in a feature specification MUST provide enough
-information that an implementer can produce the required behavior without
-inventing product or contract semantics. If an implementer must choose
-between two plausible behaviors because the specification does not say which
-is required, the specification is incomplete.
+information to implement its contract without inventing behavior or semantics.
+The Decision rule defines the controlling insufficiency and excess tests.
 
 Specifications define **what the system must do**, including observable
 behavior, business rules, persisted state, side effects, audit events, error
@@ -1633,8 +1701,7 @@ the required questions:
 - Sub-sections organized by independent concerns (e.g., "Merge
   Strategy", "Transaction Boundaries") where each concern answers a
   subset of the questions
-- Consolidated tables for groups of 2+ functions sharing an identical
-  structural pattern
+- Consolidated tables as defined in Consolidated groups
 - Narrative prose with code blocks, flow diagrams, or pseudo-code
 - Any combination of the above
 
@@ -1703,8 +1770,7 @@ unambiguously derivable from:
    Q5 (re-invocation fails on that guard) is derivable; if Q3 shows
    only deterministic in-memory operations with no failure paths, Q6
    ("None") is derivable
-3. **A module-level or section-level default** — see "Module-level
-   defaults" above
+3. **A module-level or section-level default** — see Module-level defaults
 
 The Insufficiency test takes precedence for contract-level questions: if
 there is any reasonable ambiguity about required behavior or guarantees, the
@@ -1781,15 +1847,13 @@ MUST follow the standard exception documentation pattern established in
 
 #### Base class requirement
 
-All exceptions in a service module inherit from a common
-`<Module>ServiceError` base class (e.g., `TicketServiceError`,
-`UserServiceError`). All module base classes inherit from a common
-`ServiceError` root class. The spec MUST include the declaration:
-
-> All exceptions in this module inherit from `<Module>ServiceError`.
-> API endpoint handlers catch `<Module>ServiceError` subclasses and map
-> them to the corresponding HTTP status code and error code per
-> `api-spec.md`.
+All module-owned exceptions inherit from a common `<Module>ServiceError` base
+class (e.g., `TicketServiceError`, `UserServiceError`). Shared exceptions
+follow the distinct inheritance rule in Shared exceptions. All module base
+classes inherit from a common `ServiceError` root class. Each service spec MUST
+state this hierarchy, identify shared exceptions with `†`, and require API
+handlers to catch each documented exception and map it according to
+`api-spec.md`. A module-level catch does not cover shared exceptions.
 
 #### API-facing exception table format
 
@@ -1926,7 +1990,7 @@ behavior, or whether a given planning artifact still exists.
 - The GitHub issue tracking a specific work item — its description and
   comments are the right place to record phase-specific notes,
   implementation decisions, and notes on how reviewer findings were
-  addressed for that piece of work (see "Issues and work units" above)
+  addressed for that piece of work (see Workflow — Issues and work units)
 
 **Rationale**: work-item identifiers get renumbered as a roadmap
 evolves, and planning artifacts are retired once fully consumed. A spec
