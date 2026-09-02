@@ -1,9 +1,8 @@
 ---
 description: >
-  Reviews API endpoint definitions in feature specs for conformity with the
-  project's API conventions (error codes, naming, mutation patterns, pagination,
-  envelope format). Use this agent after creating or modifying feature specs
-  that define API endpoints. Read-only: does not modify files.
+  Reviews API endpoint definitions in feature specs for naming, mutation,
+  error, pagination, envelope, and permission-map conventions. Use after a
+  feature spec adds or changes endpoints. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -182,12 +181,12 @@ API conventions so that implementation can proceed without design ambiguity.
 - Error responses mention both the HTTP status code AND the error code
 - Field-level validation errors reference `VALIDATION_ERROR` with the
   `errors` array
-- Endpoint error tables MUST NOT include global responses (generic 401,
-  403, 422, 500) or scoped responses already covered by the reference
-  line. See `api-spec.md` "What belongs in an endpoint error table" for
-  the exact rule
-- Each endpoint section should include a reference line indicating which
-  global and scoped responses apply
+- Endpoint error tables MUST NOT include global or scoped responses that are
+  mechanically derived from access level, path, and query shape. See
+  `api-spec.md` (Response Applicability Derivation)
+- Do not require per-endpoint or section-level response reference lines;
+  `api-spec.md` prohibits them. Require an inline explanation only for a
+  genuine deviation from the derivation rules
 
 ### Response envelope
 
@@ -232,8 +231,9 @@ in any feature spec must have a corresponding row in this table.
 
 - For every endpoint defined in the spec under review, verify that a
   matching row exists in the Endpoint Permission Map with the correct HTTP
-  method, path, and access level (Public / Authenticated / Vulnerability
-  Analyst / Admin)
+  method, path, and authorization declaration (`Public`, `Authenticated`, or
+  the exact named capability). Preserve any separately specified qualifier,
+  such as JWT-session-only access
 - Conversely, for every row in the Endpoint Permission Map that links to
   the spec under review as its owning spec, verify that the endpoint is
   actually defined in the spec (detect stale rows)

@@ -1,8 +1,8 @@
 ---
 description: >
-  Reviews test quality and coverage. Use this agent after writing tests
-  to verify they are comprehensive and follow project testing conventions.
-  Read-only: does not modify files.
+  Reviews coverage and test quality against feature contracts and testing
+  conventions. Use after adding tests for a new feature or module, adding a
+  bug regression test, or on demand for broader test review. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -153,7 +153,9 @@ presenting it to the user for a decision.
 
 ### Coverage and completeness
 
-- Are all new/modified functions covered by tests?
+- Is every new or changed behavior covered by tests? A demonstrably
+  non-behavioral refactor may rely on existing tests when they still protect
+  the affected contract
 - Do tests cover happy path, edge cases, and error scenarios?
 - Are tests independent and not relying on execution order?
 - Are fixtures and mocks used correctly?
@@ -198,3 +200,8 @@ Provide a structured summary of:
 4. **Audit gaps**: mutations that create audit events but lack assertions
    for correct event creation
 5. **Suggestions**: specific additional test cases to write
+6. **Verdict**: one of:
+   - **Clean** — required behavior and applicable regressions are well tested
+   - **Minor issues** — useful non-blocking improvements remain
+   - **Needs revision** — required behavior lacks coverage, a bug fix lacks a
+     regression test, or a misleading test does not assert its claimed contract

@@ -1,9 +1,7 @@
 ---
 description: >
-  Reviews data model changes for simplicity, consistency, and adherence to
-  project conventions. Use this agent when adding or modifying SQLAlchemy
-  models, Alembic migrations, or docs/data-model.md. Read-only: does not
-  modify files.
+  Reviews schema simplicity, consistency, and conventions. Use after changing
+  SQLAlchemy models, Alembic migrations, or `docs/data-model.md`. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -183,8 +181,9 @@ structural complexity without presenting it to the user for a decision.
 
 ### Convention compliance
 
-- UUID primary keys on all tables?
-- `created_at` and `updated_at` timestamps on all tables?
+- Do primary keys and timestamp columns follow the defaults and the explicit
+  exceptions in `docs/data-model.md` (Notes)? Treat a documented exception as
+  conformant and flag only an unexplained divergence or missing new exception
 - SQLAlchemy 2.0 style (`mapped_column`, `Mapped`, declarative base)?
 - Are enumerated columns stored as `VARCHAR(N)`, with Python `StrEnum`
   validation and CHECK constraints only for the categories required by the
@@ -202,23 +201,23 @@ structural complexity without presenting it to the user for a decision.
 - Does every entity in the ER diagram (the overview section at the top of
   `docs/data-model.md`) have a corresponding detailed table definition
   later in the file?
-- Does every table defined in the file appear as an entity in the ER
-  diagram?
+- Does every core entity and cross-domain relationship promised by the
+  overview appear in the appropriate diagram? Domain diagrams may use
+  primary-key-only stubs for referenced entities
 - Do the relationships (foreign keys, cardinality) shown in the diagram
   match the FK columns defined in the table definitions?
 - Are entity names identical between the diagram and the table definitions?
-- Are functionally significant columns (authentication, soft-delete, state
-  tracking, override flags) represented in the diagram?
+- Are the key columns promised by the diagram contract (primary keys, foreign
+  keys, and discriminant fields) represented where needed to make the shown
+  relationships and entity roles accurate?
 
 ### Diagram readability
 
-- The ER diagram should show all functionally relevant columns for each
-  entity — not just PK/FK, but any column that is significant for
-  understanding the entity's purpose and behavior (authentication fields,
-  status fields, soft-delete markers, state tracking, override flags, etc.)
-- The goal is that a reader can understand the entity's role and key
-  attributes from the diagram alone, without needing to scroll to the
-  detailed table definitions
+- Judge each overview or domain diagram against its declared purpose. It must
+  show core entities, relationships, and key columns accurately, but it does
+  not replace the detailed table definitions
+- Flag an omitted field only when the omission makes the diagram misleading
+  or prevents understanding a relationship or discriminant represented there
 - Omit timestamps (`created_at`, `updated_at`) and purely operational
   fields that don't add understanding of the entity's role
 - If entity or key names are too long for the diagram, abbreviate them

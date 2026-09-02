@@ -1,11 +1,8 @@
 ---
 description: >
-  Reviews CI/CD artifact changes — GitHub Actions workflows, the backend
-  Dockerfile, compose files, git hooks, CI-consumed scripts, and
-  release-please configuration — for conformity with the project's CI
-  pipeline conventions and coherence with the documented pipeline chain.
-  Use this agent after adding or modifying any of those artifacts.
-  Read-only: does not modify files.
+  Reviews workflows, Docker and compose files, hooks, CI-consumed scripts,
+  and release configuration for pipeline correctness and convention drift.
+  Use after changing CI/CD artifacts. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:

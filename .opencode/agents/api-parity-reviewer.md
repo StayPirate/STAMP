@@ -1,10 +1,8 @@
 ---
 description: >
-  Reviews API completeness to ensure the REST API exposes all operations
-  defined in feature specifications. Verifies that no operation is available
-  only via CLI or background task without an API surface. Use this agent
-  after adding or modifying API endpoints or feature specs that define
-  operations. Read-only: does not modify files.
+  Reviews whether the REST API exposes every operation and query capability
+  required by feature specs, including CLI- or task-driven operations. Use
+  after changing consumer-facing operations or endpoints. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -143,14 +141,16 @@ pagination, and sorting capabilities.
 
 ## Before reviewing
 
-1. Read `docs/api-spec.md` to understand the documented API surface
+1. Read `docs/api-spec.md` for shared API conventions
 2. Read `docs/architecture.md` to understand the system design
 3. Read feature specs relevant to the change being reviewed to understand
    what operations and API endpoints are defined
-4. List all specs in `docs/features/**/` and read any spec relevant to the
+4. Read the Endpoint Permission Map in `docs/features/identity/rbac.md` as the
+   cross-cutting endpoint index
+5. List specs in `docs/features/**/` and read only those relevant to the
    change being reviewed
-5. List all files in `backend/app/api/v1/` to identify implemented endpoints
-6. If the review is triggered by a specific change, read the changed files
+6. List files in `backend/app/api/v1/` to identify implemented endpoints
+7. If the review is triggered by a specific change, read the changed files
    and their corresponding specs
 
 ## What to check
@@ -190,8 +190,9 @@ pagination, and sorting capabilities.
 - Does every operation described in feature specs (`docs/features/`) have a
   formally specified API endpoint (HTTP method, URL path, request body,
   response schema, status codes)?
-- Does `docs/api-spec.md` list all endpoints described in individual feature
-  specs? Flag any discrepancies (missing, extra, or mismatched endpoints)
+- Does the Endpoint Permission Map contain each endpoint defined by the
+  relevant feature specs, with a link to its owning endpoint section? Flag
+  missing, extra, stale, or mismatched rows
 - Are all operations backed by documented API contracts, not left as
   implicit behavior?
 
@@ -201,8 +202,9 @@ pagination, and sorting capabilities.
   messages)?
 - Do API validation errors return structured field-level details, not just
   generic messages?
-- Are all error scenarios documented in the API spec with appropriate HTTP
-  status codes?
+- Are endpoint-specific error scenarios documented in the owning feature
+  spec with appropriate codes, while mechanically derived shared responses
+  remain owned by `docs/api-spec.md`?
 
 ## Output
 
