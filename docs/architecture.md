@@ -3,41 +3,57 @@
 ## Contents
 
 - [Scope](#scope)
+- [Authority and Navigation](#authority-and-navigation)
 - [System Boundary](#system-boundary)
 - [Architectural Decisions](#architectural-decisions)
+  - [Async-only database layer](#async-only-database-layer)
+  - [Single Docker image, multiple entrypoints](#single-docker-image-multiple-entrypoints)
+  - [Celery + Redis with no result backend](#celery--redis-with-no-result-backend)
+  - [PostgreSQL as single source of truth](#postgresql-as-single-source-of-truth)
+  - [Capability-based RBAC](#capability-based-rbac)
+  - [Specs-first development](#specs-first-development)
 - [Design Constraints](#design-constraints)
 - [Backend Layer Architecture](#backend-layer-architecture)
 - [Integration Patterns](#integration-patterns)
-- [Cross-Reference Index](#cross-reference-index)
 
 ---
 
 ## Scope
 
-This document defines the structural decisions and design constraints of
-the Sentinel platform — the reasoning behind the system's shape. It is
-the entry point for understanding why the system is built the way it is.
+This document defines the structural decisions and design constraints of the
+Sentinel platform: the reasoning behind the system's shape. It is the entry
+point for understanding why the system is built the way it is.
 
-This document does NOT contain:
+Implementation patterns, operational procedures, data contracts, and feature
+behavior belong to the authorities listed below. This document summarizes them
+only where necessary to explain an architectural decision.
+
+## Authority and Navigation
 
 | Information type | Authoritative location |
 |---|---|
-| Database schema (tables, columns, relationships) | `docs/data-model.md` |
-| External data source catalog (hosts, protocols, credentials) | `docs/data-sources.md` |
-| Deployment procedures, process topology, operations | `docs/deployment.md` |
-| Environment variable reference | `docs/configuration.md` |
-| Code patterns, naming, style conventions | `docs/conventions.md` |
-| API envelope format, errors, pagination | `docs/api-spec.md` |
+| Database schema (tables, columns, relationships, constraints) | `docs/data-model.md` |
+| External data sources (catalog, protocols, hosts, credentials) | `docs/data-sources.md` |
 | Component diagrams and data flow visuals | `docs/system-map.md` |
+| API surface, envelopes, errors, and pagination | `docs/api-spec.md` |
+| Code patterns, naming, and technical conventions | `docs/conventions.md` |
+| Environment variables and configuration | `docs/configuration.md` |
+| Deployment, process topology, and operations | `docs/deployment.md` |
+| CLI commands | `docs/cli-reference.md` |
+| Identity and access control | `docs/features/identity/rbac.md` |
+| Fetcher infrastructure | `docs/features/platform/fetcher-infrastructure.md` |
+| CVE fetcher infrastructure | `docs/features/platform/cve-fetcher-infrastructure.md` |
+| Git-based fetcher infrastructure | `docs/features/platform/git-fetcher-infrastructure.md` |
+| IBS event-driven integration | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| Operational logging | `docs/features/platform/logging.md` |
 
 ---
 
 ## System Boundary
 
-Sentinel is a security update management platform for SUSE and
-openSUSE-based Linux distributions. It automates CVE tracking, impact
-analysis, and update coordination across multiple maintained
-distribution versions.
+Sentinel is a security update management platform for SUSE and openSUSE-based
+Linux distributions. It automates CVE tracking, impact analysis, and update
+coordination across multiple maintained distribution versions.
 
 **What Sentinel does:**
 
@@ -46,8 +62,7 @@ distribution versions.
 - Tracks which packages, codestreams, and products are affected
 - Detects when security fixes are released via IBS
 - Evaluates product eligibility based on CVSS thresholds and lifecycle
-- Provides an API for vulnerability analysts, team leads, and
-  automation
+- Provides an API for vulnerability analysts, team leads, and automation
 
 **What Sentinel does NOT do:**
 
@@ -56,240 +71,185 @@ distribution versions.
 - Provision user identities (deferred to external identity provider)
 - Provide a web UI (frontend is developed in a separate repository)
 
-**Repository scope:** this repository contains all product
-specifications (in `docs/features/`) and the backend implementation
-(FastAPI, Celery workers, migrations, CI/CD). The frontend will be
-developed in a dedicated repository against the published OpenAPI
-contract.
+**Repository scope:** this repository contains all product specifications (in
+`docs/features/`) and the backend implementation (FastAPI, Celery workers,
+migrations, CI/CD). The frontend will be developed in a dedicated repository
+against the published OpenAPI contract.
 
 ---
 
 ## Architectural Decisions
 
-Decisions that shape the system at a structural level. Each entry
-states the choice and its rationale.
+These decisions shape the system at a structural level. Each entry states the
+choice and its rationale; specialist authorities own the implementation and
+operational details.
 
 ### Async-only database layer
 
-Sentinel uses `asyncpg` with SQLAlchemy's async API for all database
-access — API handlers, service modules, Celery tasks, and CLI commands.
-No synchronous database driver or engine is maintained. Synchronous
-entry points (CLI commands, Celery signal handlers) bridge into the
-async layer via `asyncio.run()`.
+Sentinel uses `asyncpg` with SQLAlchemy's async API for all database access in
+API handlers, service modules, Celery tasks, and CLI commands. No synchronous
+database driver or engine is maintained. Synchronous entry points bridge into
+the async layer using the lifecycle rules in `docs/conventions.md`.
 
-**Rationale:** a single database access model eliminates the risk of
-accidentally mixing sync and async sessions (which causes subtle bugs
-with connection pools and transaction isolation). It also ensures that
-service-layer code is reusable across all entry points without
-adaptation.
+**Rationale:** one database access model prevents accidental mixing of sync and
+async sessions, connection pools, and transaction semantics. It also keeps
+service-layer code reusable across all entry points.
 
 ### Single Docker image, multiple entrypoints
 
-All runtime processes — API server, Celery worker, git worker, Celery
-Beat, IBS RabbitMQ consumer — run from the same OCI image with
-different entrypoint commands. There are no per-process image variants.
-See `docs/deployment.md` (Container Images) for the canonical process
-role enumeration.
+All runtime processes — API server, Celery worker, git worker, Celery Beat,
+and IBS RabbitMQ consumer — run from the same OCI image with different
+entrypoint commands. There are no per-process image variants. See
+`docs/deployment.md` (Container Images) for the canonical process roles.
 
-**Rationale:** all processes share the same codebase and dependencies.
-Separate images would multiply build time and storage without
-functional benefit, and risk version skew between components that must
-run the same code.
+**Rationale:** all processes share the same codebase and dependencies. Separate
+images would add build and storage overhead while risking version skew between
+components that must run the same code.
 
 ### Celery + Redis with no result backend
 
-Sentinel uses Celery with Redis as broker. The Celery result backend is
-disabled (`task_ignore_result = True`). Task outcomes are tracked in
-PostgreSQL via `FetcherRun` records, not in Redis.
+Sentinel uses Celery with Redis as its broker. The Celery result backend is
+disabled (`task_ignore_result = True`), so task return values are not stored
+there. Durable outcomes belong in PostgreSQL under the relevant domain model;
+fetcher executions use `FetcherRun` records.
 
-**Rationale:** fetcher runs need durable, queryable outcome data
-(duration, item counts, error messages, cursor state) that survives
-Redis restarts. The `FetcherRun` table satisfies this. A Celery result
-backend would duplicate this data in Redis with inferior queryability
-and durability.
+**Rationale:** durable outcomes must remain queryable and survive Redis
+restarts. A Celery result backend would duplicate domain records in an
+ephemeral store with inferior queryability and durability.
 
 ### PostgreSQL as single source of truth
 
-All persistent state lives in PostgreSQL. Redis is used only for
-ephemeral coordination (task queue, schedule entries, caches, locks).
-Redis persistence is disabled by design — all Redis state is either
-TTL-bounded and self-healing, or fully reconstructible from PostgreSQL
-at process startup.
+All persistent Sentinel state lives in PostgreSQL. Redis is limited to
+ephemeral coordination such as task queues, schedule entries, caches, and
+locks. Redis persistence is disabled by design: its state is TTL-bounded and
+self-healing, or reconstructible from PostgreSQL or code at process startup.
 
-**Rationale:** a single source of truth simplifies backup, recovery,
-and operational reasoning. See `docs/deployment.md` (Redis Durability,
-Memory, and Persistence) for the operational implications.
+**Rationale:** a single persistent source of truth simplifies backup, recovery,
+and operational reasoning. See `docs/deployment.md` (Redis Durability, Memory,
+and Persistence) for the operational implications.
 
 ### Capability-based RBAC
 
-Authorization uses a capability model: roles map to sets of
-capabilities, and endpoint access is determined by checking whether
-the caller possesses the required capability. This is distinct from
-pure role-based checking ("is the user an admin?") and from
-attribute-based access control (ABAC).
+Authorization uses a capability model: roles map to sets of capabilities, and
+endpoint access is determined by checking whether the caller possesses the
+required capability. This differs from pure role checks ("is the user an
+admin?") and from attribute-based access control (ABAC).
 
-**Rationale:** capability-based checking decouples endpoint
-authorization from role definitions. New roles can be created by
-combining existing capabilities without modifying endpoint code. See
-`docs/features/identity/rbac.md` for the full model.
+**Rationale:** capability checks decouple endpoint authorization from role
+definitions. New roles can combine existing capabilities without changing
+endpoint code. See `docs/features/identity/rbac.md` for the full model.
 
 ### Specs-first development
 
-Every feature must be specified in `docs/features/` before
-implementation begins. The specification must be complete enough that
-an implementer does not need to invent product behavior, guarantees, or
-contract semantics, including required security and data-integrity properties.
-Internal technical choices remain with the implementation when multiple
-approaches satisfy the specified behavior and the project's established
-architectural constraints.
+Every feature must be specified in `docs/features/` before implementation
+begins. The specification must be complete enough that an implementer does not
+need to invent product behavior, guarantees, contract semantics, security, or
+data-integrity properties. Internal technical choices remain with the
+implementation when multiple approaches satisfy all specified behavior and
+established architectural constraints.
 
-**Rationale:** specifications serve as the contract between design and
-implementation. They enable parallel review (spec review before code
-review), prevent scope creep during implementation, and provide a
-stable reference for future maintenance.
+**Rationale:** specifications form the contract between design and
+implementation. They support review before implementation, prevent scope
+creep, and provide a stable reference for future maintenance.
 
 ---
 
 ## Design Constraints
 
-Non-negotiable principles that inform every feature specification and
+These non-negotiable principles inform every feature specification and
 implementation decision.
 
 **Stateless containers.** Application containers must not rely on local
-persistent filesystem state for correctness. Persistent state belongs
-in PostgreSQL, Redis, or external services. Recoverable caches (e.g.,
-git clone volumes used by CVE fetchers) may use persistent local
-storage for performance, provided the application remains correct
-without them.
+persistent filesystem state for correctness. Persistent Sentinel state belongs
+in PostgreSQL; Redis holds only ephemeral state, and external systems retain
+the data they authoritatively own. Recoverable local caches, such as git clone
+volumes used by CVE fetchers, may use persistent storage for performance when
+the application remains correct without them.
 
 **Deployment-agnostic packaging.** The application must not depend on a
-specific runtime orchestrator. Docker, Podman, and Kubernetes must
-consume the same images without environment-specific variants. Runtime
-differences belong in deployment configuration, not in application
-code. Kubernetes-specific manifests are deferred until the
-infrastructure target is decided.
+specific runtime orchestrator. Docker, Podman, and Kubernetes must consume the
+same images without environment-specific variants. Runtime differences belong
+in deployment configuration, not in application code.
 
-**API-first.** The REST API is the primary interface. Every operation
-that could be needed by any consumer (web UI, CLI, scripts,
-third-party integrations) must be achievable through the API, with
-equivalent filtering, pagination, and sorting capabilities. The API must remain
-independent of any specific client or hosting strategy.
+**API-first.** The REST API is the primary interface. Every operation needed by
+any consumer (web UI, CLI, scripts, or third-party integrations) must be
+achievable through the API, with equivalent filtering, pagination, and sorting
+capabilities. The API must remain independent of any client or hosting
+strategy.
 
-**HTTP APIs for external services.** When integrating with external
-services that expose HTTP/REST APIs (IBS, SMELT, AIMAAS, Bugzilla,
-etc.), Sentinel uses those APIs directly. Service-wrapper CLI tools
-(`osc`, `secbox`, etc.) add an unnecessary process dependency on top
-of APIs that are already directly usable, and must not be used in
-application code or background tasks.
+**HTTP APIs for external services.** When Sentinel integrates with an external
+service that exposes an HTTP/REST API, it uses that API directly.
+Service-wrapper CLI tools such as `osc` and `secbox` add an unnecessary process
+dependency and must not be used in application code or background tasks.
 
-This constraint does not apply to transport-protocol clients where the
-data source has no HTTP API equivalent. The `git` binary is the
-transport protocol for cloning and diffing repositories (MITRE
-cvelistV5, Linux Kernel vulns.git) — there is no REST API alternative
-for these data sources. Git-based fetchers invoke `git` via
-`asyncio.create_subprocess_exec` through the `BaseGitFetcher`
-infrastructure (see Integration Patterns below and
-`docs/features/platform/git-fetcher-infrastructure.md`).
+This constraint does not apply to transport-protocol clients when the data
+source has no HTTP API equivalent. For example, the `git` binary provides the
+transport needed by repository-based CVE sources. The applicable implementation
+contract is in `docs/features/platform/git-fetcher-infrastructure.md`.
 
 **Environment-variable configuration.** Deployment and infrastructure
-configuration is provided through environment variables. Secrets must
-not be baked into images or committed to the repository. Business
-settings that require runtime modification without restart are stored
-in the database (see `docs/configuration.md`, Runtime Database
-Settings). See `docs/configuration.md` for the variable reference and
-`docs/conventions.md` (Configuration Management) for the governance
-model.
+configuration is provided through environment variables. Secrets must not be
+baked into images or committed to the repository. Business settings that need
+runtime modification without restart are stored in the database. See
+`docs/configuration.md` for the configuration contract and
+`docs/conventions.md` (Configuration Management) for its governance.
 
 ---
 
 ## Backend Layer Architecture
 
-The backend is organized into seven layers with strict dependency
-direction. Upper layers may depend on lower layers; lower layers must
-not import from upper layers.
+The backend uses seven application layers with an explicit dependency graph.
+Each layer may depend only on the layers listed in the final column; listed
+order does not imply additional dependencies.
 
 | Layer | Location | Responsibility | May depend on |
 |---|---|---|---|
-| **API** | `app/api/v1/` | Thin endpoint handlers: validate input, call services, return responses. No business logic. | Service, Schema, Model (for DI type annotations), Core |
+| **API** | `app/api/` (`app/api/v1/` for versioned routes) | Thin endpoint handlers and API dependencies: validate input, call services, return responses. No business logic. | Service, Schema, Model (for DI type annotations), Core |
 | **CLI** | `app/cli/` | Thin command handlers: parse arguments, call services, format output. No business logic. | Service, Model (only where an owning specification explicitly permits a trivial read-only query), Core |
-| **Service** | `app/services/` | All business logic. Accept typed parameters, perform database operations, return typed results. | Model, Core |
-| **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
+| **Task** | `app/tasks/` | Thin Celery task wrappers that call services, plus worker and Beat lifecycle signal handlers that necessarily depend on services. | Service, Core |
+| **Service** | `app/services/` | All business logic and business database operations. Accept typed parameters and return typed results. | Model, Core |
 | **Schema** | `app/schemas/` | Pydantic models for request/response validation and serialization. | Model (for `from_attributes`), Core |
-| **Core** | `app/core/` | Cross-cutting concerns: authentication, authorization, configuration, exceptions, enums. | (no application imports) |
-| **Task** | `app/tasks/` | Celery task definitions: thin wrappers that call service-layer functions. Celery process lifecycle integration (worker and Beat signal handlers) also resides here — signal handlers necessarily depend on services and therefore cannot live in Core. | Service, Core |
+| **Model** | `app/models/` | SQLAlchemy ORM models: tables, columns, relationships, constraints. | Core (for enums only) |
+| **Core** | `app/core/` | Cross-cutting concerns: authentication, authorization, configuration, exceptions, and enums. | (no application imports) |
 
-**Key rules:**
+**Key rules and exceptions:**
 
-- API handlers must not contain business logic — they validate, delegate
-  to a service, and format the response
-- CLI commands must not contain business logic — they parse arguments,
-  delegate to a service and format the output. A direct read-only query is
-  permitted only when the owning specification explicitly authorizes it; an
-  existing service query boundary is preferred
-- Task definitions must not contain business logic — they are thin
-  wrappers that call service-layer functions
-- Service modules are the only layer that performs database operations
-- Application reads needed by API consumers have an explicit service owner;
-  API route handlers do not execute ORM queries directly unless an owning
-  specification explicitly authorizes a trivial legacy read. New or modified
-  API reads use a service boundary. This does not require a separate query
-  module when an existing domain service is the natural owner
-- Composable services that receive a caller-supplied `AsyncSession` flush but
-  do not commit or roll back. The API transaction dependency, complete CLI
-  workflow, or complete task workflow owns one commit on success or one
-  rollback on failure, as defined in `docs/conventions.md` (Caller-Owned
-  Service Transactions)
-- The Core layer has no application-level imports; it is a leaf
-  dependency
+- Services own business queries and mutations. New or modified API reads use a
+  service boundary; a route may execute a trivial legacy read only when an
+  owning specification explicitly authorizes it. A CLI may execute a trivial
+  read-only query under the same explicit-specification exception, although an
+  existing service query boundary is preferred.
+- Entry-point infrastructure may manage session and transaction completion,
+  but that responsibility does not move business database operations out of
+  services. Composable services receiving a caller-supplied `AsyncSession`
+  flush but do not commit or roll back. The API transaction dependency, a
+  complete CLI workflow, or a complete task workflow owns one commit on
+  success or one rollback on failure, as defined in `docs/conventions.md`
+  (Caller-Owned Service Transactions).
+- Core has no application-level imports and remains a leaf dependency.
 
 ---
 
 ## Integration Patterns
 
-Sentinel integrates with 12+ external services (see `docs/data-sources.md`
-for the full catalog). All integrations follow one of two patterns:
+Sentinel's background integrations follow two patterns. The complete source
+catalog and request-driven interactions are documented in
+`docs/data-sources.md` and their owning feature specifications.
 
-**Scheduled (periodic fetchers).** The majority of integrations use
-periodic fetching via Celery Beat. Every scheduled integration is
-implemented as a `BaseFetcher` subclass, which provides automatic
-execution tracking, metric collection, and registry. The fetcher class
-hierarchy is:
+**Scheduled integrations.** Periodic external-data synchronization uses Celery
+Beat. Each scheduled integration is a `BaseFetcher` subclass, which provides
+execution tracking, metrics, and registry integration. Specialized bases add
+contracts without changing that classification:
 
-- `BaseFetcher` — generic base for all fetchers (product sync, release
-  detection, etc.). See `docs/features/platform/fetcher-infrastructure.md`.
-- `BaseCVEFetcher` — extends `BaseFetcher` for CVE data sources.
-  Adds `cve_source_type` identity, optional `fetch_single()` for
-  on-demand fetch, and a default `catch_up()` implementation. See
+- `BaseFetcher` supports generic external-data synchronization. See
+  `docs/features/platform/fetcher-infrastructure.md`.
+- `BaseCVEFetcher` extends it for CVE sources and on-demand CVE retrieval. See
   `docs/features/platform/cve-fetcher-infrastructure.md`.
-- `BaseGitFetcher` — extends `BaseCVEFetcher` for git-based CVE
-  sources. Uses delta-flow (clone + fetch + diff) instead of REST API
-  polling. Requires a persistent volume on a dedicated git worker. See
-  `docs/features/platform/git-fetcher-infrastructure.md`.
+- `BaseGitFetcher` extends the CVE contract for repository-based delta flows.
+  See `docs/features/platform/git-fetcher-infrastructure.md`.
 
-**Event-driven (message consumer).** The IBS integration additionally
-uses a real-time AMQP consumer connected to the IBS RabbitMQ message
-bus. This provides near-real-time detection of package commits and
-submission state changes. A periodic fetcher runs alongside as
-a catch-up mechanism for events missed during consumer downtime. See
+**Event-driven integrations.** The IBS integration additionally uses a
+continuous AMQP consumer connected to the IBS RabbitMQ message bus for
+near-real-time package commit and submission-state events. A periodic fetcher
+runs alongside it to recover events missed during consumer downtime. See
 `docs/features/integrations/ibs-rabbitmq-integration.md`.
-
----
-
-## Cross-Reference Index
-
-| Topic | Document |
-|---|---|
-| Database schema (tables, columns, constraints) | `docs/data-model.md` |
-| External data sources (catalog, protocols, hosts) | `docs/data-sources.md` |
-| Component diagrams and data flow visuals | `docs/system-map.md` |
-| API surface (endpoints, errors, pagination) | `docs/api-spec.md` |
-| Code patterns and conventions | `docs/conventions.md` |
-| Environment variables and configuration | `docs/configuration.md` |
-| Deployment, process topology, operations | `docs/deployment.md` |
-| CLI commands reference | `docs/cli-reference.md` |
-| Identity and access control | `docs/features/identity/rbac.md` |
-| Fetcher infrastructure | `docs/features/platform/fetcher-infrastructure.md` |
-| CVE fetcher infrastructure | `docs/features/platform/cve-fetcher-infrastructure.md` |
-| Git-based fetcher infrastructure | `docs/features/platform/git-fetcher-infrastructure.md` |
-| IBS RabbitMQ integration (event-driven) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
-| Operational logging | `docs/features/platform/logging.md` |
