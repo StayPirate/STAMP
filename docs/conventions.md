@@ -1567,10 +1567,8 @@ effects:
 database state, creates audit events, enqueues tasks, acquires locks, or
 calls external services.
 
-The spec MUST answer ALL of the following questions. The format and
-location of each answer is unrestricted — answers may appear as
-dedicated sections, inline in numbered steps, in tables, in prose, or in
-any combination the author finds clearest for the specific function.
+The spec MUST answer ALL of the following questions. Answer format and
+location follow Structural freedom.
 
 | # | Question | What the implementer needs to know |
 |---|----------|------------------------------------|
@@ -1624,8 +1622,10 @@ readability.
 When 2+ functions share an identical structural pattern (e.g., all are
 HTTP client wrappers, all are single-statement metric helpers, all are
 CRUD delegations with the same shape), they MAY be documented as a
-single table with columns adapted to the group's nature. The table must
-still answer Q1, Q3, and Q6 for each function in the group.
+single table with columns adapted to the group's nature. Grouping changes
+only the presentation: the table MUST answer Q1, Q3, and Q6 for every
+function, plus Q2, Q4, and Q5 for every Category A function unless the
+answer is unambiguously derivable under the Decision rule.
 
 #### Module-level defaults
 
@@ -1678,7 +1678,8 @@ unambiguously derivable from:
    Q5 (re-invocation fails on that guard) is derivable; if Q3 shows
    only deterministic in-memory operations with no failure paths, Q6
    ("None") is derivable
-3. **A module-level or section-level default** — see Module-level defaults
+3. **A module- or section-level default for Q4, Q5, or Q6** — see
+   Module-level defaults
 
 The Insufficiency test takes precedence for contract-level questions: if
 there is any reasonable ambiguity about required behavior or guarantees, the
