@@ -73,6 +73,41 @@ def test_pr_metadata_invalid_title_fails() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
+    "commit_type", ["feat", "fix", "docs", "refactor", "test", "chore", "ci"]
+)
+def test_pr_metadata_ordinary_approved_types_pass(commit_type: str) -> None:
+    result = _validate_metadata(title=f"{commit_type}: update policy fixture")
+
+    assert result.returncode == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "title",
+    [
+        "feat!: replace public contract",
+        "feat(api)!: replace public contract",
+        "fix!: correct incompatible behavior",
+        "fix(api)!: correct incompatible behavior",
+    ],
+)
+def test_pr_metadata_feat_and_fix_breaking_titles_pass(title: str) -> None:
+    result = _validate_metadata(title=title)
+
+    assert result.returncode == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("commit_type", ["docs", "refactor", "test", "chore", "ci"])
+def test_pr_metadata_non_release_breaking_titles_fail(commit_type: str) -> None:
+    result = _validate_metadata(title=f"{commit_type}!: replace public contract")
+
+    assert result.returncode == 1
+    assert "does not follow Conventional Commits format" in result.stdout
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
     ("title", "expected_returncode"),
     [
         (f"ci: {'x' * 67}", 0),

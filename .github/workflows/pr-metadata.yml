@@ -27,10 +27,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          title_pattern='^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?\!?: .{1,}'
-          if ! [[ "${PR_TITLE}" =~ ${title_pattern} ]]; then
+          ordinary_title_pattern='^(feat|fix|docs|refactor|test|chore|ci)(\([a-z0-9 _-]+\))?: .{1,}$'
+          breaking_title_pattern='^(feat|fix)(\([a-z0-9 _-]+\))?\!: .{1,}$'
+          if ! [[ "${PR_TITLE}" =~ ${ordinary_title_pattern} || "${PR_TITLE}" =~ ${breaking_title_pattern} ]]; then
             echo "::error::PR title '${PR_TITLE}' does not follow Conventional Commits format."
-            echo "::error::Expected pattern: type[(scope)][!]: description (e.g. 'feat: add X', 'fix(auth)!: correct Y')"
+            echo "::error::Expected type[(scope)]: description, or feat[(scope)]! / fix[(scope)]! for a breaking change."
             exit 1
           fi
           if [[ ${#PR_TITLE} -gt 71 ]]; then

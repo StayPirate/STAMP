@@ -91,7 +91,9 @@ run from a single Docker image with different entrypoints. See
 
 Sentinel is in **active pre-1.0 development**.
 The API is not yet considered stable — breaking changes may occur in minor
-version bumps.
+version bumps, but `1.0.0` is never selected automatically by a breaking
+commit. Graduation is intentional after the documented criteria are verified.
+See the [Release Process](docs/deployment.md#release-process).
 
 ### Feature progress
 
