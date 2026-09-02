@@ -53,6 +53,14 @@ into project requirements. The agent that invoked a reviewer independently
 evaluates every received finding before acting on it, per `AGENTS.md` (Quality
 and findings).
 
+Reviewer prompts use a flexible shared anatomy: role, finding filter,
+applicable scope or exclusions, authority loading, specialist procedure or
+checks, and output. Specialized protocols retain the structure and vocabulary
+their work requires; conformance classes, external-contract methods, integrity
+review levels, and domain-specific verdicts are not forced into one generic
+template. Every report identifies concrete evidence and ends with an explicit
+verdict or recommendation.
+
 Every reviewer keeps OpenCode file editing disabled while ordinary Bash
 commands inherit OpenCode's default allow behavior. Common mutation-oriented
 filesystem command families are denied as defense in depth; these rules are
@@ -76,14 +84,14 @@ across all reviewer definitions.
 | `@design-reviewer` | Reviewer | Guardrail 26 | Applies a simplicity-first review to new or substantially modified feature specs |
 | `@docs-placement-reviewer` | Reviewer | Guardrail 21 | Verifies rules and patterns are placed in the most appropriate location (not misplaced or duplicated) |
 | `@docs-reviewer` | Reviewer | Guardrail 9 | Reviews documentation completeness and coherence with implementation |
-| `@external-contract-verifier` | Reviewer | On-demand | Verifies external service request/response structures match real upstream contracts |
-| `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies fetchers inherit from BaseFetcher (or BaseCVEFetcher for CVE fetchers), report metrics correctly, and exclude `SoftTimeLimitExceeded` from per-item catches |
+| `@external-contract-verifier` | Reviewer | On-demand | Verifies external structures and documented destination-field mappings against recorded or live upstream contracts |
+| `@fetcher-compliance-reviewer` | Reviewer | Guardrail 14 | Verifies scheduled fetchers use the applicable BaseFetcher, BaseCVEFetcher, or BaseGitFetcher lifecycle, metrics, and registry contracts |
 | `@security-reviewer` | Reviewer | Guardrail 10 | Reviews code for security vulnerabilities and insecure patterns |
 | `@spec-coherence-reviewer` | Reviewer | Guardrail 15 | Detects contradictions and inconsistencies across feature specifications |
 | `@spec-conformance-reviewer` | Reviewer | Pre-PR (unconditional) | Verifies a pull request implements what its issue and owning specs require, and introduces no unspecified behavior |
 | `@spec-gap-analyzer` | Reviewer | Guardrail 17 | Identifies uncovered functional cases and missing edge-case handling in specs |
-| `@test-reviewer` | Reviewer | Guardrail 6 | Reviews test quality, coverage, audit trail assertions, and adherence to testing conventions |
-| `@identity-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies IdentityAuditEvent audit trail compliance and detail JSONB schema completeness for identity mutations |
+| `@test-reviewer` | Reviewer | Guardrail 6 | Reviews new feature/module tests and bug regression tests for coverage, audit assertions, and testing conventions |
+| `@identity-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies identity audit integrity and centralized service ownership, reporting undefined RoleMapping persistence ownership as a specification gap |
 | `@ticket-integrity-reviewer` | Reviewer | Guardrail 11 | Verifies TicketAuditEvent audit trail and ticket_mutations module compliance |
 
 `@spec-conformance-reviewer` is the only subagent whose trigger is a moment

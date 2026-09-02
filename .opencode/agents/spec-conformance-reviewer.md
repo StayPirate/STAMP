@@ -1,11 +1,8 @@
 ---
 description: >
-  Verifies that a pull request implements exactly what its tracking issue and
-  owning specifications require — no specified obligation silently omitted, no
-  behavior introduced that no specification authorizes. Findings are anchored
-  on the pull request diff and on the issue acceptance criteria. Use before
-  opening or updating a pull request, or on demand with an explicit pull
-  request reference. Read-only: does not modify files.
+  Verifies a PR or branch against its tracking issue and owning specs, finding
+  required omissions and unauthorized behavior. Use before opening or
+  updating every PR, or on demand with a PR reference. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -153,19 +150,26 @@ updating a pull request.
 
 1. `git diff origin/master...HEAD` and `git log origin/master..HEAD`
 2. If a pull request already exists for the branch, read its body with
-   `gh pr view --json number,title,body,state,headRefName`
+   `gh pr view --json number,title,body,state,headRefName` and read its comments
+   separately with `gh pr view --comments`
 3. Resolve the tracking issue from `Closes #<n>` in the pull request body, or
    from the `- Issue linkage:` field, or from the context supplied by the
    invoking agent
+4. Read the tracking issue body with `gh issue view <n>` and its comments
+   separately with `gh issue view <n> --comments`
 
 ### Mode B — explicit pull request reference
 
 Used when invoked with a pull request URL, number, or `owner/repo#n`. Works on
 open, closed, and merged pull requests.
 
-1. `gh pr view <ref> --json number,title,body,state,headRefName,baseRefName`
-2. `gh pr diff <ref>`
-3. Resolve the tracking issue from the pull request body
+1. `gh pr view <ref> --json
+   number,title,body,state,headRefName,baseRefName`
+2. `gh pr view <ref> --comments`
+3. `gh pr diff <ref>`
+4. Resolve the tracking issue from the pull request body
+5. Read the tracking issue body with `gh issue view <n>` and its comments
+   separately with `gh issue view <n> --comments`
 
 When the pull request is not the current branch, the working tree may have
 moved on. Evaluate the diff as submitted, and state explicitly in your output
@@ -196,11 +200,11 @@ touches both runs both directions.
 
 ## Procedure — forward direction
 
-1. **Establish the declared scope.** Read the tracking issue: `Outcome`,
-   `Owning specifications`, `Scope`, `Acceptance criteria`. Read each owning
-   specification in full. Read `docs/conventions.md` (Function Specification
-   Completeness, Service Exception Conventions) for the contract shape that
-   applies to functions.
+1. **Establish the declared scope.** Read the tracking issue body and comments:
+   `Outcome`, `Owning specifications`, `Scope`, `Acceptance criteria`, and
+   later scope or deferral decisions. Read each owning specification in full.
+   Read `docs/conventions.md` (Function Specification Completeness, Service
+   Exception Conventions) for the contract shape that applies to functions.
 
    Q1-Q6 does not reach every function: `docs/conventions.md` § Scope and
    Exclusions removes API endpoint handlers, fetcher `execute()` algorithms,
@@ -284,8 +288,10 @@ issues, and sub-issues are optional; sources 1-4 work without them.
 
 1. **Issue `Scope`** — an explicit deferral statement (for example,
    "Celery signal binding is deferred to P1-06").
-2. **Issue `Acceptance criteria`** — the obligation is simply not among the
-   criteria the issue commits to.
+2. **Issue `Acceptance criteria`** — an explicit scope boundary or deferral
+   says that the obligation belongs to different work. Mere absence from the
+   criteria is not a deferral basis; acceptance criteria need not repeat every
+   obligation in the declared scope and owning specifications.
 3. **The owning specification itself** — an explicit ownership or scope
    boundary expressed without roadmap phase, work-item, or
    implementation-status coupling, such as a statement that another named
@@ -312,7 +318,9 @@ issues, and sub-issues are optional; sources 1-4 work without them.
 
 If none of these sources claims the obligation, it becomes a class C finding.
 
-Every omission finding MUST declare which of these sources it consulted.
+Issue and pull request comments are part of their corresponding sources, not a
+separate lower-priority source. Every omission finding MUST declare which of
+these sources it consulted.
 
 ### Suppressing a contradiction
 

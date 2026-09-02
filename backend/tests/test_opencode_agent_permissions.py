@@ -242,6 +242,30 @@ def test_reviewer_permissions_match_shared_baseline() -> None:
 
 
 @pytest.mark.unit
+def test_reviewer_prompts_expose_role_and_output_contracts() -> None:
+    agent_paths = sorted(AGENTS_DIR.glob("*.md"))
+    assert agent_paths, "No OpenCode reviewer definitions found"
+
+    errors: list[str] = []
+    for path in agent_paths:
+        text = path.read_text(encoding="utf-8")
+        _, _, body = text.split("---", 2)
+        # Only the discovery-facing role and the final report contract are
+        # fixed anchors; specialist procedures intentionally vary by reviewer.
+        headings = {
+            line.strip() for line in body.splitlines() if line.startswith("## ")
+        }
+        for required in ("## Role", "## Output"):
+            if required not in headings:
+                errors.append(f"{path.name}: missing {required} section")
+        _, separator, output = body.partition("## Output")
+        if separator and "Verdict" not in output and "Recommendation" not in output:
+            errors.append(f"{path.name}: output has no explicit outcome")
+
+    assert not errors, "OpenCode reviewer prompt structure drift:\n" + "\n".join(errors)
+
+
+@pytest.mark.unit
 def test_opencode_command_definitions_are_direct_children() -> None:
     nested_commands = sorted(
         path.relative_to(COMMANDS_DIR)

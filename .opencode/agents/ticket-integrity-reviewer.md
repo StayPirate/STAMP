@@ -1,13 +1,8 @@
 ---
 description: >
-  Reviews ticket-related code and specification changes to verify two
-  invariants: (1) every ticket mutation produces a corresponding TicketAuditEvent
-  record with correct field values, and (2) every modification to
-  gate-relevant data goes through the appropriate centralized module —
-  `package_service` for package/track/product mutations, `ticket_mutations`
-  for CVSS and severity mutations. Use this agent after modifying services
-  or tasks that mutate tickets, or after creating/modifying feature specs
-  that describe ticket operations. Read-only: does not modify files.
+  Reviews ticket mutations for audit atomicity, centralized package/CVSS
+  routing, locking, and transaction hygiene. Use after changing ticket
+  mutation code or specs. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -250,21 +245,26 @@ For each `TicketAuditEvent` creation, verify:
 
 #### Locking compliance
 
-- Every public mutation function in `ticket_mutations` and
-  `package_service` MUST begin with a `SELECT ... FOR UPDATE` on the
-  `Ticket` row (SQLAlchemy:
+- Every public mutation-boundary function in `ticket_mutations` and
+  `package_service` that performs a state-dependent mutation of an existing
+  Ticket root MUST acquire a `SELECT ... FOR UPDATE` on the Ticket row as its
+  first database operation (SQLAlchemy:
   `select(Ticket).where(...).with_for_update()`) before performing
   any mutation
-- Flag any public mutation function in either module that modifies
+- Flag any such mutation-boundary function in either module that modifies
   gate-relevant data without first acquiring a `FOR UPDATE` lock on
   the ticket as a defect
 - **I/O-then-Lock**: in `package_service`, orchestration functions
   (e.g., `add_package_to_ticket`) that perform external I/O MUST NOT
   acquire `FOR UPDATE` locks — only the mutation functions they
   delegate to (e.g., `add_package_records`) acquire locks
+- Read-only functions, creations with no existing root, and any other
+  explicitly documented locking exception follow `docs/conventions.md`; do
+  not apply the mutation-boundary rule to them
 - Every service function **outside** these modules that modifies
-  the `Ticket` row (any column: `status`, `assignee_id`, `cve_id`,
-  `duplicate_of_id`, `previous_status`, `deleted_at`) or that calls
+  any persisted column on the `Ticket` row (including `status`,
+  `severity_manual`, `assignee_id`, `cve_id`, `duplicate_of_id`, and
+  `is_confidential`) or that calls
   `reconcile_ticket_status` MUST also acquire `FOR UPDATE` on the
   `Ticket` row as its first database operation
 - Flag any non-gate service that writes to the `Ticket` row or

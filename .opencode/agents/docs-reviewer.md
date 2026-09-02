@@ -1,8 +1,8 @@
 ---
 description: >
-  Reviews documentation completeness and coherence with implementation.
-  Use this agent after adding or modifying API endpoints, feature specs,
-  models, or architecture docs. Read-only: does not modify files.
+  Reviews documentation completeness, accuracy, and implementation coherence.
+  Use after significant API, feature-spec, model, service-contract,
+  architecture, integration, or multi-document changes. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -133,29 +133,31 @@ structural complexity without presenting it to the user for a decision.
 
 ## Before reviewing
 
-1. Read `docs/api-spec.md` to understand the documented API surface
+1. Read `docs/api-spec.md` for shared API conventions
 2. Read `docs/architecture.md` to understand the documented system design
 3. Read `docs/data-model.md` to understand the documented schema
 4. Read `docs/conventions.md` for documentation and code style requirements
-5. List all files in `backend/app/api/v1/` to identify implemented endpoints
-6. List all specs in `docs/features/**/` to identify existing feature specs
-7. If the review is triggered by a specific change, read the changed files and
+5. Read the Endpoint Permission Map in `docs/features/identity/rbac.md` when
+   endpoints are in scope
+6. List all files in `backend/app/api/v1/` to identify implemented endpoints
+7. List all specs in `docs/features/**/` to identify existing feature specs
+8. If the review is triggered by a specific change, read the changed files and
    their corresponding specs
 
 ## What to check
 
 ### API documentation coverage
 
-- Is every endpoint implemented in `backend/app/api/v1/` documented in
-  `docs/api-spec.md`?
+- Is every endpoint implemented in `backend/app/api/v1/` documented in its
+  owning feature spec and indexed in the Endpoint Permission Map?
 - Does every FastAPI route decorator include a `summary` and `description`
   parameter?
 - Are request/response schemas documented with examples where helpful?
-- Do documented endpoints in `docs/api-spec.md` match the endpoints listed
-  in the corresponding feature specs in `docs/features/`? Flag any
-  discrepancies (missing, extra, or mismatched endpoints)
-- Are HTTP methods, URL paths, query parameters, and status codes consistent
-  between `docs/api-spec.md`, feature specs, and implementation?
+- Do the owning feature specs, Endpoint Permission Map, and implementation
+  agree? Flag missing, extra, stale, or mismatched endpoints
+- Are HTTP methods, paths, query parameters, and status codes consistent
+  between the owning feature spec and implementation, and do they follow the
+  shared conventions in `docs/api-spec.md`?
 
 ### Feature specification coverage
 
@@ -204,8 +206,8 @@ structural complexity without presenting it to the user for a decision.
 - Do links and references between docs (e.g., "see `docs/features/tickets/X.md`")
   point to files that actually exist?
 - Are referenced sections and anchors valid?
-- When a feature spec references API endpoints, do those endpoints exist in
-  `docs/api-spec.md`?
+- When a document references an API endpoint, does the endpoint exist in its
+  owning feature spec and in the Endpoint Permission Map?
 
 ## Output
 

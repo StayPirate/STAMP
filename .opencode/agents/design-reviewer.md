@@ -1,10 +1,8 @@
 ---
 description: >
-  Reviews design choices in feature specifications from a senior engineering
-  perspective, with a simplicity-first mandate. Evaluates whether complexity
-  is justified by present requirements and proposes smaller alternatives.
-  Use this agent after creating or substantially modifying a feature spec.
-  Read-only: does not modify files.
+  Reviews feature-spec design with a simplicity-first mandate, challenging
+  unjustified complexity and proposing smaller alternatives. Use after
+  creating or substantially changing a feature spec. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -131,7 +129,7 @@ When you need to read GitHub issues, pull requests, or project data from this
 repository, prefer `gh` CLI commands (e.g., `gh issue view`, `gh pr view`).
 Fall back to `webfetch` only if `gh` is unavailable or fails.
 
-## Critical rules for review quality
+## Finding filter and review quality
 
 - **Apply Guardrail 26 first**: every potential finding MUST pass the Reviewer
   Proportionality Filter in `AGENTS.md`. Omit speculative, over-documenting,

@@ -1,11 +1,8 @@
 ---
 description: >
-  Reviews documentation changes to verify that rules, conventions, and behaviors
-  are placed in the most appropriate location — not misplaced in a single spec
-  when they should be cross-cutting, and not over-generalized when they are
-  feature-specific. Use this agent after adding or modifying content in
-  docs/features/ that introduces new rules or patterns. Read-only: does not
-  modify files.
+  Reviews whether new feature-spec rules belong locally, in another owning
+  spec, or in a cross-cutting authority, and detects premature
+  generalization. Use after adding potentially shared rules. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:

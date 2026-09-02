@@ -1,9 +1,8 @@
 ---
 description: >
-  Reviews inter-specification coherence to detect contradictions, conflicting
-  business rules, and terminology inconsistencies across feature specs.
-  Use this agent after creating or modifying feature specs, data-model.md,
-  or api-spec.md. Read-only: does not modify files.
+  Reviews related specifications for contradictory rules, incompatible data
+  flows, and inconsistent terminology. Use after cross-feature or
+  cross-cutting contract changes. Read-only.
 mode: subagent
 model: google-vertex/claude-sonnet-5@default
 permission:
@@ -157,37 +156,31 @@ referenced by or closely related to the one under review.
 
 ## What to check
 
-### RBAC coherence (tri-level verification)
+### RBAC coherence
 
 When the spec under review is `docs/features/identity/rbac.md`, OR when the spec
-under review defines API endpoints, perform these three checks:
+under review defines API endpoints, perform these checks:
 
-**Check A — Prose ↔ Permission Matrix**: the operations described in the
-prose of each role (section "Access Levels" in `rbac.md`) must be
-reflected in the Permission Matrix tables. If the prose says "Admins can
-manage role mappings" but the Permission Matrix does not list this
-operation under Admin, flag it as an inconsistency.
+**Check A — Permission Matrix ↔ Endpoint Permission Map**: every Public,
+Authenticated, or capability-protected operation in the Permission Matrix must
+have at least one corresponding endpoint in the Endpoint Permission Map with
+the same authorization category or exact capability. Conversely, every map
+row must correspond to an operation in the applicable matrix. Access levels
+describe authentication state; do not replace named capabilities with role
+names.
 
-**Check B — Permission Matrix ↔ Endpoint Permission Map**: every
-operation in the Permission Matrix must have at least one corresponding
-endpoint in the Endpoint Permission Map with the correct access level.
-Conversely, every endpoint in the Endpoint Permission Map must correspond
-to an operation that the Permission Matrix attributes to the declared
-access level. Flag contradictions (e.g., the table says "Admin" but the
-Permission Matrix assigns the operation to "Vulnerability Analyst").
-
-**Check C — Endpoint Permission Map ↔ owning specs**: every API endpoint
-defined in a feature spec in `docs/features/**/` (recognizable by code
-blocks containing `METHOD /api/v1/...`) must have a corresponding row in
-the Endpoint Permission Map table in `rbac.md`. Additionally, the access
-level declared in the Endpoint Permission Map must match the access level
-declared inline in the owning spec (e.g., if the owning spec says "Admin
-only" but the table says "Authenticated", flag it as a conflict). Flag:
+**Check B — Endpoint Permission Map ↔ owning specs**: identify every API
+endpoint semantically from endpoint headings, method/path blocks, tables, and
+Permission Map links; do not require one Markdown representation or assume
+every endpoint is under `/api/v1/`. Every endpoint defined in an owning feature
+spec must have a corresponding row in the Endpoint Permission Map table in
+`rbac.md`. The authorization declaration in the map must match the owning
+spec's `Access` or `Capability` declaration. Flag:
 - Endpoints defined in specs but missing from the table
-- Access level mismatches between the table and the owning spec
+- Authorization mismatches between the table and the owning spec
 
 When reviewing a spec that is NOT `rbac.md` but defines endpoints, load
-`docs/features/identity/rbac.md` and perform only Check C for the endpoints in
+`docs/features/identity/rbac.md` and perform only Check B for the endpoints in
 the spec under review.
 
 ### Configuration consistency
