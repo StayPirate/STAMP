@@ -499,6 +499,12 @@ This rule does not apply to system operations (background tasks,
 automated ingestion) or to users without the `vulnerability_analyst`
 role.
 
+A package-resolution invocation whose only mutation is creation of
+system-derived `TicketPackageMaintainer` associations is also excluded. It does
+not represent the acting user's package-tree decision and does not invoke
+`auto_assign_actor`; if that invocation creates package, track, or Product
+state as well, normal auto-assignment applies.
+
 This rule is enforced via the shared helper
 `ticket_mutations.auto_assign_actor()`, which is called by all
 modules that modify tickets under a `FOR UPDATE` lock
@@ -698,9 +704,8 @@ disclosure.
 
 - **Confidentiality Flag**: A boolean state (`is_confidential`) on the
   Ticket entity that determines if the ticket is under embargo.
-- **Access Grants**: The mechanism determining who can access a
-  confidential ticket. Access is granted via roles, automated maintainer
-  inheritance (from global package bugowners), and explicit manual grants.
+- **Visibility mechanisms**: confidential visibility follows scope, explicit
+  manual grants, and additive package-maintainer associations.
 - **Confidentiality Filtering**: Confidential tickets are excluded at
   the database query level for unauthorized and unauthenticated users.
   They do not appear in list results, are not returned by detail
@@ -726,22 +731,20 @@ meets at least one condition:
    `docs/features/identity/rbac.md`, Scope).
 2. **Explicit Grant**: The user's `id` exists in the `TicketAccessGrant`
    table for the requested `ticket_id`.
-3. **Bugowner (Person)**: The user's `email` matches the
-   `bugowner_email` of any `PackageBugowner` associated with any of the
-   ticket's *currently associated* packages. The email comparison MUST
-   be case-insensitive.
-4. **Bugowner (Group)**: The user's `email` matches the `email` of any
-   `PackageBugownerMember` associated with a group bugowner of any
-   *currently associated* package in the ticket. The email comparison
-   MUST be case-insensitive.
+3. **Package maintainer**: The user's `id` matches a
+   `TicketPackageMaintainer.user_id` whose parent `TicketPackage` belongs to
+   the Ticket and has `deleted_at IS NULL`.
 
-*Dynamic Access Note:* Bugowner access is dynamic. A maintainer gains access
-when a package they support is added to the Ticket, and loses access the moment
-the last package they support is excluded from it. "Currently associated
-packages" means `TicketPackage.deleted_at IS NULL`; a directly VA-excluded
-package does not grant bugowner access. Product lifecycle actionability does
-not affect authorization: a package whose Products are all EOL remains
-associated until a VA excludes the package.
+The "full access" conferred by rules 2 or 3 means visibility plus only the
+operations permitted by the user's existing capabilities. Neither mechanism
+grants capabilities.
+
+*Dynamic Access Note:* A maintainer gains access when a package occurrence is
+associated with their User ID and loses access the moment the last qualifying
+package is excluded. Restoring the package reactivates the retained association
+without external I/O. Track and Product exclusion, lifecycle actionability,
+Ticket resolution, and later SMELT omission do not revoke package-wide access.
+A package whose Products are all EOL remains qualifying until excluded.
 
 If no condition is met, or if the user is unauthenticated, the
 confidential ticket is **invisible**: it is excluded from list queries
@@ -773,8 +776,8 @@ Tickets).
 
 **Maintainer Dashboard (`GET /api/v1/my/packages/*`)**:
 The maintainer dashboard endpoints MUST apply the same confidentiality
-filtering as the ticket list. Although the bugowner email match used by
-the dashboard already coincides with authorization rules 3 and 4
+filtering as the ticket list. Although the package-maintainer association used
+by the dashboard already coincides with authorization rule 3
 ([Authorization Rules](#authorization-rules)), the confidentiality filter
 MUST be applied explicitly as defense in depth — protecting against
 future changes to the dashboard query logic that might inadvertently
@@ -811,8 +814,7 @@ def confidential_ticket_filter(
     ticket_id_col: Column,          # e.g., Ticket.id or TicketPackage.ticket_id
     is_confidential_col: Column,    # e.g., Ticket.is_confidential
     caller_scope: Scope | None,     # None for unauthenticated
-    caller_user_id: UUID | None,    # for TicketAccessGrant lookup
-    caller_email: str | None,       # for bugowner matching (case-insensitive)
+    caller_user_id: UUID | None,    # grants and maintainership lookup
 ) -> ColumnElement:
     """Build a SQL filter expression for confidential ticket visibility.
 
@@ -825,8 +827,8 @@ def confidential_ticket_filter(
     - Unauthenticated (scope is None): only non-confidential
     - Scope 'non_confidential': non-confidential OR any of:
         - TicketAccessGrant exists for (ticket_id, user_id)
-        - PackageBugowner.bugowner_email matches caller_email (person)
-        - PackageBugownerMember.email matches caller_email (group)
+        - TicketPackageMaintainer exists for caller_user_id through an
+          included TicketPackage
     """
 ```
 
@@ -842,8 +844,7 @@ IF caller_scope == Scope.ALL:
 return OR(
     is_confidential_col == False,
     EXISTS(TicketAccessGrant for caller_user_id),
-    EXISTS(PackageBugowner person match for caller_email),
-    EXISTS(PackageBugownerMember match for caller_email),
+    EXISTS(TicketPackageMaintainer for caller_user_id through an included package),
 )
 ```
 
@@ -890,13 +891,20 @@ of the information leak.
 
 ### Audit Trail
 
-Three `TicketAuditEventType` values support confidentiality operations:
+Four `TicketAuditEventType` values record confidentiality or its explicit and
+automatic access provenance:
 
 | `event_type` | Trigger | `user_id` | `old_value` | `new_value` | `comment` | `detail` |
 |---|---|---|---|---|---|---|
 | `confidentiality_changed` | `is_confidential` toggled | Acting user | `"true"` or `"false"` | `"true"` or `"false"` | `NULL` | `NULL` |
 | `access_grant_added` | User manually added to access grants | Acting user | `NULL` | Target username | `NULL` | `NULL` |
 | `access_grant_removed` | User manually removed from access grants | Acting user | Target username | `NULL` | `NULL` | `NULL` |
+| `package_maintainer_added` | Package resolution associated an existing active User with a package occurrence | `NULL` | `NULL` | Target username | `NULL` | `{"package": "fictional-package"}` |
+
+`package_maintainer_added` records acquisition even when the Ticket is not
+currently confidential because the retained association can govern a later
+confidentiality state. Package exclusion/restoration events record the dynamic
+loss/return of effective access; no maintainer-removal event exists.
 
 See `docs/features/tickets/ticket-audit-log.md` for the audit event
 contract and detail JSONB schema.
@@ -1003,26 +1011,6 @@ Source status is available via `GET /api/v1/cves/{cve_id}/sources` — see
 | `identifier` | string | External ID (e.g., `"GHSA-xxxx-xxxx-xxxx"`) |
 | `url` | string \| null | Direct link to the advisory page |
 
-**BugownerMember** — individual member within a group bugowner:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `userid` | string | IBS username |
-| `email` | string | Member email address |
-
-**BugownerInfo** — bugowner data for a package (see
-`docs/features/packages/package-bugowner.md`):
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | `"person"` \| `"group"` | Bugowner type |
-| `name` | string | IBS userid or group name |
-| `email` | string | Contact email |
-| `members` | BugownerMember[] \| null | Group members. `null` for person bugowners |
-
-When the bugowner is unknown (not resolved), the entire `bugowner` field
-is `null` rather than an object.
-
 **ProductDetail** — product within a track:
 
 | Field | Type | Description |
@@ -1059,7 +1047,6 @@ is `null` rather than an object.
 |-------|------|-------------|
 | `id` | UUID | TicketPackage primary key |
 | `package_name` | string | Source package name |
-| `bugowner` | BugownerInfo \| null | Bugowner data. `null` if not resolved |
 | `tracks` | TrackDetail[] | Tracks (codestreams) for this package |
 | `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |
 | `actionable` | boolean | Whether the package has at least one actionable track and is not VA-excluded |
@@ -1099,7 +1086,7 @@ TicketSummary with the full package tree and expanded CVE data.
 | `cve` | CVEDetail \| null | Expanded CVE data with dates, or `null` if no CVE |
 | `duplicate_of` | string \| null | Duplicate target identifier (`SNTL-{n}`), or `null` |
 | `is_confidential` | boolean | Whether the ticket is confidential |
-| `packages` | PackageDetail[] | Full package/track/product tree with bugowner data |
+| `packages` | PackageDetail[] | Full package/track/product tree; maintainer identities are not exposed |
 | `created_at` | datetime | Creation timestamp (UTC) |
 | `updated_at` | datetime | Last modification timestamp (UTC) |
 
@@ -1158,10 +1145,11 @@ Query parameters:
   `none`, `unresolved`. `none` matches tickets with severity `None`
   (CVSS score 0.0). `unresolved` matches tickets with `NULL` severity
    (no CVSS data and no manual severity set).
-- `bugowner` (string, optional): filter tickets to those containing at
-  least one package whose bugowner matches the value (matches against
-  bugowner email, name, or group member email/userid — see
-  `docs/features/packages/package-bugowner.md`).
+- `maintainer` (string, optional): User UUID or exact username per User
+  Identifier Resolution. Matches Tickets with at least one included
+  `TicketPackage` associated to that User through
+  `TicketPackageMaintainer`. Unknown filter values return an empty result, not
+  404. Email input is not accepted.
 - `page` (integer, optional): page number for pagination (default: 1).
 - `per_page` (integer, optional): items per page (default: 20).
 - `sort_by` (string, optional): field to sort by (default: `created_at`).
@@ -1186,9 +1174,8 @@ Returns a single ticket by UUID or `SNTL-{n}`. The `packages` field
 in the response is populated via
 `package_service.get_ticket_packages()` — the same function used by
 `GET /api/v1/tickets/{ticket_id}/packages`. The response includes
-the full package/track/product tree with bugowner information for each
-package (type, name, email, and group members when applicable — see
-`docs/features/packages/package-bugowner.md`).
+the full package/track/product tree. Maintainer identities and source
+maintainership data are not included.
 
 The endpoint captures one UTC evaluation date and passes it to
 `get_ticket_packages()` so every lifecycle phase, actionability value, and
@@ -1643,7 +1630,8 @@ table:
   sub-resource (`/audit-log`) requires authentication — see
   `docs/features/tickets/ticket-audit-log.md`; (2) confidential tickets
   are invisible to users whose effective scope is not `all` (unless they
-  have an explicit `TicketAccessGrant` or bugowner match) — see
+  have an explicit `TicketAccessGrant` or included-package maintainer
+  association) — see
   [Confidential Tickets](#confidential-tickets)
 - Creating tickets: `create_ticket` capability
 - Assigning, changing status, associating CVE, setting manual severity:
@@ -1667,5 +1655,5 @@ table:
 - `docs/features/tickets/ticket-audit-log.md` — audit event contract, detail
   JSONB schema
 - `docs/features/identity/rbac.md` — Endpoint Permission Map
-- `docs/features/packages/package-bugowner.md` — bugowner resolution for
-  dynamic access
+- `docs/features/packages/package-maintainership.md` — package-wide maintainer
+  acquisition and dynamic visibility

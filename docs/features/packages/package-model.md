@@ -36,7 +36,7 @@ transparently across both workflows.
 A `TicketPackage` table anchors a source package within a ticket,
 providing:
 
-- A clear anchor for package-level metadata (bugowner join, future notes)
+- A clear anchor for package-level maintainership provenance and future notes
 - A single grouping point for tracks of both workflows
 - Cleaner API design (`/tickets/{id}/packages/{id}/tracks`)
 
@@ -211,6 +211,11 @@ that provides:
    where the package is maintained and the Products it is shipped to,
    with direct CPE identification, authoritative codestream maintenance
    process, and target-level Product-definition provenance.
+3. **Per-package maintainership**
+   (`experimental/v2/packages/{package_name}/maintainership` relative to the
+   configured API prefix): returns direct users and groups with members.
+   Sentinel extracts only individual emails and applies them package-wide; see
+   `docs/features/packages/package-maintainership.md`.
 
 SMELT reads from IBS, Git Product catalogs, Product build SBOM snapshots,
 and other sources internally.
@@ -254,6 +259,16 @@ the implicit grouping by `package_name` across
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
 
 **Unique constraint**: `(ticket_id, package_name)`
+
+### TicketPackageMaintainer
+
+Immutable, additive association between one `TicketPackage` occurrence and one
+existing active User acquired from SMELT maintainership data. It has standard
+UUIDv7 `id`, `ticket_package_id` and `user_id` foreign keys with `ON DELETE
+RESTRICT`, and `created_at`; it has no `updated_at`. The pair
+`(ticket_package_id, user_id)` is unique. See
+`docs/features/packages/package-maintainership.md` for acquisition,
+authorization, audit, and retention semantics.
 
 ### TicketPackageTrack
 
@@ -821,6 +836,9 @@ The `add_package_to_ticket` function proceeds normally regardless of
 whether the `TicketPackage` is soft-deleted. It queries SMELT, and
 creates any missing `TicketPackageTrack` and `TicketPackageProduct`
 records. Existing records (active or soft-deleted) are skipped.
+It also performs the normal additive maintainership acquisition for that
+package occurrence; any new association remains ineffective while the package
+is excluded.
 
 New records are created with `deleted_at = NULL`. If the parent package or
 track is VA-excluded, these records are effectively VA-excluded through the
@@ -888,10 +906,9 @@ soft-deleted records under operable Tickets.
 ### Centralized Function: `add_package_to_ticket`
 
 All package additions — regardless of the trigger — MUST go through a
-single centralized service function. This function is the only place
-where SMELT is queried to resolve tracks and products, and where
-`TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct`
-records are created.
+single centralized service function. This function is the only place where
+SMELT is queried to resolve tracks/Products and package maintainership, and
+where the corresponding package-tree and maintainer records are created.
 
 **Signature** (conceptual):
 
@@ -901,37 +918,35 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
 
 **Behavior**:
 
-1. Query SMELT and resolve products as specified in
+1. Query SMELT and resolve Products as specified in
    [SMELT Query for Package Resolution](#smelt-query-for-package-resolution):
    external I/O, envelope validation, catalog readiness check, CPE matching,
    synthetic channel/compose deduplication, unsupported-process filtering, and
    `workflow_type` determination from `codestream.maintenance_process_type`.
    If no Product is resolved across the complete response, reject the
    operation without database writes.
-2. Create a `TicketPackage` record for the package if one does not already
-   exist. If a record already exists (active or soft-deleted), skip creation.
-3. For each resolved track, delegate `TicketPackageTrack` record
-   creation to `package_service` (if a record does not already exist,
-   including soft-deleted).
-4. For each resolved Product under each track, delegate
-   `TicketPackageProduct` record creation to `package_service` (if a
-   record does not already exist, including soft-deleted).
-5. If at least one new `TicketPackageTrack` with `workflow_type = ibs` was
-   created, register two independent best-effort post-commit effects:
-   - Ensure that a bugowner is available for `package_name`. Bugowner is global
-     package metadata; the caller does not select an external source. The
-     bugowner feature may satisfy the request from a valid local record or use
-     its configured resolution strategy. See
-     `docs/features/packages/package-bugowner.md`.
+2. After successful maintained-package target resolution and before acquiring
+   the Ticket lock, query the SMELT maintainership endpoint on every invocation.
+   A valid response supplies the globally deduplicated lowercase individual
+   email set. Any maintainership-only error supplies an empty set, emits the
+   specified PII-free warning, and does not block package-tree mutation. See
+   `docs/features/packages/package-maintainership.md`.
+3. Delegate to `package_service` under the Ticket lock. Create or find the
+   `TicketPackage`, then create missing tracks and Products from the validated
+   targets and missing `TicketPackageMaintainer` rows for exact matching
+   currently active Users. Package-tree and maintainer audit events are atomic.
+   Existing records and associations are never removed or rewritten.
+   Association-only mutation neither auto-assigns nor reconciles the Ticket.
+4. If at least one new `TicketPackageTrack` with `workflow_type = ibs` was
+   created, register one best-effort post-commit effect:
    - Enqueue `discover_submissions_for_ticket_package(ticket_id,
      package_name)` to discover IBS submission requests (SRs) and release
      requests (RRs) for the newly relevant IBS scope. See
      `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
-   Both effects are attempted after commit, neither depends on the other, and
-   failure of either does not roll back package creation. Creating only the
-   package marker, only Products, or only Git tracks registers neither effect.
-   A fully no-op invocation likewise registers neither effect.
-6. Return an `AddPackageResult` containing:
+   This effect runs after commit. Creating only the package marker, only
+   Products, only Git tracks, or only maintainer associations registers no
+   submission-discovery effect.
+5. Return an `AddPackageResult` containing:
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
    - The identities and persisted workflow types of newly created tracks, or
@@ -939,9 +954,11 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
      whether at least one IBS track was created. The concrete in-memory
      representation is an implementation choice.
 
-`package_service` handles idempotency (skipping existing records,
-including soft-deleted), initial status determination, and eligibility
-logic internally — see `docs/features/packages/package-service.md`.
+`package_service` handles idempotency (skipping existing records, including
+soft-deleted), initial status determination, eligibility logic, and additive
+maintainer association internally. A fully no-op package-tree invocation can
+still add maintainers while all public creation counts remain zero. See
+`docs/features/packages/package-service.md`.
 
 New records are created with `deleted_at = NULL`. A new descendant under a
 VA-excluded parent is effectively VA-excluded through the hierarchy, and a new
@@ -1186,6 +1203,7 @@ types are defined:
 |--------|-------------|-----------|------------------|
 | VA adds or completes package tree | `package_added` | VA user | `package_name` |
 | Package auto-added or completed (CVE ingestion, release detection, or Product catalog backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
+| Active User acquired as package maintainer | `package_maintainer_added` | `NULL` | Target username in `new_value`; package name in `detail` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
 | VA soft-deletes product | `product_excluded` | VA user | `track_name`, `package_name`, event-time Product name and CPE |
@@ -1206,6 +1224,10 @@ types are defined:
   least one package, track, or Product record. A completely no-op invocation
   creates no `package_added` event. Product catalog backfill uses the fixed
   comment `Product catalog backfill`.
+- Exactly one `package_maintainer_added` event is created per new association,
+  including on a package-tree no-op. These events are system-attributed and do
+  not trigger Ticket reconciliation. Existing, unmatched, or inactive-user
+  outcomes create no event.
 - All events include an implicit `created_at` timestamp.
 - The "Details recorded" column lists the values stored in the event's
   `old_value`, `new_value`, `comment`, and structured `detail` fields. See
@@ -1284,10 +1306,9 @@ The following concerns are identical regardless of `workflow_type`:
 - Product eligibility (CVSS threshold, Reactive Support phase)
 - Soft-deletion and restore
 - UI — VA sees packages → tracks → products with no workflow distinction
-- Bugowner — one current package-level value, keyed by `package_name` and
-  joined via `TicketPackage.package_name`. The bugowner resolver owns source
-  selection; a workflow that requests resolution does not determine where the
-  resulting value applies
+- Maintainership acquisition - one additive user association per
+  `TicketPackage` occurrence, package-wide across all its tracks. The same
+  SMELT endpoint serves IBS and Git/SLFO packages without a codestream join
 
 The following concerns are workflow-specific (service layer only):
 
@@ -1300,10 +1321,9 @@ The following concerns are workflow-specific (service layer only):
 | Real-time events | IBS RabbitMQ | TBD |
 | Submission tracking (SR/RR) | IBS submission tracking | TBD |
 
-Bugowner source precedence and any fallback are intentionally not represented
-in this workflow table because bugowner is global package metadata, not a
-per-track value. Those rules belong to
-`docs/features/packages/package-bugowner.md`.
+Maintainership is not represented as workflow-specific because it is
+package-wide within a `TicketPackage`; its discovery and identity rules are in
+`docs/features/packages/package-maintainership.md`.
 
 ## IBS Workflow Applicability and Convergence
 
@@ -1327,12 +1347,12 @@ may occur below both IBS and Git tracks; an IBS advisory updates only the
 occurrences below IBS tracks. No workflow discriminator is added to the global
 `Product` catalog.
 
-The bugowner value is the exception to occurrence-scoped data: it is one
-global value for a source package, regardless of the workflow that caused its
-resolution. A new IBS track may request generic bugowner resolution, but the
-caller supplies only `package_name` and does not prescribe IBS or Git as the
-resolver source. A Git-only track never causes an IBS API request merely
-because its `reference` resembles an IBS project.
+Maintainership acquisition is package-occurrence data and is independent of
+track workflow. Every successful package-target resolution queries SMELT
+maintainership for both IBS and Git/SLFO results. It creates additive
+`TicketPackageMaintainer` rows applying to every track under that occurrence;
+it never sends a Git track to IBS and never interprets either endpoint's
+codestream namespace as the other.
 
 IBS polling and RabbitMQ processing consider active Tickets only (`New`,
 `Analysis`, `Analyzed`). `Resolved`, `Ignored`, and `Duplicated` Tickets do not
@@ -1350,7 +1370,7 @@ mechanisms. The permanent ownership boundary is:
 | Concern | Acceleration | Permanent recovery owner | Applicable records |
 |---------|--------------|--------------------------|--------------------|
 | Package tree | Explicit package addition; Product catalog backfill when a Product becomes newly current | Re-resolution on Ticket reactivation; no periodic per-package SMELT scan | Every persisted package marker on the reactivated Ticket, including soft-deleted markers |
-| Bugowner | Generic ensure-bugowner request after creation of a new IBS track | Bugowner maintenance feature; current fetcher name and source strategy remain owned by `package-bugowner.md` | One global value per source package |
+| Maintainership | Every successful package-target resolution, including a package-tree no-op | A later invocation of the same idempotent package-resolution operation; no periodic owner | Every TicketPackage occurrence, package-wide across IBS and Git/SLFO tracks |
 | SR/RR discovery and correlation | New-IBS-track post-commit discovery; IBS RabbitMQ request events | `sync_ibs_requests` for ordinary active-ticket convergence; targeted historical catch-up on Ticket reactivation | IBS tracks of active Tickets |
 | Track release observation | IBS RabbitMQ `package.commit` | `detect_ibs_track_releases` | IBS tracks of active Tickets |
 | Product advisory observation | None | `detect_ibs_product_releases` | Product occurrences below IBS tracks of active Tickets |
@@ -1369,12 +1389,13 @@ When an inactive Ticket enters an active status, package-domain catch-up has
 two ordered phases:
 
 1. Re-resolve every persisted package name through the normal SMELT package
-   resolution and idempotent package mutation path. This includes soft-deleted
-   package markers. Existing records and exclusion markers are preserved;
-   only missing tracks and Product occurrences are created. Each package is an
-   independent unit so one failure does not roll back successful siblings.
-2. After the package-tree phase has committed its successful units, run the
-   bugowner, IBS request, IBS track-release, and IBS Product-release catch-up
+   resolution, maintainership acquisition, and idempotent package mutation
+   path. This includes soft-deleted package markers. Existing records and
+   exclusion markers are preserved; only missing tracks, Product occurrences,
+   and maintainer associations are created. Each package is an independent
+   unit so one failure does not roll back successful siblings.
+2. After the package-tree and maintainership phase has committed its successful
+   units, run the IBS request, IBS track-release, and IBS Product-release catch-up
    operations against the resulting tree. Failure to resolve one package does
    not prevent catch-up for records that already exist.
 
@@ -1419,7 +1440,9 @@ specifications.
 ### Accepted package-tree discovery gap
 
 Sentinel deliberately performs no periodic SMELT request for every package of
-every active Ticket. Product catalog backfill re-resolves existing active
+every active Ticket. This also means maintainership acquisition after a failed
+request, a new User, or a new upstream assignment waits for another normal
+package-resolution trigger. Product catalog backfill re-resolves existing active
 package trees only when a Product becomes newly current. Consequently, a new
 SMELT track composed entirely of Products already present in the catalog can
 remain absent from a continuously active Ticket until another package
@@ -1437,6 +1460,8 @@ periodic full-tree reconciler is introduced.
 - **SMELT package query** (on-demand): see
   [SMELT Query for Package Resolution](#smelt-query-for-package-resolution)
   above
+- **SMELT maintainership query** (on-demand): see
+  `docs/features/packages/package-maintainership.md`
 - **AIMAAS lifecycle and threshold sync** (periodic): see
   `docs/features/packages/product-catalog.md` (AIMAAS Integration)
 
@@ -1451,11 +1476,10 @@ POST /api/v1/tickets/{ticket_id}/packages
 ```
 
 Add a source package to a ticket. Sentinel queries SMELT to resolve all
-maintained tracks and products for the package, creates `TicketPackage`,
-`TicketPackageTrack`, and `TicketPackageProduct` records via
-`package_service`, and, when at least one new IBS track is created, registers
-the documented post-commit bugowner-resolution and submission-discovery
-effects.
+maintained tracks and Products and to acquire package-wide maintainership,
+creates package-tree and additive maintainer records via `package_service`,
+and, when at least one new IBS track is created, registers the documented
+post-commit submission-discovery effect.
 See [Adding Packages to a Ticket](#adding-packages-to-a-ticket) for the full
 behavior.
 
@@ -1510,8 +1534,10 @@ package. If the package is already fully resolved, the response will
 report zero created records. If the package is soft-deleted, the endpoint
 returns 409 `PACKAGE_ALREADY_EXCLUDED` — the VA must use the restore
 endpoint to re-include it. The request still performs SMELT and current-catalog
-validation before determining that the package tree is complete, so the
-documented SMELT/catalog errors may be returned on a repeat call.
+validation and then the best-effort maintainership request before determining
+that the package tree is complete, so documented blocking SMELT/catalog errors
+may be returned on a repeat call and missing maintainers may be added while the
+public creation counts remain zero.
 
 ---
 
@@ -2102,9 +2128,8 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `SUSE:Channels` may be added if SMELT data is insufficient.
 - **Git workflow specifics**: release detection (track and product level),
   real-time events, and submission tracking for the git workflow are TBD and
-  will be specified when the SLFO workflow is better defined. Bugowner is
-  global package metadata; source selection and fallback are owned by the
-  bugowner specification rather than by a Git track specification.
+  will be specified when the SLFO workflow is better defined. Maintainership
+  remains package-wide and does not depend on those release mechanisms.
 - **Review Queue**: anomalous combinations of affectedness and delivery
   status will be integrated into a ticket review queue. See
   [Anomaly Detection](#anomaly-detection-future-review-queue).
@@ -2115,8 +2140,6 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 
 - [ ] Release detection mechanism for git workflow (track-level and
       product-level)
-- [ ] Bugowner source authority and fallback, including whether Git metadata
-      participates in resolving the one global package bugowner
 - [ ] Real-time event source for git workflow (webhook? polling?)
 - [x] SMELT API evolution — the v2 `maintained` endpoint exposes
       `codestream.maintenance_process_type` as the authoritative workflow
@@ -2152,6 +2175,7 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   IBS event consumption
 - `docs/features/packages/product-lifecycle-transitions.md` — EOL and
   Reactive Support handling
-- `docs/features/packages/package-bugowner.md` — bugowner resolution
+- `docs/features/packages/package-maintainership.md` — package-wide maintainer
+  acquisition, persistence, privacy, and authorization
 - `docs/features/platform/system-settings.md` — default CVSS version configuration
 - `docs/data-model.md` — full database schema

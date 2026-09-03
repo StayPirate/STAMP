@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Centralize all package-centric operations — mutations on
-`TicketPackage`, `TicketPackageTrack`, and `TicketPackageProduct`
+Centralize all package-centric operations — mutations on `TicketPackage`,
+`TicketPackageMaintainer`, `TicketPackageTrack`, and `TicketPackageProduct`
 records, orchestration with external systems (SMELT), and package query
 functions — in a single service module (`package_service`). This
 ensures that:
@@ -98,22 +98,32 @@ When a VA performs any modifying operation on a ticket with
 acting VA. This is enforced via the shared helper
 `ticket_mutations.auto_assign_actor()`.
 
+The narrow exception is a package-resolution invocation whose only database
+change is creation of system-derived `TicketPackageMaintainer` associations.
+That invocation does not call `auto_assign_actor()` because maintainership is
+authorization/work-routing metadata rather than a VA package-tree decision. If
+the same invocation also creates any package-tree record, the normal
+auto-assignment rule applies.
+
 **Module-level rule**: auto-assignment is always applied by the function
 that acquires the `FOR UPDATE` lock, never by orchestration wrappers.
-For example, `add_package_to_ticket` does NOT apply auto-assignment —
-it delegates to `add_package_records()`, which calls
-`auto_assign_actor` after acquiring the lock.
+For example, `add_package_to_ticket` does NOT apply auto-assignment — it
+delegates to `add_package_records()`, which calls `auto_assign_actor` after
+acquiring the lock only when package-tree state changes.
 
 See `docs/features/tickets/ticket-mutations.md` for the helper's
 signature and behavior.
 
 ## Package Mutation Operations
 
-Each user-facing function below follows the same pattern. System-only
+Each user-facing function below follows the same pattern unless its section
+states a narrower no-op or system-derived-metadata exception. System-only
 operations such as `set_product_released_at()` and
 `recalculate_product_eligibility_for_ticket()` omit auto-assignment as stated
-in their sections. Exclusion and restoration operations are VA-only and require
-a non-null `acting_user_id`:
+in their sections. `add_package_records()` also omits assignment and
+reconciliation when maintainership associations are its only mutation.
+Exclusion and restoration operations are VA-only and require a non-null
+`acting_user_id`:
 
 1. Acquire `FOR UPDATE` on the parent Ticket row
 2. Call `ensure_ticket_operable(ticket)`
@@ -512,6 +522,7 @@ Called by `add_package_to_ticket` after SMELT resolution completes.
 | `ticket_id` | `UUID` | Yes | Target ticket |
 | `package_name` | `str` | Yes | Source package name |
 | `tracks` | `list[ResolvedTrackData]` | Yes | Fully validated and locally resolved track/Product data; semantic shape defined below |
+| `maintainer_emails` | `set[str]` | Yes | Fully validated, lowercase, globally deduplicated individual emails from the maintainership response; empty on a valid no-maintainer result or non-blocking maintainership failure |
 | `acting_user_id` | `UUID \| None` | No | Who is performing the action |
 | `audit_comment` | `str \| None` | No | System-generated context for `package_added`; `NULL` for user actions |
 | `active_ticket_only` | `bool` | No | When true, skip without mutation if the locked Ticket is not active; used by Product catalog backfill |
@@ -529,7 +540,9 @@ representation. Each item contains:
 Before calling `add_package_records()`, the caller has completed all external
 I/O, JSend and response validation, unsupported-process filtering,
 channel/compose deduplication, exact CPE lookup, workflow mapping, and
-deduplication of `catalog_product_ids` within each track. Consequently this
+deduplication of `catalog_product_ids` within each track. It has also converted
+the independently validated maintainership response to `maintainer_emails` as
+specified in `package-maintainership.md`. Consequently this
 function
 does not parse SMELT data, infer a workflow, accept unknown Products, or decide
 whether a codestream is supported. The concrete collection and record types
@@ -549,11 +562,14 @@ remain implementation choices as long as they preserve this contract.
    `Analysis`, or `Analyzed`, return a no-op result before assignment,
    reconciliation, or audit creation.
 3. Call `ensure_ticket_operable(ticket)`
-4. Validate preconditions and determine which package, track, and Product
-   records are missing under the lock.
-5. If no record is missing, return a no-op result before auto-assignment,
-   reconciliation, or audit creation.
-6. Call `auto_assign_actor()`
+4. Validate preconditions, identify the existing package occurrence or prepare
+   its creation, and determine which package, track, Product, and maintainer
+   records are missing under the lock. Query exact matching Users with `active
+   = true`; unmatched and inactive users do not create associations.
+5. If no record or association is missing, return a no-op result before
+   auto-assignment, reconciliation, or audit creation.
+6. Call `auto_assign_actor()` only if at least one package-tree record is
+   missing. Maintainer-only mutation does not assign the actor.
 7. Create or skip `TicketPackage` (idempotent — skip if exists)
 8. For each track in `tracks`:
    - Create or skip `TicketPackageTrack` (idempotent — skip if exists,
@@ -576,18 +592,32 @@ remain implementation choices as long as they preserve this contract.
 > Hygiene Rules, even when creating dozens of products in a single
 > `add_package_records()` call.
 
-9. Create one `TicketAuditEvent` (`package_added`) using `audit_comment`.
-10. Call `reconcile_ticket_status()`
-11. Return created records
+9. For each missing active-user match, create one
+   `TicketPackageMaintainer` and one system-attributed
+   `package_maintainer_added` event with the exact payload in
+   `ticket-audit-log.md`.
+10. If a package-tree record was created, create one `TicketAuditEvent`
+    (`package_added`) using `audit_comment` and call
+    `reconcile_ticket_status()`. Maintainer-only mutation performs neither.
+11. Flush and return the existing package-tree result. Maintainer additions do
+    not alter public counts or add a public result field.
 
-**TicketAuditEvent**: `package_added`
+**TicketAuditEvent**: `package_added` when package-tree state changes; one
+`package_maintainer_added` per new association.
 
 **Idempotency**: if a `TicketPackageTrack` or `TicketPackageProduct`
 record already exists for the given combination (including soft-deleted
-records), it is skipped without modification. Only missing records are
-created. This ensures re-running `add_package_to_ticket` after a
-partial failure does not produce duplicate records. A fully no-op invocation
-does not auto-assign or reconcile the Ticket and creates no audit event.
+records), it is skipped without modification. Existing maintainer associations
+are likewise retained and skipped. Only missing records are created. This
+ensures re-running `add_package_to_ticket` after a partial failure does not
+produce duplicates. A package-tree no-op may still add missing maintainers; it
+does not auto-assign or reconcile the Ticket.
+
+**Exceptions**: `TicketNotFoundError`, `TicketNotMutableError`, database
+constraint/flush failures, audit validation/flush failures, and delegated
+eligibility failures propagate to the caller and roll back the complete
+caller-owned transaction. Unmatched/inactive Users and duplicate maintainer
+associations are normal skip outcomes, not exceptions.
 
 ---
 
@@ -858,20 +888,26 @@ async def add_package_to_ticket(
    required structured warnings before mutation. If no Product CPE resolves to
    a local Product across supported codestreams, raise
    `PackageTargetsUnresolvedError`. No records are created.
-6. Delegate all record creation to `add_package_records()` — this is where
+6. After target resolution succeeds, call the SMELT package maintainership
+   endpoint with no codestream filter. Parse and validate the complete response,
+   then collect only non-null direct-user and group-member emails, lowercase
+   them, and deduplicate globally. Any transport, HTTP/envelope, JSON, or schema
+   failure (including a maintainership 404 after package targets succeeded) is
+   non-blocking: emit the sanitized warning defined in
+   `package-maintainership.md`, use an empty email set, and continue. A valid
+   empty/no-email response also supplies an empty set without warning.
+7. Delegate all record creation and maintainer association to
+   `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
-7. If step 6 created at least one track whose persisted `workflow_type` is
-   `ibs`, register two independent best-effort post-commit effects with the
-   workflow owner: ensure that a bugowner is available for `package_name`, and
-   enqueue `discover_submissions_for_ticket_package()` for retroactive SR/RR
-   discovery. Both effects are attempted regardless of the other's outcome;
-   their execution order is not part of the contract. A package-only,
-   Product-only, Git-track-only, fully no-op, or `active_ticket_only` skip
-   registers no effect. Neither effect executes before the database commit
-   succeeds.
-8. Return an `AddPackageResult` with creation/skip counts and the identities
+8. If step 7 created at least one track whose persisted `workflow_type` is
+   `ibs`, register the best-effort post-commit
+   `discover_submissions_for_ticket_package()` effect. A package-only,
+   Product-only, Git-track-only, maintainer-only, fully no-op, or
+   `active_ticket_only` skip registers no effect. It never executes before the
+   database commit succeeds.
+9. Return an `AddPackageResult` with creation/skip counts and the identities
    plus persisted workflow types of newly created tracks, or an equivalent
-   semantic signal that lets the workflow owner determine whether step 7
+   semantic signal that lets the workflow owner determine whether step 8
    applies. The result does not prescribe a concrete dataclass or collection
    type.
 
@@ -884,25 +920,38 @@ comment defined by their owning workflow.
 catalog backfill sets it to true so a Ticket that became inactive after
 batch selection is skipped under the Ticket row lock.
 
+**Idempotency**: every invocation repeats both external validation requests.
+Package-tree rows and maintainership associations are insert-if-missing. With
+unchanged valid source data and complete local state, no database mutation,
+audit event, assignment, reconciliation, or post-commit effect occurs. A later
+valid response or newly active matching User may make a repeated invocation add
+maintainer associations while package-tree counts remain unchanged.
+
+**Escaping exceptions**: package-target, Product-catalog, and SMELT availability
+exceptions from steps 1-5 escape according to the Service Exceptions table.
+Database, audit, and delegated service exceptions from step 7 propagate and
+roll back the caller-owned transaction. Maintainership-only transport,
+HTTP/envelope, JSON, and schema errors from step 6 are caught and converted to
+the documented warning plus empty set; they never escape this function.
+
 **Error handling**:
 
-- **Steps 1–5 (validation gate)**: blocking. If any of these steps fails,
+- **Steps 1–5 (package-target validation gate)**: blocking. If any of these
+  steps fails,
   the function raises without side effects (no database writes occur). The
   endpoint handler translates service-layer exceptions to the corresponding
   HTTP error codes defined in `package-model.md`.
-- **Step 6 (record creation)**: transactional. Record creation occurs
+- **Step 6 (maintainership acquisition)**: non-blocking for its own failures.
+  It can only reduce new maintainer additions to zero; it never changes
+  package-target errors or removes an association.
+- **Step 7 (record creation)**: transactional. Record creation occurs
   under the `FOR UPDATE` lock acquired by `add_package_records()`. If any
   failure occurs during this step, the transaction is rolled back and no
   records are persisted.
-- **Step 7 (post-commit effects)**: best-effort. The API transaction
+- **Step 8 (post-commit effect)**: best-effort. The API transaction
   dependency or other workflow owner executes these effects only after its
   caller-owned transaction commits. Failures do not roll back the created
   records.
-  - **Bugowner availability**: the generic bugowner operation accepts only the
-    package name. It may return a valid shared cache record without external
-    I/O or apply the source strategy owned by `package-bugowner.md`. A failure
-    is logged and does not roll back package addition or prevent submission
-    discovery.
   - **Submission discovery enqueue**: if the task enqueue fails
     (e.g., Redis unavailable), log a warning and continue. Ordinary active
     request state remains covered by `SyncIbsRequests`; targeted historical
@@ -910,8 +959,9 @@ batch selection is skipped under the Ticket row lock.
     operator rerun if this acceleration task fails permanently. See
     `ibs-submission-tracking.md`.
 
-**Auto-assignment**: applied by `add_package_records()` after it confirms that
-at least one record is missing. `add_package_to_ticket()` does not apply it.
+**Auto-assignment**: applied by `add_package_records()` only after it confirms
+that at least one package-tree record is missing. Maintainer associations alone
+do not auto-assign. `add_package_to_ticket()` does not apply it.
 
 ### Package-tree reactivation workflow
 
@@ -930,7 +980,9 @@ After the status-transition transaction commits, the workflow:
 2. Calls `add_package_to_ticket()` once per distinct package name with system
    attribution and reactivation audit context. It processes and commits each
    package independently. Existing package, track, Product, and exclusion state
-   is preserved; only missing descendants are created.
+   is preserved; missing descendants and additive maintainer associations may
+   be created. A soft-deleted package's association remains ineffective until
+   the package is restored.
 3. Logs each failed package with the sanitized cause, `ticket_id`, package
    name, and `celery_task_id`, then continues. A failed package does not roll
    back successful siblings.
@@ -991,7 +1043,7 @@ async def get_ticket_packages(
 3. Compute `delivery_relevant`, `actionable`, and
    `non_actionable_reason` for every level using the supplied UTC
    `evaluation_date` and the canonical predicates from `package-model.md`
-4. Join bugowner data from `PackageBugowner`
+4. Do not load or project maintainer identities.
 5. Return assembled `PackageDetail[]`, sorted alphabetically by
    `package_name`
 
@@ -1201,6 +1253,17 @@ transitions. The test must cover:
   event-time Product name and CPE with package and track context; release
   events preserve the actual `released_at`, and VA eligibility events
   distinguish override set, change, and clear actions
+- **Maintainership acquisition**: every package-resolution invocation attempts
+  the maintainership request after target validation and before locking;
+  transport/HTTP/envelope/schema failures continue with an empty set and a
+  PII-free warning; direct users and group members deduplicate by lowercase
+  email; only current active exact-email User matches are associated; a
+  package-tree no-op, including Product catalog backfill, can add associations;
+  concurrent calls serialize; sequential unchanged re-invocation creates no
+  duplicate row or event; every new association has one atomic system event;
+  association-only mutation does not assign or reconcile, leaves public result
+  fields/counts unchanged, and later omission/failure never removes rows;
+  maintainer visibility does not grant any capability-protected mutation
 
 ## Cross-references
 
@@ -1225,7 +1288,8 @@ transitions. The test must cover:
   delivery pipeline
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — real-time
   IBS event consumption
-- `docs/features/packages/package-bugowner.md` — bugowner resolution
+- `docs/features/packages/package-maintainership.md` — SMELT maintainership
+  acquisition, additive associations, privacy, and visibility
 - `docs/conventions.md` — Transaction and Locking (pessimistic locking,
   I/O-then-Lock corollary)
 - `docs/api-spec.md` — general API conventions

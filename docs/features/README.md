@@ -43,7 +43,7 @@ Index of all feature specification domains.
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive Support and EOL reconciliation
 - [product-catalog.md](packages/product-catalog.md) — Product/ProductRepository, SMELT/AIMAAS sync
 - [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync
-- [package-bugowner.md](packages/package-bugowner.md) — Global package bugowner resolution and cache
+- [package-maintainership.md](packages/package-maintainership.md) — Package-wide maintainer acquisition, authorization, and work routing
 - [maintainer.md](packages/maintainer.md) — Maintainer operations (pending fixes, in-progress, completed)
 - [cpe-package-mapping.md](packages/cpe-package-mapping.md) — CPE-to-package resolution via static mapping file
 

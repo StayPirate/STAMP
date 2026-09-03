@@ -196,6 +196,11 @@ erDiagram
         UUID ticket_id FK
         VARCHAR package_name
     }
+    TicketPackageMaintainer {
+        UUID id PK
+        UUID ticket_package_id FK
+        UUID user_id FK
+    }
 
     TicketPackageTrack {
         UUID id PK
@@ -301,18 +306,6 @@ erDiagram
         VARCHAR srcmd5
     }
 
-    PackageBugowner {
-        UUID id PK
-        VARCHAR package_name UK
-        VARCHAR bugowner_type "nullable"
-    }
-
-    PackageBugownerMember {
-        UUID id PK
-        UUID package_bugowner_id FK
-        VARCHAR userid
-    }
-
     SubmissionRequest {
         UUID id PK
         INTEGER request_number UK
@@ -377,6 +370,8 @@ erDiagram
     TicketAccessGrant }o--|| User : "granted by"
 
     TicketPackage ||--o{ TicketPackageTrack : "has tracks"
+    TicketPackage ||--o{ TicketPackageMaintainer : "has maintainers"
+    TicketPackageMaintainer }o--|| User : "references"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
     TicketPackageProduct }o--|| Product : "targets"
 
@@ -395,8 +390,6 @@ erDiagram
     SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
     SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
 
-    PackageBugowner ||--o{ PackageBugownerMember : "has members"
-
     FetcherConfig ||--o{ FetcherRun : "has runs"
     FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
     SystemSetting ||--o{ SettingAuditEvent : "has audit events"
@@ -411,11 +404,10 @@ erDiagram
 |-------|--------|---------|
 | **CVE Core** | CVE, CVESource, CVECVSSAssessment, CVEExternalIdentifier | Vulnerability data from external sources — drives ticket creation and severity |
 | **CVE Enrichment** | CVEAffectedVersion, CVECWE, CVESSVCAssessment, CVEKEVEntry, CVEEPSSScore | Supplementary CVE intelligence from secondary sources (CISA, FIRST) |
-| **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
+| **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageMaintainer, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
 | **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
 | **IBS Integration** | SubmissionRequest, SubmissionRequestTrack, ReleaseRequest | IBS submission and release request tracking |
-| **Package Domain** | PackageBugowner, PackageBugownerMember | IBS package maintainer cache |
 | **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
 | **Operational** | CodestreamPackageChecksum | Release detection MD5 cache |
 
@@ -496,8 +488,10 @@ flowchart LR
 
     subgraph resolve["Resolution (on-demand)"]
         SMELT_Q["Query SMELT<br/>maintained (v2)"]
+        SMELT_M["Query SMELT<br/>maintainership"]
         CREATE_CS["Create<br/>TicketPackageTrack<br/>(per codestream)"]
         CREATE_PR["Create<br/>TicketPackageProduct<br/>(per product)"]
+        CREATE_PM["Create additive<br/>TicketPackageMaintainer"]
     end
 
     subgraph status["Track Status & Eligibility"]
@@ -531,6 +525,7 @@ flowchart LR
     VA_ADD --> SMELT_Q
     CPE_MATCH --> SMELT_Q
     SMELT_Q --> CREATE_CS --> CREATE_PR
+    SMELT_Q --> SMELT_M --> CREATE_PM
 
     VA_SET --> ELIG
     ELIG_OVR -.->|manual| ELIG
@@ -710,7 +705,7 @@ flowchart TD
     subgraph integration["External Integration"]
         OBS["ibs-integration"]
         RABBIT["ibs-rabbitmq-integration"]
-        BUGOWNER["package-bugowner"]
+        MAINTAINERSHIP["package-maintainership"]
         MAINT["maintainer"]
     end
 
@@ -745,9 +740,8 @@ flowchart TD
     OBS --> PKG
     RABBIT --> PKG
     RABBIT --> OBS
-    BUGOWNER --> PKG
-    BUGOWNER --> OBS
-    MAINT --> BUGOWNER
+    MAINTAINERSHIP --> PKG
+    MAINT --> MAINTAINERSHIP
     MAINT --> PKG
 
     %% Identity → Core
@@ -793,9 +787,9 @@ other feature:
 | [cvss-scoring](features/tickets/cvss-scoring.md) | Ingestion | Multi-provider CVSS assessment and severity derivation |
 | [references](features/tickets/ticket-references.md) | Ingestion | External links on tickets (auto and manual) |
 | [cpe-package-mapping](features/packages/cpe-package-mapping.md) | Ingestion | CPE-to-package resolution via static mapping file |
-| [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, bugowners |
+| [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, and requests |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
-| [package-bugowner](features/packages/package-bugowner.md) | Integration | IBS package maintainer cache |
+| [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |
 | [system-settings](features/platform/system-settings.md) | Platform | System settings (default CVSS version) |

@@ -9,9 +9,9 @@ This module also provides the shared `reconcile_ticket_status()` function
 and the `auto_assign_actor()` helper, which are called by both this
 module and `package_service`.
 
-Package-centric mutations (track status, delivery status, product
-eligibility, soft-deletion/restore, record creation) are handled by
-`package_service` (`docs/features/packages/package-service.md`).
+Package-centric mutations (track status, delivery status, product eligibility,
+soft-deletion/restore, record creation, and additive maintainer association) are
+handled by `package_service` (`docs/features/packages/package-service.md`).
 
 Without this centralization, each caller would need to independently:
 
@@ -830,12 +830,17 @@ a `FOR UPDATE` lock (`ticket_mutations`, `package_service`,
 
 This rule does not apply to system operations (`acting_user_id = None`)
 or to users without the `vulnerability_analyst` role.
+It also does not apply when a `package_service` invocation creates only
+system-derived `TicketPackageMaintainer` associations. The package service does
+not call this helper for that association-only mutation; it calls the helper
+normally when the same invocation also changes package-tree state.
 
 ### `auto_assign_actor()`
 
-A public helper function that implements the auto-assignment check. All
-modules that modify tickets under a `FOR UPDATE` lock call this helper
-as the first operation after acquiring the lock.
+A public helper function that implements the auto-assignment check. Mutation
+modules call it under the Ticket `FOR UPDATE` lock when their owning operation
+requires auto-assignment. The association-only maintainership exception above
+does not call it.
 
 **Signature**:
 
@@ -907,7 +912,7 @@ status gates MUST go through the appropriate centralized module:
 - **Package/track/product mutations**: `package_service`
   (`TicketPackageTrack` status, delivery status, standalone
   `TicketPackageProduct` eligibility overrides, soft-delete/restore, record
-  creation)
+  creation, additive maintainership association)
 - **CVSS and severity mutations**: `ticket_mutations`
   (`CVECVSSAssessment` records, manual severity)
 - **Ticket status evaluation**: `ticket_mutations` (called after any
