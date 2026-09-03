@@ -213,6 +213,7 @@ Approved placeholder patterns:
 | Groups        | `pkg-maintainers`, `kernel-team`                     |
 | Group emails  | `pkg-maintainers@suse.de`                            |
 | External IDs  | `ext-12345`, `00000000-0000-0000-0000-000000000001` |
+| IPv4 addresses | RFC 5737 TEST-NET ranges: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
 
 When documenting API response formats from external services, first
 sanitize the response by replacing all real identifiers with fictional
