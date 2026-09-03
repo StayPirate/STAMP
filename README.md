@@ -3,7 +3,7 @@
 <p align="center">
 <a href="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
 <a href="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/image-scan.yml/badge.svg" alt="Image Scan"></a>
-<a href="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml/badge.svg" alt="Python Forward-Compat"></a>
+<a href="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml"><img src="https://github.com/StayPirate/sentinel/actions/workflows/python-forward-compat.yml/badge.svg?branch=master" alt="Python Next"></a>
 <a href="https://codecov.io/gh/StayPirate/sentinel"><img src="https://codecov.io/gh/StayPirate/sentinel/graph/badge.svg" alt="codecov"></a>
 </p>
 

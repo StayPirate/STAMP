@@ -337,7 +337,7 @@ they feed in [Environments](#environments).
 | `build-images.yml` | `workflow_run` after a successful CI run on `master`; push of a `v*` tag | Builds the backend image once, runs the image smoke-test gate, publishes the same digest to `ghcr.io` | Yes (publish gate) |
 | `deploy-api-docs.yml` | Push of a `v*` tag | Publishes the OpenAPI contract and API documentation site to GitHub Pages | Yes (release path) |
 | `image-scan.yml` | Weekly schedule, manual | Scans the published image for OS-level vulnerabilities and opens or updates a tracking issue | No |
-| `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and opens or updates a tracking issue | No |
+| `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and reports the result through its Actions status and logs | No |
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
 | `scorecard.yml` | Push to `master`, weekly schedule, manual | Runs the official OpenSSF Scorecard action and publishes results to Code Scanning and the public Scorecard dataset | No |
 
@@ -1449,20 +1449,20 @@ extensions) only surface when someone actually executes the bump. This
 workflow turns that into an early-warning signal, surfacing breakage
 weeks or months before the bump PR is opened.
 
-**Deliberately non-blocking.** This run never fails the workflow in a
-way that blocks other work and is not part of the publish path
-(`build-images.yml` is untouched). The next Python minor version is
-frequently a pre-release during most of its development cycle, and
-failures are expected and uninteresting until close to that version's
-own stable release — the workflow is informational, not a merge gate,
-and is never a required status check.
+**Deliberately non-blocking.** A compatibility failure makes the workflow
+fail so its native Actions status and README badge reflect the test result,
+but the workflow is not part of the publish path (`build-images.yml` is
+untouched) and is never a required status check. The next Python minor
+version is frequently a pre-release during most of its development cycle,
+so a red result is an early-warning signal rather than a merge, release, or
+publication gate.
 
 **Availability guard.** Right after a Runtime Version bump, the next
 minor may have no published build at all yet (not even an alpha). The
 workflow checks this first via `uv python list <next> --only-downloads`
 before attempting anything else. If no build is available, the run
 exits successfully with an informational `::notice::` — no test is
-attempted and no tracking issue is opened. This avoids a false-positive
+attempted. This avoids a false-positive
 failure signal for a condition that carries no compatibility
 information.
 
@@ -1474,14 +1474,11 @@ interpreter, since the goal is to detect whether the current
 dependency set *can* resolve and pass on the next version, not to
 reproduce a pinned environment.
 
-**Delivery.** Once a build is available, a failure at either remaining
-stage (dependency resolution or the test run itself) opens a new
-GitHub issue labeled `quality-tooling` (the label already exists in
-the repository) with a fixed, version-agnostic title, or updates the
-existing open one if a prior run already opened it — the workflow
-never creates a duplicate issue for the same ongoing condition, and
-never auto-closes it on a subsequent green run. A human triages and
-closes the issue once addressed or acknowledged.
+**Delivery.** Once a build is available, a failure during interpreter
+installation, dependency resolution, or the test run fails the workflow.
+The native Actions status drives the README badge, while the workflow logs
+provide the tested version and failure details. The workflow does not create
+or update tracking issues.
 
 See `docs/conventions.md` (Version Bump Checklist) for the manual
 upgrade procedure this check complements.

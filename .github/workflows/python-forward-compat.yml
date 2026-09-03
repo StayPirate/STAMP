@@ -1,4 +1,4 @@
-name: Python Forward-Compatibility Check
+name: Python Next
 
 # Weekly, non-blocking run of the backend test suite against the next
 # Python minor version (one above backend/.python-version). See
@@ -6,10 +6,9 @@ name: Python Forward-Compatibility Check
 # rationale, and docs/conventions.md (Version Bump Checklist) for the
 # manual bump procedure this workflow provides early warning for.
 #
-# This workflow never fails the run because of a forward-compatibility
-# failure and never touches build-images.yml or the publish path. A
-# failure opens or updates a single tracking issue; it is informational
-# only and is never a required/blocking status check.
+# This workflow reports forward-compatibility failures through its native
+# Actions status and logs. It never touches build-images.yml or the publish
+# path and is never a required/blocking status check.
 
 on:
   schedule:
@@ -24,11 +23,6 @@ concurrency:
 
 permissions:
   contents: read
-  issues: write
-
-env:
-  ISSUE_LABEL: quality-tooling
-  ISSUE_TITLE: "Scheduled Python forward-compatibility check failed"
 
 jobs:
   forward-compat:
@@ -106,61 +100,17 @@ jobs:
             echo "available=false" >>"${GITHUB_OUTPUT}"
           fi
 
-      # Best-effort, informational run: any failure at either of the
-      # two stages below (dependency resolution failure against the
-      # new interpreter, or an actual test failure) is treated
-      # uniformly as a single forward-compatibility signal via this
-      # step's outcome. Unlike ci.yml's reproducible backend-test job,
-      # this run intentionally allows re-resolution (`uv sync` without
-      # `--locked`) since the goal is to surface breakage against a
-      # still-unreleased interpreter, and coverage gating is not a
-      # concern here (no `--cov` flags).
+      # Any failure below (interpreter installation, dependency resolution,
+      # or an actual test failure) fails the workflow so its native status
+      # badge reflects the forward-compatibility result. Unlike ci.yml's
+      # reproducible backend-test job, this run intentionally allows
+      # re-resolution (`uv sync` without `--locked`) since the goal is to
+      # surface breakage against a still-unreleased interpreter, and coverage
+      # gating is not a concern here (no `--cov` flags).
       - name: Run test suite against next Python version
-        id: forward-compat
         if: steps.availability.outputs.available == 'true'
-        continue-on-error: true
         run: |
           set -euo pipefail
           uv python install "${{ steps.python-version.outputs.next }}"
           uv sync --python "${{ steps.python-version.outputs.next }}"
           uv run --python "${{ steps.python-version.outputs.next }}" pytest -v
-
-      # Only reached when the run above actually executed and failed
-      # (captured as `outcome: failure` because of continue-on-error;
-      # skipped entirely, hence not 'failure', when the next version
-      # was unavailable per the availability check above). Opens a new
-      # issue, or updates the existing open one so consecutive runs
-      # never create a duplicate. The title is deliberately
-      # version-agnostic (no version number embedded) since "next"
-      # shifts every time backend/.python-version is bumped. Never
-      # auto-closed by a subsequent green run — a human triages and
-      # closes it.
-      - name: Open or update tracking issue for forward-compatibility failure
-        if: steps.forward-compat.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          body_file=$(mktemp)
-          {
-            echo "Automated weekly run of the backend test suite against Python ${{ steps.python-version.outputs.next }} (current target: ${{ steps.python-version.outputs.current }}, per \`backend/.python-version\`) failed."
-            echo ""
-            echo "This run is non-blocking by design (see \`docs/deployment.md\`, Python Forward-Compatibility Check). It exists to surface interpreter and dependency incompatibilities early, before the actual Runtime Version bump described in \`docs/conventions.md\` (Version Bump Checklist)."
-            echo ""
-            echo "See the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for full logs (interpreter install, dependency resolution, and test output)."
-            echo ""
-            echo "A human should triage this and close the issue once addressed or acknowledged — this workflow never auto-closes it."
-          } >"${body_file}"
-
-          existing=$(gh issue list --repo "${{ github.repository }}" \
-              --state open --label "${ISSUE_LABEL}" \
-              --json number,title \
-              --jq ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" | head -n1)
-
-          if [[ -n "${existing}" ]]; then
-              gh issue edit "${existing}" --repo "${{ github.repository }}" --body-file "${body_file}"
-          else
-              gh issue create --repo "${{ github.repository }}" \
-                  --title "${ISSUE_TITLE}" --label "${ISSUE_LABEL}" \
-                  --body-file "${body_file}"
-          fi
