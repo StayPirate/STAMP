@@ -217,6 +217,7 @@ erDiagram
         UUID product_id FK
         BOOLEAN eligible
         BOOLEAN is_eligible_override
+        TIMESTAMPTZ released_at "nullable"
     }
 
     Product {
@@ -520,11 +521,14 @@ flowchart LR
     end
 
     subgraph prod_release["Product Release"]
-        UINFO["Fetch updateinfo.xml<br/>from product repos"]
-        MATCH["Match advisory<br/>to CVE + package"]
-        PR_REL["Product released_at set"]
+        PROD_PERIODIC["detect_ibs_product_releases<br/>(daily 04:00 UTC)"]
+        REPOS["Current repositories,<br/>then historical fallback"]
+        UINFO["Validate repomd + updateinfo<br/>integrity and resource bounds"]
+        MATCH["Stable security advisory<br/>+ exact CVE/source package"]
+        PKG_SVC["package_service<br/>atomic mutation + audit"]
+        PR_REL["Product released_at set<br/>to advisory-issued UTC time"]
 
-        UINFO --> MATCH --> PR_REL
+        PROD_PERIODIC --> REPOS --> UINFO --> MATCH --> PKG_SVC --> PR_REL
     end
 
     VA_ADD --> SMELT_Q
@@ -711,6 +715,7 @@ flowchart TD
         OBS["ibs-integration"]
         RABBIT["ibs-rabbitmq-integration"]
         TRACK_RELEASE["ibs-track-release-detection"]
+        PRODUCT_RELEASE["ibs-product-release-detection"]
         MAINTAINERSHIP["package-maintainership"]
         MAINT["maintainer"]
     end
@@ -749,6 +754,8 @@ flowchart TD
     TRACK_RELEASE --> OBS
     RABBIT --> TRACK_RELEASE
     TRACK_RELEASE --> PKG
+    PRODUCT_RELEASE --> OBS
+    PRODUCT_RELEASE --> PKG
     MAINTAINERSHIP --> PKG
     MAINT --> MAINTAINERSHIP
     MAINT --> PKG
@@ -799,6 +806,7 @@ other feature:
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, and requests |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
 | [ibs-track-release-detection](features/packages/ibs-track-release-detection.md) | Integration | Existing-track reconciliation via expanded IBS source state and per-track checkpoints |
+| [ibs-product-release-detection](features/packages/ibs-product-release-detection.md) | Integration | Product release reconciliation via validated stable security advisories and exact source-package matches |
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |

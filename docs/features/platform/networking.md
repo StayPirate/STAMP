@@ -403,9 +403,8 @@ the redirect target, which may be an untrusted host. A compromised or
 misconfigured upstream service could redirect authenticated requests to
 an attacker-controlled server, leaking credentials silently.
 
-**Opt-in mechanism**: consumers that genuinely require redirect following
-(e.g., a future endpoint that returns stable 301 redirects) must opt in
-explicitly via `http_client_options`:
+**Generic opt-in mechanism**: consumers that genuinely require automatic
+redirect following must opt in explicitly via `http_client_options`:
 
 ```python
 http_client_options = {"follow_redirects": True}
@@ -414,17 +413,22 @@ http_client_options = {"follow_redirects": True}
 This override triggers a WARNING-level log at client creation time (see
 "Override Safety" above) to ensure visibility in production logs.
 
-**Recommendation**: consumers enabling redirect following should
-implement Authorization header stripping on cross-origin redirects
-(i.e., remove the `Authorization` header when the redirect target's
-origin differs from the original request origin). This limits credential
-exposure to same-origin redirects, which are lower risk.
+Consumers enabling automatic redirect following must define credential
+handling and permitted destinations in their owning specification. The default
+remains fail-closed because same-origin and cross-origin redirects can both
+change the request's security assumptions.
 
-**Current status**: no existing fetcher or non-fetcher component
-requires redirect following. All external endpoints used by Sentinel
-(NVD, MITRE, GitHub, CISA, Red Hat, OSV, FIRST.org, IBS, SMELT, AIMAAS)
-respond directly with 200 when accessed with HTTPS and the correct
-domain — none require following redirects for normal operation.
+**IBS Product-repodata exception**: the Product release detector does not
+enable automatic redirect following. It may manually inspect and follow at
+most one HTTP 302 repository-artifact redirect from a request constructed from
+the validated `IBS_DOWNLOAD_BASE_URL` when the target is HTTPS, has exact host
+`dist.suse.de`, has no explicit port, preserves the complete expected path, and
+contains no user information, query, fragment, or traversal. A second redirect,
+downgrade, different host/port/path, or malformed location fails the repository.
+These requests are anonymous; no `Authorization` header or IBS credential is
+sent or forwarded. This narrow exception is owned by
+`docs/features/packages/ibs-product-release-detection.md` and does not alter
+redirect behavior for another integration.
 
 ### Non-Fetcher Components
 

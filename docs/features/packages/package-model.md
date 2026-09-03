@@ -317,7 +317,7 @@ eligibility and delivery confirmation.
 | `product_id` | UUID | FK(product.id), NOT NULL | Related product |
 | `eligible` | BOOLEAN | NOT NULL, DEFAULT true | Effective eligibility |
 | `is_eligible_override` | BOOLEAN | NOT NULL, DEFAULT false | True if VA has manually set the eligibility |
-| `released_at` | TIMESTAMPTZ | nullable | When Sentinel detected the fix in the product's update repository |
+| `released_at` | TIMESTAMPTZ | nullable | Authoritative stable security advisory-issued time in UTC; NULL until Product release detection confirms a match |
 | `deleted_at` | TIMESTAMPTZ | nullable | Direct VA-exclusion timestamp. NULL = not directly VA-excluded |
 | `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record creation timestamp |
 | `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Record update timestamp |
@@ -533,7 +533,7 @@ RR accepted (incident closed)            --> delivery: RELEASED
 Fix evidence appears in track source     --> affectedness: FIXED (automatic, via expanded source diff)
         |
         v
-Fix lands in eligible products (updateinfo.xml) --> released_at set
+Fix lands in Product repositories (updateinfo.xml) --> released_at set
 ```
 
 The two axes are managed independently:
@@ -550,13 +550,22 @@ through independent mechanisms.
 
 Product-level release is confirmed independently via `updateinfo.xml`:
 
-- The `ProductReleaseDetector` downloads `updateinfo.xml` from each
-  product's update repository
-- Looks for advisories referencing the ticket's CVE
-- Uses package match cascade (title pattern, heuristic prefix,
-  `primary.xml`) to confirm the specific source package
-- Sets `released_at` on the `TicketPackageProduct` from the advisory's
-  `<issued date>`
+- `detect_ibs_product_releases` traverses current Product repository
+  associations first and retained historical associations as fallback.
+- A completely validated stable security advisory must reference the exact
+  Ticket CVE and contain an exact validated `src` or `nosrc` source-package
+  entry for the occurrence.
+- Matching completes independently for each `TicketPackageProduct`; one
+  Product/package match never suppresses an unresolved sibling package.
+- `released_at` is the earliest valid advisory-issued UTC time in the first
+  successfully matching repository, not Sentinel's observation time.
+
+Observation remains visible through the package-tree row's `updated_at` and the
+`product_released` audit event's `created_at`. `released_at` is irreversible;
+later retraction, correction, disappearance, or no-match does not clear or
+replace a successful factual observation. See
+`ibs-product-release-detection.md` for repository, integrity, resource-safety,
+and concurrency rules.
 
 Codestream/track delivery tracking and product release confirmation are
 independent and complementary mechanisms. Track delivery tracks the
@@ -1249,8 +1258,8 @@ affected package:
    repository (e.g., the SLES 15 SP6 update repository consumed by
    `zypper`). See
    `docs/features/packages/ibs-product-release-detection.md` for the
-   full detection mechanism (updateinfo.xml parsing, advisory match
-   chain).
+   full detection mechanism (deterministic repository traversal, validated
+   updateinfo advisories, and exact source-package matching).
 
 The two levels are detected through different mechanisms and update
 different data:
@@ -2082,12 +2091,12 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/packages/ibs-track-release-detection.md` for the
   full procedure. When a release is detected, sets
   `TicketPackageTrack.status = FIXED`.
-- `detect_ibs_product_releases`: periodic task that invokes the
-  `ProductReleaseDetector` (`updateinfo.xml`-based) for
-  `TicketPackageProduct` records and sets `released_at`. See
+- `detect_ibs_product_releases`: periodic task (daily at 04:00 UTC) that
+  validates `updateinfo.xml` stable security advisories for unreleased
+  `TicketPackageProduct` occurrences and sets `released_at`. See
   `docs/features/packages/ibs-product-release-detection.md` for the
-  full procedure. The owning Product release specification will fix the
-  schedule; scope is Product occurrences below IBS tracks of active Tickets.
+  full procedure. Scope is Product occurrences below IBS tracks of active
+  Tickets.
 - `evaluate_lifecycle_transitions`: periodic task (daily at 04:15 UTC) that
   reconciles lifecycle-derived eligibility and Ticket gate state from current
   Product dates. EOL changes derived actionability without mutating

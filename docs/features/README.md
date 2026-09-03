@@ -37,7 +37,7 @@ Index of all feature specification domains.
 - [package-service.md](packages/package-service.md) — Service-layer contract for package mutations and queries
 - [package-model.md](packages/package-model.md) — Status model, eligibility, add/remove packages
 - [ibs-track-release-detection.md](packages/ibs-track-release-detection.md) — Existing IBS track reconciliation from expanded source diffs and per-track checkpoints
-- [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — updateinfo.xml, advisory match
+- [ibs-product-release-detection.md](packages/ibs-product-release-detection.md) — Validated Product repository advisories and exact source-package release matching
 - [git-track-release-detection.md](packages/git-track-release-detection.md) — Git track-level release detection
 - [git-product-release-detection.md](packages/git-product-release-detection.md) — Git product-level release detection
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive Support and EOL reconciliation

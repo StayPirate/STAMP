@@ -179,6 +179,12 @@ timestamp of the latest complete Product catalog snapshot; otherwise it is
 historical. Historical associations remain available for historical lookup
 and Product-level release detection.
 
+Product release detection consumes current associations first and retained
+historical associations only as fallback for an occurrence that remains
+unreleased. See `ibs-product-release-detection.md` for deterministic ordering
+and why the detector does not narrow these associations through the per-package
+SMELT maintained-package endpoint.
+
 See `docs/data-model.md` for the full column listing.
 
 ---

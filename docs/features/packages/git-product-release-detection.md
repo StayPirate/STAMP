@@ -13,8 +13,9 @@ track. When confirmed, the corresponding `TicketPackageProduct` will have
 its `released_at` timestamp set.
 
 For IBS products, this confirmation is done via `updateinfo.xml` parsing.
-The git workflow may use the same mechanism (if SLFO products publish
-`updateinfo.xml`) or a different one.
+The IBS repository, redirect, advisory, and source-package contracts are
+source-specific and are not presumed to apply to Git/SLFO Products. This
+specification requires its own upstream evidence before selecting a mechanism.
 
 See `docs/features/packages/package-model.md` for the package tracking
 model, including the three orthogonal dimensions (affectedness,
@@ -23,13 +24,12 @@ specification extends.
 
 ## Open Questions
 
-- Do SLFO products publish `updateinfo.xml` in their update
-  repositories? If so, the existing `ProductReleaseDetector` may work
-  unchanged.
+- Do SLFO products publish release metadata that can authoritatively relate an
+  exact source package and CVE to a Product publication?
 - If not, what mechanism confirms that the fix has reached the product's
   repository?
-- Is the advisory format the same as IBS, or does it require a different
-  match chain?
+- If an advisory format exists, which fields, integrity metadata, resource
+  bounds, and release-time semantics are authoritative?
 
 ## Cross-references
 

@@ -1007,7 +1007,7 @@ Source status is available via `GET /api/v1/cves/{cve_id}/sources` — see
 | `product_name` | string | Product display name (from `Product.display_name`) |
 | `eligible` | boolean | Whether this product receives the fix |
 | `is_eligible_override` | boolean | `true` if VA manually set eligibility |
-| `released_at` | datetime \| null | When the fix was detected in the product repository (UTC) |
+| `released_at` | datetime \| null | Authoritative issued time of the validated stable security advisory that established Product release, serialized in UTC; `null` until confirmed |
 | `lifecycle_phase` | string \| null | Current Product lifecycle phase for the response's UTC evaluation date |
 | `deleted_at` | datetime \| null | Direct VA-exclusion timestamp |
 | `actionable` | boolean | Whether the Product currently participates in operational decisions |

@@ -280,6 +280,8 @@ repository.
 - Parent ticket must be operable (`ensure_ticket_operable`) — release
   detection does NOT apply to non-operable tickets (Ignored or
   Duplicated)
+- `ticket_package_product_id` must resolve to an existing
+  `TicketPackageProduct`; otherwise raise `ProductNotFoundError`
 - No precondition on track or product `deleted_at` — release detection
   applies to soft-deleted child records (factual observation that keeps
   them current with reality)
@@ -290,28 +292,37 @@ repository.
 2. Call `ensure_ticket_operable(ticket)`
 3. Load the product record (no `deleted_at` filter — soft-deleted
    products are included)
-3. If `released_at` is already set, return (no-op — release confirmation
+4. If `released_at` is already set, return (no-op — release confirmation
    is irreversible; see below)
-4. Set `TicketPackageProduct.released_at` to the provided value
-5. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
+5. Set `TicketPackageProduct.released_at` to the provided value
+6. Create `TicketAuditEvent` (`product_released`, `user_id = NULL`)
    with `new_value` equal to the `released_at` timestamp in UTC ISO 8601
    format and with the event-time Product subject plus `advisory_id` in
    `detail`, as defined in `ticket-audit-log.md`
-6. Call `reconcile_ticket_status()`
-7. Return updated product
+7. Call `reconcile_ticket_status()`
+8. Return updated product
 
 **TicketAuditEvent**: `product_released`
 
-**Idempotency**: no-op if `released_at` is already set (step 3).
+**Idempotency**: no-op if `released_at` is already set (step 4).
 
-**Irreversibility**: once set, `released_at` cannot be cleared or
-modified. An advisory present in `updateinfo.xml` is a factual
-observation — it cannot be "un-published". If an advisory is
-misidentified (wrong source package match), the correct resolution is
-to soft-delete the product record, not to clear `released_at`.
+**Irreversibility**: once set, `released_at` cannot be cleared or modified.
+The value records a stable security advisory-issued time that passed the
+complete validation contract at observation time. A later advisory retraction,
+correction, disappearance, repository failure, or no-match does not reverse or
+replace that accepted factual observation. Soft-deletion remains an independent
+VA exclusion decision and is not a release-correction mechanism.
 
 **Callers**: IBS product release detection tasks only
 (`acting_user_id` is always `None`; auto-assignment does not apply).
+
+**Product-release composition**: the detector completes repository I/O,
+integrity validation, parsing, matching, and timestamp selection before this
+function acquires the Ticket lock. Each `TicketPackageProduct` occurrence uses
+one caller-owned transaction. If concurrent work already set `released_at`, the
+later call is an idempotent no-op and does not replace the value, reconcile the
+Ticket, or create another event. Only an effective NULL-to-timestamp change
+creates `product_released` and invokes Ticket reconciliation.
 
 ---
 
@@ -1155,6 +1166,11 @@ predecessor under this Ticket lock. Polling, catch-up, RabbitMQ processing, and
 retries must serialize or conditionally advance the checkpoint so a stale
 worker cannot overwrite a newer accepted source state.
 
+Product release detection likewise serializes concurrent first writes under
+the Ticket lock. Once one transaction sets a Product occurrence's
+`released_at`, every concurrent or repeated caller observes an irreversible
+no-op and cannot replace the selected advisory time.
+
 ## Service Exceptions
 
 All exceptions raised by `package_service` inherit from
@@ -1285,6 +1301,11 @@ transitions. The test must cover:
   event and do not touch the track timestamp; final-status and repeated
   outcomes are no-ops; independent sessions verify concurrent checkpoint
   anti-regression
+- **Product release composition**: verify repository I/O and complete metadata
+  validation occur before the Ticket lock; an effective release timestamp, its
+  one service-owned event, and Ticket reconciliation commit atomically; local
+  failure rolls back all three; and concurrent or repeated calls preserve the
+  first committed timestamp without another event or reconciliation
 
 ## Cross-references
 

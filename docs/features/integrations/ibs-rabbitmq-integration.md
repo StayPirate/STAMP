@@ -24,9 +24,9 @@ fetcher as a catch-up mechanism for events missed during downtime.
   `docs/features/packages/ibs-product-release-detection.md`).
   The `suse.obs.repo.published` event was evaluated and rejected — its
   payload lacks the package name, triggering full `updateinfo.xml`
-  re-download and re-parse.   Measured cost: ~600-800 ms total per repository (~400-470 ms download,
-  ~100-220 ms decompression and parsing), dominated by download. With
-  ETag/Last-Modified caching on the periodic fetcher, the benefit does
+  download, snapshot-consistency validation, decompression, and parse for every
+  dependent unresolved occurrence. Per-invocation repository reuse already
+  bounds duplicate work; adding event fan-out or cross-run validator state does
   not justify the complexity.
 - Monitoring codestreams without active tickets (see
   [Known Limitations](#known-limitations))
