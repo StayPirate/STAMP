@@ -7,7 +7,7 @@ tracking.
 
 ```
 package-model.md                      Status, eligibility, delivery, exclusion, actionability
-├── ibs-track-release-detection.md       IBS track-level: MD5 cache, IBS diff, Cases A/B/C
+├── ibs-track-release-detection.md       IBS track-level: existing-track reconciliation, expanded source diff, per-track checkpoint
 ├── ibs-product-release-detection.md     IBS product-level: updateinfo.xml, advisory match chain
 ├── git-track-release-detection.md       Git track-level release detection (TBD)
 ├── git-product-release-detection.md     Git product-level release detection (TBD)

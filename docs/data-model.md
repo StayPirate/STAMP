@@ -76,6 +76,7 @@ flowchart TB
     end
 
     subgraph ibs["IBS Integration"]
+        TrackReleaseCheckpoint
         SubmissionRequest
         ReleaseRequest
     end
@@ -97,6 +98,7 @@ flowchart TB
     TicketPackage --> TicketPackageMaintainer
     TicketPackageMaintainer --> User
     TicketPackageTrack --> TicketPackageProduct
+    TicketPackageTrack --> TrackReleaseCheckpoint
     Product --> TicketPackageProduct
     User --> UserRole
     User --> Session
@@ -248,6 +250,12 @@ erDiagram
         VARCHAR_20 delivery_status "NOT NULL, DEFAULT PENDING"
         TIMESTAMPTZ deleted_at "nullable"
     }
+    TrackReleaseCheckpoint {
+        UUID id PK
+        UUID ticket_package_track_id FK "UNIQUE, NOT NULL"
+        VARCHAR_32 srcmd5 "NOT NULL"
+        TIMESTAMPTZ last_seen_at "NOT NULL"
+    }
     TicketPackageProduct {
         UUID id PK
         UUID ticket_package_track_id FK "NOT NULL"
@@ -285,6 +293,7 @@ erDiagram
     TicketPackage ||--o{ TicketPackageMaintainer : "has maintainers"
     TicketPackageMaintainer }o--|| User : "references"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
+    TicketPackageTrack ||--o| TrackReleaseCheckpoint : "has release checkpoint"
     Product ||--o{ TicketPackageProduct : "referenced by"
     Product ||--o{ ProductRepository : "has repositories"
 ```
@@ -432,11 +441,11 @@ erDiagram
         VARCHAR_20 state "DEFAULT open"
         INTEGER incident_number "NOT NULL"
     }
-    CodestreamPackageChecksum {
+    TrackReleaseCheckpoint {
         UUID id PK
-        VARCHAR_255 codestream_name "NOT NULL"
-        VARCHAR_255 package_name "NOT NULL"
+        UUID ticket_package_track_id FK "UNIQUE, NOT NULL"
         VARCHAR_32 srcmd5 "NOT NULL"
+        TIMESTAMPTZ last_seen_at "NOT NULL"
     }
     TicketPackageTrack {
         UUID id PK
@@ -444,6 +453,7 @@ erDiagram
 
     SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
     SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
+    TrackReleaseCheckpoint |o--|| TicketPackageTrack : "belongs to"
     SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
 ```
 
@@ -959,7 +969,7 @@ system action).
 |-------------|-------------|------------------------|--------------------------------------------|
 | id          | UUID        | Inherited from AuditEventMixin | Internal identifier                |
 | ticket_id   | UUID        | FK(ticket.id), NOT NULL| Related ticket                             |
-| user_id     | UUID        | Inherited from AuditEventMixin | User who performed the action. NULL for automated system actions (e.g., release detection, auto-created tickets). |
+| user_id     | UUID        | Inherited from AuditEventMixin | User who performed the action. NULL for automated system actions (e.g., release detection or CVE ingestion). |
 | event_type  | VARCHAR(50) | NOT NULL               | See TicketAuditEventType enum below             |
 | old_value   | TEXT        | nullable               | Previous value (e.g., old status, old assignee username) |
 | new_value   | TEXT        | nullable               | New value (e.g., new status, new assignee username) |
@@ -984,7 +994,7 @@ contract is in `docs/features/tickets/ticket-audit-log.md`.
 | duplicate_set              | Ticket was marked as duplicate of another          |
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Atomic repoint: the ticket's `duplicate_of_id` was updated because its previous target was marked as duplicate. `old_value` is the previous target identifier (`SNTL-{n}`). `new_value` is the new target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered this repoint. |
-| package_added              | Package tree added or completed (manual by VA or automatic via CVE ingestion, track release detection, or Product catalog backfill). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. A complete no-op creates no event. |
+| package_added              | Package tree added or completed (manual by VA or automatic via CVE ingestion or Product catalog backfill). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. A complete no-op creates no event. |
 | package_maintainer_added   | Package resolution associated an existing active User with a TicketPackage. `user_id` is NULL, `old_value` is NULL, `new_value` is the event-time target username, `comment` is NULL, and `detail` contains `{"package": "fictional-package"}`. |
 | package_excluded           | Package directly soft-deleted from the Ticket by a VA. `old_value` contains the package name and `user_id` identifies the VA. `detail` is NULL. Child records are not modified; they become effectively VA-excluded through the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
@@ -1098,6 +1108,11 @@ dimensions (affectedness, eligibility, delivery).
 | updated_at        | TIMESTAMPTZ | NOT NULL, DEFAULT                     | Record update timestamp            |
 
 **Unique constraint**: (ticket_package_id, reference)
+
+The optional one-to-one `release_checkpoint` relationship points to
+`TrackReleaseCheckpoint`. Checkpoint creation or advancement is operational
+release-detection state: it does not update this row's `updated_at` and is not
+included in normal Ticket/package API responses.
 
 #### TicketPackageProduct
 
@@ -1622,31 +1637,33 @@ change.
 | `config_changed` | Fetcher configuration was modified by an admin |
 
 ### IBS Integration
-#### CodestreamPackageChecksum
+#### TrackReleaseCheckpoint
 
-Operational cache table shared by the `IBSEventConsumer` (real-time) and
-the `IBSTrackReleaseDetector` (periodic catch-up) to track source MD5
-checksums of packages in IBS codestream projects. The stored value is the last
-source revision whose required local outcomes completed or remain recoverable
-through an independent permanent path; it is not merely the latest revision
-observed from IBS. Comparing current IBS `srcmd5` with this checkpoint
-identifies packages requiring diff analysis, while retaining the previous
-value after downstream failure makes idempotent retry possible. The shared
-cache prevents duplicate work between the two detection paths. See
-`docs/features/integrations/ibs-rabbitmq-integration.md`.
+Operational track-release state shared by periodic polling, per-Ticket
+catch-up, and RabbitMQ package-commit acceleration. At most one row belongs to
+each `TicketPackageTrack`. The stored `srcmd5` is the expanded IBS source state
+last successfully examined for that track, not merely the latest source state
+observed from IBS. A failed status mutation, audit insert, Ticket
+reconciliation, or checkpoint write leaves the previous checkpoint unchanged.
+See `docs/features/packages/ibs-track-release-detection.md`.
 
-This table contains no domain data — it is purely an operational artifact
-of the release detection mechanism.
+This table is not Ticket domain history. It is not exposed in normal Ticket or
+package responses, does not generate Ticket audit events, and does not touch
+`TicketPackageTrack.updated_at`.
 
-| Column          | Type        | Constraints          | Description                        |
-|-----------------|-------------|----------------------|------------------------------------|
-| id              | UUID        | PK                   | Internal identifier                |
-| codestream_name | VARCHAR(255) | NOT NULL             | IBS codestream project name (e.g., `SUSE:SLE-15-SP6:Update`) |
-| package_name    | VARCHAR(255) | NOT NULL             | Source package name                |
-| srcmd5          | VARCHAR(32)  | NOT NULL             | MD5 checksum of the last fully processed or independently recoverable IBS source revision |
-| last_seen_at    | TIMESTAMPTZ   | NOT NULL, DEFAULT    | When this accepted checkpoint was recorded |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| ticket_package_track_id | UUID | FK(ticket_package_track.id) ON DELETE RESTRICT, UNIQUE, NOT NULL | Existing IBS track whose source state was examined |
+| srcmd5 | VARCHAR(32) | NOT NULL | 32-character hexadecimal expanded IBS source checksum last successfully examined for this track |
+| last_seen_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When this `srcmd5` checkpoint value was accepted |
 
-**Unique constraint**: (codestream_name, package_name)
+`TicketPackageTrack.release_checkpoint` and
+`TrackReleaseCheckpoint.ticket_package_track` are explicit one-to-one ORM
+relationships using `back_populates`. `ON DELETE RESTRICT` matches the normal
+soft-delete-only track lifecycle and prevents accidental loss of operational
+progress through a hard delete. The application does not delete checkpoint
+rows independently.
 
 #### SubmissionRequest
 
@@ -1753,10 +1770,10 @@ a value requires an Alembic migration.
   not tracked). Required `SystemSetting` baseline rows are seeded by migration
   and may be restored at API startup; `FetcherConfig` rows are created at
   process startup;
-  `CodestreamPackageChecksum` uses `last_seen_at` instead of standard
+  `TrackReleaseCheckpoint` uses `last_seen_at` instead of standard
   timestamp columns (operational cache — the timestamp records when the
-  checksum checkpoint was last accepted after complete or independently
-  recoverable processing, not when the record was created))
+  checksum checkpoint value was last accepted after complete local processing,
+  not when the record was created))
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
   use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
   DeliveryStatus, CveState, Role, FetcherRunStatus,

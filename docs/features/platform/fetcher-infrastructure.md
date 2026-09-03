@@ -795,7 +795,7 @@ successfully added records.
 | `sync_kernel_cves` | All CVEs (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_ghsa_advisories` | All advisories (global) — but has `fetch_single` | **Inherited from `BaseCVEFetcher`** | Same as NVD |
 | `sync_osv_advisories` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call OSV API → upsert affected versions/refs/packages |
-| `detect_ibs_track_releases` | IBS tracks in active tickets | **Custom override** | Extract Ticket's IBS tracks → verify current release state without relying only on the global checksum |
+| `detect_ibs_track_releases` | IBS tracks in active tickets | **Custom override** | Extract the Ticket's eligible IBS tracks and apply the same per-track checkpoint/current-state reconciliation as periodic execution |
 | `detect_ibs_product_releases` | Product occurrences below IBS tracks in active tickets | **Custom override** | Check current `updateinfo.xml` data, including valid advisories that predate reactivation |
 | `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Perform targeted historical query → recover current SR/RR chain, correlations, and delivery state |
 | `evaluate_lifecycle_transitions` | Product eligibility and gate-zone Ticket lifecycle reconciliation | **Custom override** | Extract Ticket Products after manual-zone exit → recalculate lifecycle-driven eligibility; EOL actionability itself is derived |

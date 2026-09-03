@@ -29,15 +29,15 @@ inconsistency and missed re-evaluations.
 ### Async pattern
 
 The service is implemented as async functions. The API (FastAPI) is the
-primary consumer and calls the service directly with `await`. Entry
-points that operate in a synchronous context (Celery tasks, IBS
-RabbitMQ consumer) call the service via `asyncio.run()`.
+primary consumer and calls the service directly with `await`. Synchronous
+process entry points establish one async workflow boundary and await service
+calls within it; they do not create a new event loop for each mutation.
 
 | Entry point               | Invocation pattern                                             |
 |---------------------------|----------------------------------------------------------------|
 | API endpoint              | `await package_service.set_track_status(session, ...)`         |
-| Celery task (release det.)| `asyncio.run(package_service.set_track_status(session, ...))` |
-| IBS RabbitMQ consumer     | `asyncio.run(package_service.set_track_status(session, ...))` |
+| Celery track-release workflow | `await package_service.set_track_status(session, ...)` inside its one async workflow |
+| IBS RabbitMQ consumer workflow | `await package_service.set_track_status(session, ...)` inside its one async workflow |
 
 ### Transaction ownership
 
@@ -197,6 +197,16 @@ transitions. VA callers (`acting_user_id` present) can transition from
 any state to any non-FIXED target — the VA has full override authority
 on non-FIXED target transitions.
 
+**Track-release composition**: IBS track release detection performs external
+I/O before opening the per-track transaction, then calls this function with
+`status=FIXED` and `acting_user_id=None`. Its workflow owner advances the
+track's `TrackReleaseCheckpoint` in the same caller-owned transaction as any
+effective status mutation, this function's audit event, and Ticket
+reconciliation. This function remains the sole owner of affectedness mutation
+and `track_status_changed`; the detector does not duplicate the audit event.
+Checkpoint-only outcomes create no Ticket audit event and do not update
+`TicketPackageTrack.updated_at`.
+
 ---
 
 ### `set_track_delivery_status()`
@@ -240,8 +250,7 @@ Sets the delivery status of a `TicketPackageTrack` record.
 records. The delivery progress is tracked by the submission tracking
 system (see `docs/features/packages/ibs-submission-tracking.md`). The
 meaningful milestones for the ticket timeline are: (1) `track_status_changed`
-when the track transitions to FIXED (triggered by release detection after
-the RR is accepted and code is merged into the codestream), and
+when track source evidence causes the track to transition to FIXED, and
 (2) `product_released` when the update reaches the product repository.
 Delivery status is an intermediate signal — not a customer-facing event.
 
@@ -1141,6 +1150,11 @@ The I/O-then-Lock invariant (see Architecture section) is an additional
 constraint specific to this module: orchestration functions that perform
 external I/O MUST NOT acquire `FOR UPDATE` locks.
 
+Track release reconciliation additionally validates the per-track checkpoint
+predecessor under this Ticket lock. Polling, catch-up, RabbitMQ processing, and
+retries must serialize or conditionally advance the checkpoint so a stale
+worker cannot overwrite a newer accepted source state.
+
 ## Service Exceptions
 
 All exceptions raised by `package_service` inherit from
@@ -1264,6 +1278,13 @@ transitions. The test must cover:
   association-only mutation does not assign or reconcile, leaves public result
   fields/counts unchanged, and later omission/failure never removes rows;
   maintainer visibility does not grant any capability-protected mutation
+- **Track release composition**: verify IBS I/O completes before the Ticket
+  lock; an effective automatic `FIXED` transition, its one service-owned audit
+  event, Ticket reconciliation, and checkpoint advancement commit atomically;
+  any local failure rolls them all back; checkpoint-only outcomes create no
+  event and do not touch the track timestamp; final-status and repeated
+  outcomes are no-ops; independent sessions verify concurrent checkpoint
+  anti-regression
 
 ## Cross-references
 

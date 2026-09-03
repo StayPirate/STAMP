@@ -3,7 +3,7 @@
 ## Purpose
 
 Complement the existing polling-based codestream release detection
-(`IBSTrackReleaseDetector`, documented in
+(`DetectIbsTrackReleases`, documented in
 `docs/features/packages/ibs-track-release-detection.md`) with a real-time event consumer that
 listens to IBS commit events via the RabbitMQ message bus at
 `rabbit.suse.de`. This reduces codestream-level detection latency from up
@@ -13,11 +13,10 @@ fetcher as a catch-up mechanism for events missed during downtime.
 ### Goals
 
 - Near-real-time codestream-level release detection for active tickets
-- Reduced IBS API load (targeted diff per commit instead of full project
-  source-info queries)
-- No duplicate work: the RabbitMQ consumer and the periodic fetcher share
-  the same MD5 cache (`CodestreamPackageChecksum`) so changes processed
-  in real-time are not re-processed by the fetcher
+- Targeted reconciliation for an exactly represented project/package pair
+  instead of waiting for the next complete scheduled run
+- No conflicting outcomes: the RabbitMQ consumer and periodic fetcher use the
+  same per-track reconciliation and `TrackReleaseCheckpoint` contract
 
 ### Non-Goals
 
@@ -54,14 +53,25 @@ Three event types are consumed:
 **`suse.obs.package.commit`** — emitted when a source package is committed
 to any IBS project.
 
-| Payload field | Type   | Description                               |
-|---------------|--------|-------------------------------------------|
-| `project`     | string | IBS project name (e.g., `SUSE:SLE-15-SP6:Update`) |
-| `package`     | string | Source package name (e.g., `openssl`)      |
-| `rev`         | string | New revision number                        |
-| `srcmd5`      | string | MD5 checksum of the new source revision    |
-| `files`       | string | Changed files (truncated by IBS at ~800 chars) |
-| `user`        | string | User who committed the change              |
+The track-release boundary consumes only these fields:
+
+| Payload field | Required type | Description |
+|---|---|---|
+| `project` | non-empty string | IBS project identity used to select exact existing track references |
+| `package` | non-empty string | IBS package identity used to select exact existing logical package names |
+
+Public OBS source inspection shows standard commit events can also contain
+`sender`, `comment`, `user`, `files`, `rev`, and `requestid`, but exposes no
+`srcmd5`. Those fields are not consumed by track release detection. Upstream
+fixtures have represented `rev` with inconsistent JSON types, so it is neither
+validated nor used as source-state authority.
+
+A sanitized deployed IBS `suse.obs.package.commit` payload has not yet been
+captured. Before implementation, live verification must confirm the event
+envelope, routing metadata, `project` and `package` types/nullability, the
+actual `rev` shape, and any IBS-specific extensions. A contradiction in either
+consumed identity field blocks parser implementation; it does not permit
+falling back to event revision data.
 
 **`suse.obs.request.create`** — emitted when a new request is created in
 IBS. Used for submission requests (type `maintenance_incident`) and
@@ -135,8 +145,8 @@ Celery queue.
 The consumer imports the **Celery app module**
 (`backend/app/celery_app.py`) at startup. This provides:
 
-- Access to the configured Celery application for task enqueueing
-  (`create_ticket_from_detection.delay(...)`)
+- Access to the configured Celery application for submission-related task
+  enqueueing defined by `ibs-submission-tracking.md`
 - Automatic timezone validation (UTC check) inherited from the app
   factory
 - Automatic lock sentinel validation inherited from the app factory
@@ -248,10 +258,12 @@ after PostgreSQL succeeded):
 - The orchestrator restarts the container. On the next attempt, if Redis
   is reachable, the consumer proceeds normally.
 
-**Rationale**: without Redis, the consumer cannot enqueue Celery tasks
-(`create_ticket_from_detection`) or write its heartbeat. It would
-consume and acknowledge messages without producing any downstream
-effect — silently discarding events. Failing fast is preferable.
+**Rationale**: without Redis, the consumer cannot perform submission-related
+task publication or write its heartbeat. Whether that requires startup
+failure, and the relationship between functional processing and heartbeat-only
+degradation, remain part of the complete consumer lifecycle contract. Track
+release reconciliation itself performs inline PostgreSQL/IBS work and does not
+enqueue a Ticket-creation task.
 
 **Contrast with runtime Redis unavailability**: the heartbeat section
 (Redis Heartbeat above) specifies that runtime Redis failures for
@@ -309,8 +321,9 @@ its `reference` to this set and is never mutated by an IBS event.
 
 For each `suse.obs.package.commit` event:
 
-1. **Parse payload**: extract `project`, `package`, `srcmd5` from the JSON
-   message body
+1. **Parse wake-up identity**: validate and extract only non-empty string
+   `project` and `package` values. The event is not authoritative for a source
+   revision or checksum. Do not consume `srcmd5` or use `rev` as a checkpoint.
 
 2. **Filter by monitored codestream**: check if `project` is in the
    monitored codestream set **and** `has_non_final_tracks` is `true`.
@@ -331,65 +344,29 @@ For each `suse.obs.package.commit` event:
    `false` → **acknowledge and discard** the message. No further
    processing.
 
-3. **Lookup cached MD5**: query `CodestreamPackageChecksum` for the
-   `(codestream_name=project, package_name=package)` pair.
-   - If no cached entry exists (first time seeing this package): apply the
-     track detector's bounded current-state/first-run behavior. Do not save the
-     event `srcmd5` as an unexamined baseline when doing so could make a
-     relevant existing fix permanently undiscoverable.
-   - If the cached `srcmd5` matches the event's `srcmd5` → **discard**
-     (already processed, either by a previous event or by the periodic
-     fetcher).
+3. **Select exact represented tracks**: apply the eligibility scope in
+   `ibs-track-release-detection.md` (Scope), narrowed to tracks whose project
+   and logical package exactly equal the event's `project` and `package`. If no
+   exact pair exists, acknowledge and discard without IBS HTTP work.
 
-4. **Request diff from IBS**: call
-   `IBSClient.get_diff_issues(project, package, old_md5=cached_srcmd5, new_md5=event_srcmd5)`
-   which invokes:
-   ```
-   POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}
-   ```
+4. **Invoke authoritative reconciliation**: pass the selected track IDs to the
+   same `reconcile_ibs_track_releases()` boundary used by polling and catch-up. The
+   detector retrieves targeted current source info with
+   `view=info&nofilename=1`, compares each `TrackReleaseCheckpoint`, requests
+   any required expanded diff, validates canonical CVE labels, and commits each
+   status/audit/checkpoint outcome independently. See
+   `docs/features/packages/ibs-track-release-detection.md`.
 
-5. **Process CVE references**: for each CVE-ID string in the diff
-   response with `state="added"` and `tracker="cve"`:
+5. **Handle linked targets**: no reverse-link fan-out is performed. The exact
+   unrepresented-package behavior and polling latency are owned by
+   `ibs-track-release-detection.md` (RabbitMQ Package-Commit Acceleration).
 
-   **Format validation**: validate via `is_valid_cve_id(cve_id)` (from
-   `core.identifiers`). If the value does not match, log WARNING ("IBS
-   event diff contains malformed CVE reference: {value} in package
-   {package_name}, project {project}") and skip this reference. Continue
-   with the next reference.
-
-   For valid CVE-IDs, apply the same match logic as the periodic fetcher:
-     - **Case A** — ticket exists, package tracked in the codestream:
-       set `TicketPackageTrack.status` to `FIXED` via
-        `package_service` (only when current status is `AFFECTED` or
-        `ANALYSIS`)
-     - **Case B** — ticket exists, package not tracked: call
-       `add_package_to_ticket(ticket_id, package_name)` to resolve
-       codestreams/products via SMELT, then set the originating track's
-       status to `FIXED`
-   - **Case C** — no ticket exists: enqueue
-     `create_ticket_from_detection` task
-
-   See `docs/features/packages/ibs-track-release-detection.md`, section
-   "Codestream Match Outcomes" for the complete specification of each case.
-
-6. **Update MD5 cache**: write the event's `srcmd5` to
-   `CodestreamPackageChecksum` for this `(project, package)` pair only after
-   every required local outcome from the diff has completed or remains
-   discoverable by an independent permanent recovery path. A successful IBS
-   diff alone is insufficient. Enqueuing `create_ticket_from_detection` for
-   Case C is not completion and does not advance the checksum, because the
-   periodic fetcher could not rediscover the outcome after that checkpoint.
-   If one task is deduplicated across multiple packages that expose the same
-   CVE, every affected package remains incomplete and retains its previous
-   checksum. Otherwise retain the previous checksum so the periodic fetcher
-   re-attempts idempotent processing. See `package-model.md` (Checkpoint Safety)
-   and `ibs-track-release-detection.md` (Case C).
-
-7. **Acknowledge message**: acknowledge successful RabbitMQ processing only
-   after local mutation commits and safe checksum advancement complete.
+6. **Acknowledge message**: acknowledge successful RabbitMQ processing only
+   after every selected per-track local outcome has committed or become an
+   idempotent already-completed no-op.
    Retry-versus-immediate-ack behavior for failed events remains owned by this
    RabbitMQ specification. Whatever policy it chooses must not block the
-   consumer indefinitely, advance a recovery-blocking checkpoint, or hide the
+   consumer indefinitely, advance a failed track's checkpoint, or hide the
    failure from operational monitoring.
 
 ### Filtering: Application-side Only
@@ -410,19 +387,20 @@ codestreams. The ratio of relevant to irrelevant events is low.
 
 ## Interaction with Periodic Fetcher
 
-### Shared MD5 Cache
+### Shared Per-Track Reconciliation
 
-The `IBSEventConsumer` and the `IBSTrackReleaseDetector` (periodic
-fetcher) share the same `CodestreamPackageChecksum` table. This is the
-key mechanism that prevents duplicate work:
+The `IBSEventConsumer` and periodic `DetectIbsTrackReleases` fetcher use the same
+`TrackReleaseCheckpoint` row and reconciliation rules for each track:
 
-- When the consumer completely processes an event and updates the MD5 cache,
-  periodic fetcher will see the updated MD5 on its next run and skip
-  that package (no diff needed)
-- When the periodic fetcher processes a package that the consumer missed
-  (downtime, reconnection gap), it updates the MD5 cache, and any
-  subsequent RabbitMQ event for an already-processed revision will be
-  discarded at step 3 (MD5 match)
+- a source state completed through the consumer is an unchanged-checkpoint
+  no-op in the next periodic run;
+- a source state completed through polling is likewise a no-op when a delayed
+  or duplicate event arrives; and
+- one failed track retains its predecessor even when sibling tracks sharing the
+  source response complete.
+
+Conditional checkpoint advancement prevents an older event handler from
+overwriting state accepted by a newer polling or catch-up invocation.
 
 ### Schedule Change
 
@@ -462,8 +440,8 @@ The two mechanisms are fully independent:
 | RabbitMQ broker unreachable at startup | Log ERROR, retry with exponential backoff |
 | Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
 | Invalid/unparseable message payload | Log WARNING with routing key and sanitized parsing detail; do not log the raw payload because request and commit messages can contain personal identifiers. Acknowledge and discard |
-| IBS diff request fails (HTTP error, timeout) | Log ERROR, do NOT update MD5 cache. The periodic fetcher will retry on its next run |
-| Required downstream processing fails after a successful IBS diff, including SMELT unavailability during Case B/C | Log ERROR and do not advance the MD5 unless an independent permanent owner can still discover every omitted outcome. The periodic fetcher then re-attempts idempotent processing |
+| IBS source-info/diff request or response validation fails | Log ERROR with sanitized project/package and bounded cause; do not advance affected per-track checkpoints. The periodic fetcher retries eligible tracks |
+| A selected per-track local outcome fails after successful IBS I/O | Roll back that track's status/audit/checkpoint transaction and leave its predecessor unchanged; successful siblings remain committed |
 | Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
 | PostgreSQL unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot build the monitored codestream set without PostgreSQL |
 | Redis unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot enqueue tasks or write heartbeat without Redis |
@@ -540,12 +518,12 @@ connection):
 
 - **Events received**: total events received from the broker (includes
   `package.commit`, `request.create`, and `request.state_change`)
-- **Events relevant**: `package.commit` events that passed the active
-  codestream filter (step 2)
-- **Events processed**: `package.commit` events where the IBS diff
-  completed successfully (step 4-6)
-- **Diffs failed**: `package.commit` events where the IBS diff request
-  failed
+- **Events relevant**: `package.commit` events that selected at least one exact
+  represented track after the active-codestream filter (steps 2-3)
+- **Events processed**: `package.commit` events for which every selected track
+  reached a successful or already-completed reconciliation outcome (steps 4-6)
+- **Processing failed**: `package.commit` events with at least one selected
+  track whose source-info, diff, or local reconciliation failed
 - **Requests processed**: `request.create` and `request.state_change`
   events successfully processed by the submission tracking pipeline
 
@@ -618,10 +596,9 @@ connection and process the full event stream.
   after the first successful connection, accepting the observability gap.
 
 - **Per-event database query failure during steady-state.** The Error
-  Handling table specifies behavior for IBS diff failures and SMELT
-  unavailability, but does not cover the case where a per-event
-  database query (MD5 lookup at processing pipeline step 3, or MD5
-  update at step 6) fails due to PostgreSQL unavailability. Decide
+  Handling table specifies the per-track rollback and polling-recovery
+  boundary, but does not select the message policy when the exact-track query
+  or a checkpoint transaction fails because PostgreSQL is unavailable. Decide
   whether the message is: (a) acknowledged and discarded (event lost),
   (b) NACKed/requeued (risks infinite retry loop if PG is down), or
   (c) acknowledged with the event skipped and logged for operator
@@ -651,9 +628,10 @@ connection and process the full event stream.
 
 ## Dependencies
 
-- `docs/features/packages/package-model.md`: defines the codestream-level
-  detection logic (Case A/B/C), `CodestreamPackageChecksum` cache, and
-  `add_package_to_ticket` function used by the consumer
+- `docs/features/packages/package-model.md`: defines IBS workflow scope,
+  active-Ticket observation, and per-track checkpoint safety
+- `docs/features/packages/ibs-track-release-detection.md`: defines the shared
+  track reconciliation and `TrackReleaseCheckpoint` contract
 - `docs/features/integrations/ibs-integration.md`: defines the `IBSClient` service
    used for diff requests
 - `docs/features/platform/fetcher-infrastructure.md`: defines `BaseFetcher`

@@ -131,19 +131,6 @@ sources), a ticket is created automatically. See
 - `TicketAuditEvent`: `event_type = ticket_created`, `user_id = NULL`,
   `comment` = fetcher source description (e.g., `"CVE ingested from NVD"`)
 
-### Automatic: Codestream Release Detection (Case C)
-
-When the `IBSTrackReleaseDetector` finds a CVE fix in IBS for a CVE
-that has no ticket in Sentinel, a `create_ticket_from_detection` task
-creates the ticket. See `docs/features/packages/ibs-track-release-detection.md`
-(Case C) for the full flow.
-
-- `cve_id`: set to the created/fetched CVE
-- `status`: `New`
-- `assignee_id`: `NULL`
-- `TicketAuditEvent`: `event_type = ticket_created`, `user_id = NULL`,
-  `comment` = detection context
-
 ### Manual Creation
 
 A user with the `create_ticket` capability can create a ticket manually

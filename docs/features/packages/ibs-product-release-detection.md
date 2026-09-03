@@ -158,10 +158,9 @@ gracefully:
 This match procedure is defined once and applies to the **product-level**
 detection only. It operates on `<update>` entries from `updateinfo.xml`.
 
-The codestream-level detector does not use this match chain — the IBS diff
-endpoint (`POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1`)
-already provides an explicit `CVE -> source package` link via the `<issues>`
-response, so the package that received the fix is known directly. See
+The codestream-level detector does not use this match chain — it requests an
+expanded diff for one already represented logical package and compares
+canonical `issue.label` values with that track's Ticket CVE. See
 `docs/features/packages/ibs-track-release-detection.md`.
 
 **Why this matters**: a single CVE can affect multiple distinct source
@@ -245,9 +244,9 @@ Then:
   no ticket package matched.
 - **No automatic modification** is made to the ticket's package records.
 
-Note: codestream-level no-match behavior (CVE found in diff but package
-not tracked in ticket, or no ticket exists at all) is described in
-`docs/features/packages/ibs-track-release-detection.md` (Cases B and C).
+Track release detection does not process an unrepresented package or absent
+Ticket. Its no-match outcome applies only to the existing represented track and
+does not create package-tree or Ticket state.
 
 ## Background Task
 
