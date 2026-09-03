@@ -69,6 +69,10 @@ fields populated according to this table:
 
 - `user_id` MUST be set for user-initiated actions and `NULL` for system
   actions.
+- `product_released` is created only for an effective NULL-to-timestamp
+  Product release mutation. No-match, malformed or retracted advisory,
+  repository failure, duplicate evidence, and idempotent or concurrent no-op
+  outcomes create no Ticket audit event.
 - `old_value` and `new_value` store human-readable strings. For enum values,
   store the enum name (e.g., `AFFECTED`, `NOT_AFFECTED`). For user
   references, store the username.

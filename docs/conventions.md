@@ -116,7 +116,7 @@ documentation. They MUST NOT be used interchangeably:
 
 | Term | Concept | Usage |
 |------|---------|-------|
-| **cascade** | Resolution strategy | Prioritized fallback sequence that tries sources in order until a result is found. Examples: "Severity Resolution Cascade", "package match cascade" |
+| **cascade** | Resolution strategy | Prioritized fallback sequence that tries sources in order until a result is found. Example: "Severity Resolution Cascade" |
 | **chain** | Propagation of side effects | Sequence of derived mutations triggered by a primary change. Examples: "Recalculation Chain", "Deactivation chain", "orphan chain" |
 | **flattening** | Linked-list resolution | Resolution and update of pointer chains |
 

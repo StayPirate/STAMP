@@ -301,9 +301,11 @@ to determine whether security fixes have landed in source codestreams and
 whether update advisories have been published to product repositories.
 
 - **Relevant data**: expanded source package checksums, source diffs with
-  structured CVE and Bugzilla references, linked-package context, build results,
-  published repository metadata including `updateinfo.xml` (which
-  contains advisory details with CVE references and release dates)
+  structured CVE and Bugzilla references, linked-package context, build
+  results, and Product repository metadata. Product detection consumes bounded
+  `repomd.xml` integrity metadata and `updateinfo.xml.gz` stable security
+  advisories with exact CVE, issued-time, and `src`/`nosrc` source-package
+  fields
 - **Product channel projects**:
   - `SUSE:Channels` contains the current declarative IBS delivery mapping.
     Each `_channel` file associates source packages and binaries from one or
@@ -318,8 +320,10 @@ whether update advisories have been published to product repositories.
     provided by SMELT rather than deriving Product identity from the target
     name.
 - **Access**: REST API at `api.suse.de` (HTTP Basic Auth or API tokens).
-  Download server at `download.suse.de/ibs` for repository data. Key
-  endpoints:
+  Anonymous Product repository downloads use the configurable HTTPS
+  MirrorCache front door at `download.suse.de/ibs`. A repository artifact may
+  perform one validated same-path HTTP 302 redirect to `dist.suse.de`; Sentinel never
+  sends or forwards IBS API credentials on this path. Key API endpoints:
   - `GET /source/{project}?view=info&nofilename=1&package={package}...` —
     targeted package source info; `srcmd5` is the expanded source-tree state
   - `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&expand=1` —
@@ -331,7 +335,9 @@ whether update advisories have been published to product repositories.
   via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
   the periodic `detect_ibs_track_releases` fetcher (catch-up every 24
   hours at 02:00 UTC). Product-level release detection
-  (`detect_ibs_product_releases`) runs as a periodic `BaseFetcher` subclass.
+  (`detect_ibs_product_releases`) runs daily at 04:00 UTC as a periodic
+  anonymous `BaseFetcher` subclass and validates current associations before
+  retained historical associations.
   All IBS package operations require a parent track whose persisted
   `workflow_type` is `ibs`; a Git reference is never interpreted as an IBS
   project. IBS owner/person/group endpoints are not consumed for package
@@ -1114,7 +1120,7 @@ feature documentation (not its implementation status):
 | `sync_aimaas_lifecycle` | AIMAAS | Daily at 02:15 UTC | None | N/A (internal) | Product lifecycle dates via paginated list with `all_fields=true`; field-level clearing on null change; lifecycle dates retained on product disappearance | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_lifecycle) | Complete |
 | `sync_aimaas_thresholds` | AIMAAS | Daily at 02:45 UTC | None | N/A (internal) | CVSS thresholds per product via in-memory join (product list + threshold list); threshold clearing to NULL on disappearance with eligibility re-evaluation | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | Complete |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Reconciles existing active-Ticket IBS tracks from targeted expanded source state; one successfully examined checkpoint per track | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Complete |
-| `detect_ibs_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection for occurrences below active-Ticket IBS tracks (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Partial |
+| `detect_ibs_product_releases` | IBS Product repositories | Daily at 04:00 UTC | None | N/A (internal) | Reconciles unreleased occurrences below active-Ticket IBS tracks from bounded, integrity-validated stable security updateinfo advisories and exact source-package entries | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Complete |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:15 UTC | N/A | N/A | Reconciles automatic eligibility and Ticket gate state from derived Product lifecycle and package-tree actionability | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Complete |
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS SR/RR state and correlation for active-Ticket IBS tracks; targeted historical catch-up on reactivation | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |

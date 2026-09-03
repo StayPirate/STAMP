@@ -1129,7 +1129,7 @@ override model.
 | product_id               | UUID      | FK(product.id), NOT NULL                    | Related product                    |
 | eligible                 | BOOLEAN   | NOT NULL, DEFAULT true                      | Whether the product will receive the fix |
 | is_eligible_override     | BOOLEAN   | NOT NULL, DEFAULT false                     | True if VA manually set the eligibility |
-| released_at              | TIMESTAMPTZ | nullable                                    | When Sentinel detected the fix in the product's update repository |
+| released_at              | TIMESTAMPTZ | nullable                                    | Authoritative stable security advisory-issued time in UTC; NULL until Product release detection confirms an exact match. Sentinel observation time remains available through `updated_at` and the audit event's `created_at` |
 | deleted_at               | TIMESTAMPTZ | nullable                                    | Direct VA-exclusion timestamp. NULL = not directly VA-excluded. Current actionability also depends on ancestor markers and the catalog Product lifecycle phase |
 | created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record creation timestamp          |
 | updated_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                           | Record update timestamp            |

@@ -187,7 +187,7 @@ Configuration).
 | `IBS_API_URL` | string | `https://api.suse.de` | IBS API base URL | `docs/features/integrations/ibs-integration.md` |
 | `IBS_USERNAME` | string | `""` | IBS HTTP Basic Auth username. Empty or unset: app starts without IBS credentials; IBS-dependent fetchers will fail at runtime | `docs/features/integrations/ibs-integration.md` |
 | `IBS_PASSWORD` | string | `""` | IBS HTTP Basic Auth password. Same rationale as `IBS_USERNAME` | `docs/features/integrations/ibs-integration.md` |
-| `IBS_DOWNLOAD_BASE_URL` | string | `https://download.suse.de/ibs` | HTTP download base for repository data | `docs/features/integrations/ibs-integration.md` |
+| `IBS_DOWNLOAD_BASE_URL` | HTTPS URL | `https://download.suse.de/ibs` | Anonymous IBS Product-repository MirrorCache front door. Must be absolute HTTPS with a hostname and contain no user information, query, fragment, unsafe/empty path segment, percent encoding, backslash, or control character; one trailing slash is accepted and removed. Invalid values fail startup. Product downloads never send IBS API credentials | `docs/features/packages/ibs-product-release-detection.md` |
 
 ## IBS RabbitMQ Consumer
 

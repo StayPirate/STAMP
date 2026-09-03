@@ -33,25 +33,27 @@ The complete active-ticket, reactivation, acceleration, and recovery ownership
 contract is defined in `docs/features/packages/package-model.md` (IBS Workflow
 Applicability and Convergence).
 
-### Authentication
+### Origins and Authentication
 
-- IBS API uses HTTP Basic Auth or API tokens
-- Credentials are stored as environment variables, never in code
-- Configuration:
-  - `IBS_API_URL`: IBS API base URL (default: `https://api.suse.de`)
-  - `IBS_USERNAME`: IBS API username (default: `""` — empty or unset: app starts without IBS credentials; IBS-dependent fetchers fail at runtime)
-  - `IBS_PASSWORD`: IBS API password (default: `""` — empty or unset: same rationale as `IBS_USERNAME`)
-  - `IBS_DOWNLOAD_BASE_URL`: HTTP download base URL for repository data
-    (default: `https://download.suse.de/ibs`). Used by the
-    `ProductReleaseDetector` — see `docs/features/packages/ibs-product-release-detection.md`.
+- The IBS API at `IBS_API_URL` uses HTTP Basic Auth or API tokens.
+  `IBS_USERNAME` and `IBS_PASSWORD` are stored as environment variables, never
+  in code. Empty or unset credentials do not block application startup;
+  credentialed IBS API consumers fail at runtime.
+- `IBS_DOWNLOAD_BASE_URL` is a separate anonymous HTTPS Product-repository
+  front door (default: `https://download.suse.de/ibs`). Product release
+  detection does not send IBS API credentials, an `Authorization` header, or
+  another credential to the download front door or its permitted redirect
+  target. Its complete validation, path, and redirect contract is defined in
+  `docs/features/packages/ibs-product-release-detection.md`.
 
 ### Key API Operations
 
-The following IBS API endpoints are used by Sentinel for codestream-level
-release detection (see `docs/features/packages/ibs-track-release-detection.md`),
-product-level release detection (see
-`docs/features/packages/ibs-product-release-detection.md`), and
-submission request tracking (see `docs/features/packages/ibs-submission-tracking.md`):
+The following credentialed IBS API endpoints are used by Sentinel for
+codestream-level release detection (see
+`docs/features/packages/ibs-track-release-detection.md`) and submission request
+tracking (see `docs/features/packages/ibs-submission-tracking.md`). Product-level
+release detection uses the separate anonymous repository-download boundary
+below, not these API endpoints.
 
 #### Project Source Info
 
@@ -242,7 +244,8 @@ IBS-related data is stored in the following tables (see `docs/data-model.md`):
   (e.g., `SUSE:SLE-15-SP6:Update`) as a string. Tracks are not
   maintained as a separate table.
 - `ProductRepository.repo_name`: stores SMELT repository project names
-  that map to IBS download URLs. Used by the `ProductReleaseDetector`.
+  that map to anonymous IBS Product repository URLs. Used by
+  `detect_ibs_product_releases`.
 
 ### Service Layer
 
@@ -320,6 +323,29 @@ the following overrides:
   errors)
 - Long-lived client: instantiated per-process, not per-request
 
+#### Product Repository Download Boundary
+
+`detect_ibs_product_releases` uses the shared `BaseFetcher` HTTP client for
+anonymous GET requests rooted at `IBS_DOWNLOAD_BASE_URL`; it does not use
+`IBSClient`. It requests and validates:
+
+- `repodata/repomd.xml`: exact repomd namespace, one optional updateinfo data
+  entry, artifact location, compressed/open checksums and sizes, and metadata
+  timestamp; and
+- the selected `updateinfo.xml.gz`: one bounded gzip member containing the
+  complete no-namespace `updates` document, stable security advisory fields,
+  exact CVE references, issued Unix seconds, and validated `src`/`nosrc` package
+  entries.
+
+The download boundary exposes successful non-match, validated snapshot, and
+bounded failure outcomes to the detector; it does not mutate local state. HTTP
+404 for `repomd.xml` and valid metadata without updateinfo are successful
+non-matches. Transport/HTTP, path/redirect, checksum/size, decompression,
+snapshot-consistency, and XML/advisory failures remain distinguishable bounded
+failure categories. The owning Product detector specification defines every
+field, resource limit, path constraint, redirect rule, retry effect, and
+mutation consequence; this integration overview does not redefine them.
+
 **Retry safety for POST operations**: IBSClient's POST operations
 (`cmd=diff` for source diff and request diff) are semantically
 read-only — they compute diffs without modifying IBS server state.
@@ -356,11 +382,17 @@ path use this same boundary. Full behavior is documented in
 - `discover_submissions_for_ticket_package`: on-demand sub-operation task
   enqueued by `add_package_to_ticket` to retroactively discover existing
   SRs/RRs for a newly tracked package.
+- `detect_ibs_product_releases`: periodic `BaseFetcher` task (daily at 04:00
+  UTC) that reconciles unreleased Product occurrences through the anonymous
+  Product repository download boundary. See
+  `docs/features/packages/ibs-product-release-detection.md`.
 
 ### Business Rules
 
-1. IBS credentials are validated at startup; warn if empty or unset
-2. All IBS operations are logged for audit purposes
+1. Credentialed IBS API consumers warn when IBS credentials are empty or unset;
+   anonymous Product repository downloads never consume those credentials
+2. IBS mutations use their owning service and audit contracts; read-only
+   external operations use bounded operational logging rather than audit events
 3. Track release reconciliation only modifies records with status
    `AFFECTED` or `ANALYSIS` (soft-deleted tracks in these statuses are
    still modified — see `docs/features/packages/package-service.md`,
@@ -393,6 +425,8 @@ event bus.
 - IBS and OBS credentials are managed via environment variables
 - API calls are made server-side only; credentials are never exposed to
   the frontend
+- Product repository downloads are anonymous and never attach or forward IBS
+  API credentials
 - Operations that modify IBS/OBS state (future: rebuild triggers) require
   the Vulnerability Analyst or Admin role
 - XML parsers disable DTDs, external entities, and parser network access;
