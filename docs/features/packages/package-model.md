@@ -102,8 +102,9 @@ Disalignment risk is mitigated by `package_service` and the
 vulnerable" (`NOT_AFFECTED`). Both mean the code is not currently
 vulnerable, but they carry different history and workload implications.
 
-- `FIXED` is system-managed — set only by track release detection (MD5
-  match — see `docs/features/packages/ibs-track-release-detection.md`)
+- `FIXED` is system-managed — set only by track release detection when a
+  structured source diff contains qualifying evidence for the Ticket CVE (see
+  `docs/features/packages/ibs-track-release-detection.md`)
   or via the admin escape hatch (`admin_ticket_ops` capability)
 - The VA can change `FIXED` back to `AFFECTED` if the fix is insufficient
 - No `is_status_override` flag is needed on tracks — the VA has direct
@@ -294,6 +295,12 @@ by the system based on IBS SR/RR tracking data.
 The track is identified by `reference` (a string), not by a foreign key.
 Tracks are not maintained as a separate table — they are discovered
 per-package via the SMELT v2 maintained-package endpoint.
+
+An IBS track may have one operational `TrackReleaseCheckpoint`, which stores
+the expanded IBS source state last successfully examined for that exact track.
+The checkpoint is not exposed in Ticket/package responses, does not create a
+Ticket audit event, and does not update the track's `updated_at`. See
+`ibs-track-release-detection.md` and `docs/data-model.md`.
 
 ### TicketPackageProduct
 
@@ -523,7 +530,7 @@ RR (Release Request) created
 RR accepted (incident closed)            --> delivery: RELEASED
         |
         v
-Fix lands in track (package.commit)      --> affectedness: FIXED (automatic, via MD5 detection)
+Fix evidence appears in track source     --> affectedness: FIXED (automatic, via expanded source diff)
         |
         v
 Fix lands in eligible products (updateinfo.xml) --> released_at set
@@ -532,8 +539,8 @@ Fix lands in eligible products (updateinfo.xml) --> released_at set
 The two axes are managed independently:
 - `delivery_status` transitions to `RELEASED` when the RR is accepted
   (via IBS submission tracking)
-- `status` transitions to `FIXED` when track release detection confirms
-  the fix in the codestream (MD5 match)
+- `status` transitions to `FIXED` when track release detection confirms the
+  Ticket CVE in the expanded codestream source diff
 
 In practice, the RR acceptance and the package appearing in the
 codestream happen nearly simultaneously, but Sentinel detects them
@@ -644,7 +651,7 @@ whether any actionable Product under it has `eligible = true`.
 
 | From | To | Applies to | Trigger |
 |------|----|------------|---------|
-| `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Track release detection (MD5 match confirms fix in codestream) |
+| `AFFECTED` or `ANALYSIS` | `FIXED` | TicketPackageTrack | Track release detection finds qualifying canonical Ticket-CVE evidence in an expanded source diff |
 
 Records in a final status (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) are not
 eligible as source states for automatic transitions.
@@ -848,8 +855,10 @@ The **API handler** for `POST /api/v1/tickets/{ticket_id}/packages` is
 responsible for checking whether the `TicketPackage` is soft-deleted
 (`deleted_at IS NOT NULL`) **before** calling the function. If it is,
 the handler returns `409 PACKAGE_ALREADY_EXCLUDED` without invoking the
-function. Internal callers (CVE ingestion, release detection) call the
-function directly and benefit from the automatic exclusion via hierarchy.
+function. Internal callers such as CVE ingestion call the function directly
+and benefit from the automatic exclusion via hierarchy. Track release
+detection never calls this function because it reconciles only tracks that
+already exist.
 
 ### Ticket Events for Exclusion
 
@@ -993,29 +1002,19 @@ The following scenarios invoke `add_package_to_ticket`:
    `docs/features/tickets/cve-service.md` (Phase 2).
 2. **Manual**: the VA manually adds a package by name via the UI.
    `add_package_to_ticket` is called with the entered name.
-3. **Track release detection (Case B)**: the release detector finds a
-   CVE fix in a package that is not tracked in the ticket. It calls
-   `add_package_to_ticket` to add all tracks and products, then sets
-   the specific track where the fix was detected to `FIXED`. See
-   `docs/features/packages/ibs-track-release-detection.md` (Case B).
-4. **Ticket auto-creation (Case C)**: a CVE fix is detected for a CVE
-   with no existing ticket. After creating the ticket,
-   `add_package_to_ticket` is called, then the originating track is
-   set to `FIXED`. See
-   `docs/features/packages/ibs-track-release-detection.md` (Case C).
-5. **Restore from soft-deletion**: restoring a package, track, or
+3. **Restore from soft-deletion**: restoring a package, track, or
    product clears its `deleted_at` only. New tracks/products that
    appeared on SMELT since the deletion are picked up by subsequent
-   automatic calls to `add_package_to_ticket` (CVE ingestion, release
-   detection Case B) — no explicit call is needed at restore time.
-6. **Product catalog backfill**: after a successful SMELT Product catalog
+   calls to `add_package_to_ticket` (for example CVE ingestion or Product
+   catalog backfill) — no explicit call is needed at restore time.
+4. **Product catalog backfill**: after a successful SMELT Product catalog
    sync makes at least one Product newly current, a system workflow calls
    `add_package_to_ticket` for each active-Ticket package whose package marker
    is not soft-deleted. Lifecycle actionability does not filter this recovery
    scan because a currently EOL Product can later become actionable without a
    new catalog association. See `product-catalog.md` (Product Catalog
    Backfill).
-7. **Ticket reactivation**: after an inactive Ticket enters an active status,
+5. **Ticket reactivation**: after an inactive Ticket enters an active status,
    the package reactivation workflow calls `add_package_to_ticket` once for
    every persisted `TicketPackage.package_name`, including package markers that
    are soft-deleted. Existing exclusion markers are preserved; missing tracks
@@ -1202,7 +1201,7 @@ types are defined:
 | Action | `event_type` | `user_id` | Details recorded |
 |--------|-------------|-----------|------------------|
 | VA adds or completes package tree | `package_added` | VA user | `package_name` |
-| Package auto-added or completed (CVE ingestion, release detection, or Product catalog backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
+| Package auto-added or completed (CVE ingestion or Product catalog backfill) | `package_added` | `NULL` | `package_name`, contextual `comment` |
 | Active User acquired as package maintainer | `package_maintainer_added` | `NULL` | Target username in `new_value`; package name in `detail` |
 | VA soft-deletes package | `package_excluded` | VA user | `package_name` |
 | VA soft-deletes track | `track_excluded` | VA user | `track_name`, `package_name` |
@@ -1218,7 +1217,7 @@ types are defined:
 
 - `user_id = NULL` indicates an automatic system action. For
   `package_added`, this distinguishes manual additions (VA user) from
-  automatic ones (CVE ingestion, release detection). The `comment` field
+  automatic ones (CVE ingestion or Product catalog backfill). The `comment` field
   provides context for automatic additions.
 - Exactly one `package_added` event is created when an invocation creates at
   least one package, track, or Product record. A completely no-op invocation
@@ -1244,8 +1243,8 @@ affected package:
 1. **Track level**: the fix has been added to the track's IBS project
    (e.g., `SUSE:SLE-15-SP6:Update`). See
    `docs/features/packages/ibs-track-release-detection.md` for the
-   full detection mechanism (MD5 cache, IBS diff analysis, match
-   outcomes).
+   full detection mechanism (per-track expanded-source checkpoint, IBS diff
+   analysis, current-state fallback, and concurrency rules).
 2. **Product level**: the fix has been published to the product's update
    repository (e.g., the SLES 15 SP6 update repository consumed by
    `zypper`). See
@@ -1257,8 +1256,8 @@ The two levels are detected through different mechanisms and update
 different data:
 
 - The track level updates `TicketPackageTrack.status` to `FIXED`
-  (automatic) when track release detection confirms the fix in the
-  codestream (MD5 match).
+  (automatic) when track release detection finds qualifying canonical evidence
+  for the Ticket CVE in the codestream's expanded source diff.
 - The track level updates `TicketPackageTrack.delivery_status` to
   `RELEASED` when the Release Request (RR) for the track is accepted
   (via IBS submission tracking).
@@ -1316,7 +1315,7 @@ The following concerns are workflow-specific (service layer only):
 |---------|-------------|-------------|
 | Track + product resolution | SMELT v2 `maintained` (same endpoint) | SMELT v2 `maintained` (same endpoint) |
 | Source retrieval for analysis | IBS API | src.suse.de git API |
-| Release detection (track) | IBS MD5 diff | TBD |
+| Release detection (track) | IBS expanded source-state diff with a per-track checkpoint | TBD |
 | Release detection (product) | updateinfo.xml | TBD |
 | Real-time events | IBS RabbitMQ | TBD |
 | Submission tracking (SR/RR) | IBS submission tracking | TBD |
@@ -1429,13 +1428,15 @@ completed or an independent permanent recovery owner can still discover the
 missing outcome. Otherwise the checkpoint remains at the last completely
 processed unit and the next run repeats idempotent work.
 
-For the shared IBS source checksum, a successful diff response alone is not
-completion. If processing any relevant CVE from that diff fails and no
-independent owner can reconstruct the missing result, the new `srcmd5` MUST NOT
-replace the last fully processed checksum. RabbitMQ uses the same rule before
-acknowledging successful package processing. The detailed per-item and
-message-failure policies remain in the track-release and RabbitMQ owning
-specifications.
+IBS track release state is per `TicketPackageTrack`. A new expanded `srcmd5`
+becomes that track's checkpoint only in the same transaction that completes any
+required affectedness mutation, service-owned audit event, and Ticket
+reconciliation. A no-match or final-status outcome may advance the checkpoint
+after successful examination. A failed sibling track retains its own previous
+checkpoint. Periodic polling, catch-up, RabbitMQ processing, and retries must
+serialize or conditionally update the expected predecessor so an older worker
+cannot regress a newer checkpoint. The detailed algorithm and unavailable-
+history fallback are in `ibs-track-release-detection.md`.
 
 ### Accepted package-tree discovery gap
 
@@ -2074,8 +2075,8 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 `docs/features/packages/product-catalog.md` (Background Tasks).
 
 - `detect_ibs_track_releases`: periodic task (every 24 hours at 02:00
-  UTC via Celery Beat) that invokes the `IBSTrackReleaseDetector`
-  service. Serves as a catch-up mechanism for events missed by the
+  UTC via Celery Beat) that runs the `DetectIbsTrackReleases` fetcher and its
+  shared reconciliation boundary. Serves as a catch-up mechanism for events missed by the
   real-time `IBSEventConsumer` (see
   `docs/features/integrations/ibs-rabbitmq-integration.md`). See
   `docs/features/packages/ibs-track-release-detection.md` for the
@@ -2087,13 +2088,6 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
   `docs/features/packages/ibs-product-release-detection.md` for the
   full procedure. The owning Product release specification will fix the
   schedule; scope is Product occurrences below IBS tracks of active Tickets.
-- `create_ticket_from_detection`: on-demand task enqueued by the
-  `IBSTrackReleaseDetector` or the `IBSEventConsumer` when a CVE fix
-  is detected for a CVE that has no ticket in Sentinel. Fetches CVE
-  data from NVD, creates the ticket, resolves packages via SMELT, and
-  sets the originating track to `FIXED`. See
-  `docs/features/packages/ibs-track-release-detection.md` (Case C)
-  for details.
 - `evaluate_lifecycle_transitions`: periodic task (daily at 04:15 UTC) that
   reconciles lifecycle-derived eligibility and Ticket gate state from current
   Product dates. EOL changes derived actionability without mutating

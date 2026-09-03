@@ -2,289 +2,541 @@
 
 ## Purpose
 
-Detect when CVE fixes land in IBS codestream projects (e.g.,
-`SUSE:SLE-15-SP6:Update`) by monitoring source package changes via MD5
-checksum comparison and IBS diff analysis. This is the **track-level**
-release detection mechanism for the IBS workflow.
+Reconcile whether fixes for CVEs already represented by Sentinel have landed in
+their existing IBS package tracks. The detector observes expanded package
+source state and may transition an existing `TicketPackageTrack` to `FIXED`; it
+does not discover CVEs, Tickets, packages, tracks, or Products.
 
-In the IBS workflow, the track-level unit is the **codestream** — an IBS
-project where source packages are maintained and built. This specification
-uses "codestream" throughout to refer to this IBS-specific concept.
+The detector is the permanent polling recovery owner for IBS package commits.
+The scheduled fetcher, per-Ticket catch-up, and IBS RabbitMQ package-commit
+processing use the same reconciliation rules. RabbitMQ reduces latency but is
+not required for eventual convergence.
 
-For the overall release tracking architecture (two independent levels —
-codestream and product), see `docs/features/packages/package-model.md`, section
-"Release Tracking". For product-level detection, see
-`docs/features/packages/ibs-product-release-detection.md`.
+For the two independent release levels, see `package-model.md` (Release
+Tracking). Product repository release detection is specified separately in
+`ibs-product-release-detection.md`.
 
-## Context
+## Scope
 
-Sentinel monitors two independent levels of release for each affected
-package:
+An ordinary scheduled run selects `TicketPackageTrack` records that satisfy all
+of the following:
 
-1. **Codestream level** (this spec): the fix has been added to the
-   codestream's IBS project.
-2. **Product level** (separate spec): the fix has been published to the
-   product's update repository.
+- `workflow_type = ibs`;
+- `status` is `ANALYSIS` or `AFFECTED`;
+- the parent Ticket has a CVE; and
+- the parent Ticket status is `New`, `Analysis`, or `Analyzed`.
 
-The codestream level updates `TicketPackageTrack.status` to `FIXED` as
-soon as the fix appears in the codestream IBS project, **regardless of the
-state of the products under it**. The `delivery_status` is not modified by
-track release detection — it is managed independently by the submission
-tracking mechanism (see `docs/features/packages/ibs-submission-tracking.md`).
+VA exclusion, Product lifecycle actionability, and EOL state do not narrow this
+scope. They affect operational decisions, not the factual observation that a
+fix reference is present in IBS. A Git/SLFO track never reaches an IBS source
+operation.
 
-The automatic transition applies only when the current track status is
-`AFFECTED` or `ANALYSIS` (see `docs/features/packages/package-model.md`,
-Automatic Transitions).
+The detector processes only the logical source package already stored in the
+parent `TicketPackage.package_name` and the IBS project already stored in
+`TicketPackageTrack.reference`. An IBS package that is not represented by that
+pair is outside scope. In particular, linked targets, internal snapshot
+packages, and related packages such as a debug package are not inferred as new
+Sentinel packages.
 
-## Detection Mechanism
+The detector never:
 
-Sentinel uses an `IBSTrackReleaseDetector` service that monitors IBS codestream
-projects for package source changes and detects CVE fixes by analyzing diffs.
-The mechanism is based on MD5 checksum comparison (inspired by SMASH's
-`TrackedReleaseFetcher`).
+- scans an IBS project for arbitrary CVEs;
+- creates or enriches a CVE;
+- creates a Ticket;
+- calls `add_package_to_ticket()`;
+- creates a package, track, or Product occurrence;
+- changes `delivery_status` or Product `released_at`; or
+- creates `ticket_created` or `package_added` audit events.
 
-### IBS Endpoints
+CVE ingestion and package association remain owned by the CVE and package
+resolution specifications. SR/RR delivery tracking remains owned by
+`ibs-submission-tracking.md`.
 
-The detector uses two IBS API calls (see `docs/features/integrations/ibs-integration.md`
-for full endpoint documentation):
+## Authoritative IBS Evidence
 
-1. **Source info** — `GET /source/{project}?view=info` — returns a
-   `<sourceinfo>` element per package containing the `srcmd5` checksum of
-   the current source revision. One call per codestream project retrieves
-   all packages at once.
+Release evidence comes from two authenticated IBS HTTP operations documented in
+`../integrations/ibs-integration.md`:
 
-2. **Diff with issues** —
-   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
-   — returns `<issues><issue>` elements listing CVE and BNC references
-   added between the two revisions. IBS extracts these from the changelog
-   and spec changes internally.
+1. Targeted source info:
 
-### MD5 Checksum Cache
+   ```text
+   GET /source/{project}?view=info&nofilename=1&package={package}...
+   ```
 
-The detector maintains a `CodestreamPackageChecksum` table in PostgreSQL
-(see `docs/data-model.md`) that stores the last known `srcmd5` for each
-`(codestream_name, package_name)` pair. This cache enables efficient
-change detection: only packages whose MD5 has changed since the last run
-need to be diffed.
+   `sourceinfo.srcmd5` is the expanded source-tree state. For a linked package,
+   a target change can therefore change `srcmd5` even when the local link
+   revision (`lsrcmd5`) does not change. `lsrcmd5`, `verifymd5`, and revision
+   numbers are not release checkpoints.
 
-This cache is shared with the real-time `IBSEventConsumer` (see
-`docs/features/integrations/ibs-rabbitmq-integration.md`) — changes processed in
-real-time are not re-processed by the periodic fetcher.
+2. Expanded source diff with issue extraction:
 
-### Procedure
+   ```text
+   POST /source/{project}/{package}
+     ?cmd=diff&view=xml&onlyissues=1&expand=1
+     &orev={previous_srcmd5_or_0}&rev={current_srcmd5}
+   ```
 
-The `IBSTrackReleaseDetector` runs on a periodic schedule (every 24
-hours at 02:00 UTC via Celery Beat) and executes the following steps.
-This periodic fetcher serves as a catch-up mechanism for events missed
-by the real-time `IBSEventConsumer` during downtime — see
-`docs/features/integrations/ibs-rabbitmq-integration.md`.
+   `orev=0` represents an empty source tree and yields the structured issue
+   references present in the selected current expanded state.
 
-1. **Identify active codestreams**: query the distinct `reference`
-   values from `TicketPackageTrack` records with `status` in
-   (`ANALYSIS`, `AFFECTED`) and `workflow_type = ibs`, belonging to
-   **active tickets** (ticket status in `New`, `Analysis`, `Analyzed`).
-   VA-excluded and lifecycle-non-actionable tracks under active Tickets are
-   included because release detection records factual state regardless of
-   operational actionability (see Exclusion and Actionability in
-   `docs/features/packages/package-model.md`). Only codestreams with at least
-   one such track are scanned.
+Only an issue satisfying every condition below is release evidence:
 
-2. **Fetch current MD5 checksums**: for each active codestream, call
-   `GET /source/{codestream}?view=info` via the `IBSClient` service. This
-   returns `{package_name: srcmd5}` for all packages in the project.
+- `tracker = "cve"`;
+- `state` is `added` or `changed`;
+- `label` is a canonical CVE ID accepted by `is_valid_cve_id()`; and
+- `label` equals the CVE ID of the existing parent Ticket.
 
-3. **Compare against cached MD5s**: for each package returned by IBS,
-   compare the `srcmd5` with the value stored in
-   `CodestreamPackageChecksum`. Packages with unchanged MD5 are skipped.
+`issue.label`, not tracker-native `issue.name`, is the CVE identity. `deleted`
+does not prove that a fix landed. `bnc` and all other trackers are ignored and
+are not treated as malformed CVEs. Duplicate qualifying issue entries are
+equivalent to one entry.
 
-4. **First-run and long-gap behavior**: absence of a cached MD5, first
-   execution after feature enablement, and a gap beyond the normal
-   incremental history MUST reconcile current release state for the active IBS
-   scope. The current MD5 MUST NOT be saved as an unexamined baseline when that
-   would make an already-present relevant fix permanently undiscoverable. The
-   concrete bounded current-state procedure remains owned by this
-   track-release specification; it reuses this fetcher rather than an
-   enablement hook or generic backfill framework.
+`changed` proves only that the structured CVE reference changed between the two
+source states. Sentinel does not claim that it distinguishes a second changelog
+entry from modification of an earlier entry.
 
-5. **Diff changed packages**: for each package with a changed MD5, call
-   `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1&orev={old_md5}&rev={new_md5}`
-   via the `IBSClient`. Extract references with `state="added"` and
-   `tracker` equal to `cve` or `bnc`.
+## Track Release Checkpoint
 
-6. **Process extracted CVEs**: for each CVE-ID string found in the diff,
-   validate format via `is_valid_cve_id(cve_id)` (from
-   `core.identifiers`). If the value does not match, log WARNING ("IBS
-   diff contains malformed CVE reference: {value} in package
-   {package_name}") and skip this reference (do not process it as a
-   CVE-ID). Continue with the next reference. For valid CVE-IDs, apply
-   the match logic described in
-   [Codestream Match Outcomes](#codestream-match-outcomes) below.
+`TrackReleaseCheckpoint` is operational PostgreSQL state with at most one row
+per `TicketPackageTrack`. It contains:
 
-7. **Update cache**: write the new MD5 to `CodestreamPackageChecksum` only
-   after every relevant CVE outcome from the diff is completely processed or
-   remains discoverable through an independent permanent recovery path. A
-   successful IBS diff response alone is insufficient. If diff retrieval or
-   any required downstream outcome fails, keep the previous checksum so the
-   next run repeats the idempotent processing. See `package-model.md`
-   (Checkpoint Safety). Enqueuing `create_ticket_from_detection` for Case C is
-   not completion and does not advance the checksum. The next run repeats the
-   diff and re-evaluates current state: an existing Ticket is processed through
-   Case A or B, while an absent Ticket remains Case C. The checksum advances
-   only after a later run observes every relevant outcome as complete.
+- `ticket_package_track_id` — the unique parent track;
+- `srcmd5` — the expanded IBS source state last successfully examined for that
+  track; and
+- `last_seen_at` — when that checkpoint value was accepted.
 
-## Codestream Match Outcomes
+The checkpoint is not Ticket domain history. It is not included in normal
+Ticket or package API responses, does not create a Ticket audit event, and does
+not update `TicketPackageTrack.updated_at`. Observing the same `srcmd5` again is
+a no-op and need not rewrite `last_seen_at`.
 
-For each CVE-ID extracted from the diff of a changed package P in
-codestream C, the detector evaluates three cases:
+A checkpoint belongs to one track rather than to a global `(project, package)`
+pair because tracks for the same package may enter Sentinel at different times
+or complete different prior attempts. The per-track state also preserves a VA
+correction of an automatic `FIXED` result until IBS supplies later source
+evidence.
 
-### Case A — Ticket exists, package tracked in that codestream
+## Shared Reconciliation Boundary
 
-A `TicketPackageTrack` record exists for the ticket's CVE with
-`package_name = P` and `reference = C`.
+Polling, catch-up, and package-commit processing provide a set of existing
+track IDs to the same service-layer reconciliation boundary. The boundary
+returns one terminal outcome per supplied track: updated, successfully examined
+without a domain update, or failed. It may group external work,
+but each track retains an independent database and metric outcome.
 
-- Set `TicketPackageTrack.status` to `FIXED` through the
-  `package_service` module (only when current status is `AFFECTED` or
-  `ANALYSIS`).
-- Create a `TicketAuditEvent` with `event_type = track_status_changed`,
-  `user_id = NULL` (system action), `old_value` = previous status,
-  `new_value = FIXED`, `comment` = `"{C} {P}"` (track_name package_name).
+Conceptual signature:
 
-### Case B — Ticket exists, package NOT tracked in the ticket
+```python
+async def reconcile_ibs_track_releases(
+    track_ids: Collection[UUID],
+) -> Sequence[TrackReleaseOutcome]:
+    ...
+```
 
-A ticket exists for the CVE, but no `TicketPackageTrack` record exists
-for package P (in any codestream).
+`track_ids` contains existing candidate IDs selected by the caller. Duplicate
+IDs are processed once. An empty collection returns an empty sequence without
+IBS or database work. Each outcome identifies the input `track_id` and exactly
+one result:
 
-- Call `add_package_to_ticket(ticket_id, P)` to resolve all codestreams
-  and products via SMELT and create the `TicketPackage` +
-  `TicketPackageTrack` records with status `ANALYSIS` (record creation
-  goes through `package_service`). See
-  `docs/features/packages/package-model.md`, "Adding Packages to a Ticket".
-- Set the `TicketPackageTrack` for codestream C to `status = FIXED`
-  through `package_service` (the specific codestream where the fix was
-  detected).
-- Create a `TicketAuditEvent` with `event_type = package_added`,
-  `user_id = NULL`, comment: "Package `{P}` auto-added: CVE fix
-  detected in `{C}`".
+| Result | Meaning |
+|---|---|
+| `updated` | This invocation transitioned the track to `FIXED` and committed its checkpoint |
+| `no_op` | No domain update was required: current source was already examined, a valid examination produced no transition, the track had become final, or concurrent work had already accepted the same state |
+| `failed` | External validation or the per-track local transaction did not complete; the prior checkpoint was retained |
 
-### Case C — No ticket exists for the CVE
+The result sequence preserves no input ordering guarantee. Callers use it only
+to determine per-track metrics and whether all event-selected outcomes
+completed; it is not persisted or exposed through an API.
 
-No ticket exists in Sentinel for the extracted CVE-ID.
+This is a system-only idempotent operation. It creates no audit event directly;
+an effective status transition delegates its one event to `package_service`.
+Known source, parser, history, scope-race, concurrency, and local-transaction
+failures are converted to per-track outcomes so siblings continue.
+`SoftTimeLimitExceeded`, `MemoryError`, a database failure that prevents
+reliable candidate/scope enumeration, and an unexpected failure that prevents
+the boundary from assigning trustworthy per-track outcomes propagate to the
+workflow owner. Re-invocation re-reads current IBS and PostgreSQL state and
+either advances from the retained predecessor or produces an idempotent no-op.
 
-- Enqueue a `create_ticket_from_detection` Celery task with parameters:
-  `cve_id` (string), `package_name`, `codestream_name`.
-- The task performs:
-   1. Fetch CVE data from NVD API v2
-      (`GET /rest/json/cves/2.0?cveId={cve_id}`). If NVD is unreachable
-      or the CVE is not yet published, create a minimal CVE record with
-      only the CVE-ID and `severity = NULL`.
-   2. Create the CVE record.
-   3. Create a Ticket with status `New`, no assignee.
-   4. Call `add_package_to_ticket(ticket_id, package_name)` to resolve
-      all codestreams and products via SMELT and create the
-      `TicketPackage` + `TicketPackageTrack` records with status
-      `ANALYSIS` (record creation goes through `package_service`).
-   5. Set the `TicketPackageTrack` for the originating codestream to
-      `status = FIXED` through `package_service`.
-   6. Create a `TicketAuditEvent` with `event_type = ticket_created`,
-       `user_id = NULL`, comment: `"CVE fix detected in {package}
-       ({codestream})"`.
+Source-info results may be reused among tracks with the same `(IBS project,
+logical package)`. A source diff may be reused only among tracks with the same
+project, logical package, effective baseline (`0` or checkpoint `srcmd5`), and
+current expanded `srcmd5`. Tracks sharing a package can have different
+checkpoints and therefore can require different diffs.
+
+The implementation may partition targeted source-info requests into multiple
+requests. Every selected logical package must be requested exactly once per
+current-state observation, and partitioning must not change per-package
+validation or outcome semantics.
+
+## Scheduled Reconciliation Algorithm
+
+`DetectIbsTrackReleases.execute()` performs the following steps:
+
+1. Select the eligible tracks defined in [Scope](#scope). Snapshot each track
+   ID, Ticket CVE ID, logical package name, IBS project, and current checkpoint
+   value for external-work grouping. Candidate selection acquires no Ticket
+   mutation lock.
+2. Group candidates by IBS project and request source info only for represented
+   logical package names, using `view=info&nofilename=1`. Do not enumerate every
+   package in the project.
+3. Validate the complete source-info response before applying any local
+   outcome. A requested package with no single usable expanded `srcmd5` fails
+   every dependent track while valid sibling packages may continue.
+4. For each track whose checkpoint equals the current expanded `srcmd5`, record
+   a successful unchanged-source no-op. No source diff or database write is
+   required.
+5. For each remaining unique baseline/current group:
+   - use `orev=0` when the track has no checkpoint;
+   - otherwise use the checkpoint `srcmd5` as `orev`;
+   - always use `expand=1` and the current expanded `srcmd5` as `rev`.
+6. Parse and validate the complete diff before applying local outcomes. Retain
+   only canonical CVE labels relevant to dependent tracks; unrelated valid
+   references do not need to remain in memory.
+7. If IBS authoritatively reports that a persisted historical `srcmd5` is no
+   longer available, apply [Unavailable History Fallback](#unavailable-history-fallback).
+   Other HTTP 4xx responses are failures and do not trigger fallback.
+8. Apply [Per-Track Local Outcome](#per-track-local-outcome) independently to
+   every dependent track. Commit or roll back each track as its own transaction
+   unit. A failed track does not roll back a successful sibling.
+9. Return normally after mixed success and failure so `BaseFetcher` finalizes
+   the run from the recorded metrics. An exception that prevents reliable
+   candidate enumeration or all further processing escapes and produces the
+   ordinary fetcher failure outcome.
+
+### Source-Info Validation
+
+The source-info parser accepts only a well-formed, completely consumed XML
+document. For each requested package:
+
+- exactly one `sourceinfo` entry must identify that package;
+- `srcmd5` must be a 32-character hexadecimal string;
+- an entry containing an upstream `error` child is unusable even if it also
+  contains checksum attributes; and
+- a missing entry, duplicate entry, missing or malformed required field, or
+  unusable entry fails that package's dependent tracks.
+
+An unrequested package entry does not create work and is ignored. Malformed XML
+or an interrupted response invalidates the complete response and fails every
+dependent track in that request. No affected checkpoint advances.
+
+### Source-Diff Validation
+
+The diff parser accepts only a well-formed, completely consumed XML document.
+An issue without a usable `tracker` or `state`, or with an unrecognized
+structural shape, is a data-quality failure. For `tracker="cve"` and `state`
+`added` or `changed`, a missing or non-canonical `label` emits one bounded
+warning and that entry is ignored; it is never accepted or interpreted from
+`name`. Valid `bnc` and other tracker entries, and valid `deleted` entries, are
+ignored without a malformed-CVE warning.
+
+A malformed or interrupted diff fails every dependent track using that diff
+and leaves their previous checkpoints unchanged. An empty valid diff is a
+successful no-match outcome.
+
+### Per-Track Local Outcome
+
+External IBS I/O and XML parsing complete before any Ticket lock is acquired.
+For one track, the local transaction then:
+
+1. locks the parent Ticket and reloads the track and checkpoint;
+2. verifies that the persisted checkpoint is still the predecessor examined by
+   this invocation;
+3. re-evaluates the track's current status under the lock;
+4. when the Ticket CVE has qualifying evidence and the track is still
+   `ANALYSIS` or `AFFECTED`, calls
+   `package_service.set_track_status(..., FIXED, acting_user_id=None)`;
+5. when no qualifying evidence exists, or the current track status is already
+   final, leaves affectedness unchanged; and
+6. creates or advances the checkpoint to the examined current expanded
+   `srcmd5`, then commits once.
+
+The status mutation, its service-owned `track_status_changed` event, Ticket
+status reconciliation, and checkpoint advancement are atomic. If any one of
+them fails, all local effects for that track roll back and the old checkpoint
+remains. The detector never creates a second audit event.
+
+If the Ticket moved to `Ignored` or `Duplicated` before the local transaction,
+the package-service operability guard rejects the mutation; the track fails and
+retains its old checkpoint. A track selected while active may still complete a
+factual update after a concurrent transition to `Resolved`, consistent with the
+operable-Ticket mutation and in-flight catch-up contracts.
+
+If the track no longer exists, no longer belongs to the expected Ticket/package
+scope, or has lost its Ticket CVE association, the reconciliation fails and no
+checkpoint advances. If its status became `NOT_AFFECTED`, `FIXED`, or
+`WONT_FIX`, successful examination advances the checkpoint without changing
+status or creating an audit event. This prevents old evidence from overriding a
+later VA decision if the track subsequently returns to a non-final status.
+
+### Checkpoint Concurrency
+
+Periodic polling, catch-up, RabbitMQ processing, and retries must not regress a
+checkpoint or mark source state as examined by failed local work.
+
+Each local outcome is conditional on the checkpoint predecessor captured for
+its external comparison. Concurrent handlers for the same track either
+serialize or use an equivalent conditional write. If another handler has
+already changed the predecessor:
+
+- equality with the proposed current `srcmd5` is an already-completed no-op;
+- otherwise the stale handler must not write its result or overwrite the newer
+  checkpoint. It re-evaluates from the new predecessor outside the Ticket lock,
+  or reports that track as failed so an event, manual run, catch-up, or the next
+  scheduled run retries it.
+
+A worker that fetched an older source state can therefore never overwrite a
+checkpoint accepted by another worker. No distributed lock, Redis guard, or
+generic progress table is required. No IBS call, Redis operation, or task
+enqueue occurs while a Ticket lock is held.
+
+## First Observation and VA Correction
+
+A new track has no checkpoint. Its first check compares `orev=0` with the
+current expanded source state and evaluates only its parent Ticket CVE. A fix
+that predates Ticket or package-tree creation can therefore set the represented
+track to `FIXED` without turning track release detection into a CVE discovery
+pipeline.
+
+A VA may later change an automatically `FIXED` track back to `AFFECTED` or
+`ANALYSIS` when the evidence was insufficient. The checkpoint remains at the
+source state that produced the automatic result:
+
+- if IBS source state is unchanged, no old reference is reapplied;
+- when a later expanded source state appears, the diff from the saved
+  checkpoint may contain new `added` or `changed` evidence and set the track to
+  `FIXED` again.
+
+No override boolean, evidence timestamp, or audit-history reconstruction is
+used.
+
+## Unavailable History Fallback
+
+When IBS authoritatively reports that the persisted checkpoint revision is no
+longer available:
+
+1. emit a sanitized `ibs_track_release_history_unavailable` warning with
+   `codestream`, `package_name`, `track_id`, and `reason_category`;
+2. request a new expanded diff from `orev=0` to the same current `srcmd5`;
+3. evaluate only the existing Ticket CVE under the ordinary issue rules; and
+4. accept the current `srcmd5` only after the per-track local outcome completes.
+
+Fallback success is a recovered reconciliation, not a failed item. Fallback
+failure leaves the previous checkpoint unchanged and fails the track.
+
+The exact IBS status and sanitized error shape that distinguish unavailable
+history from other 400/404 responses must be verified against a representative
+live response before implementation. Until that discriminator is verified, an
+ambiguous 400/404 is an ordinary failure and must not invoke fallback.
+
+`orev=0` identifies references present in current source, not when they first
+appeared. Consequently, if a VA corrected `FIXED` and the saved historical
+revision later becomes unavailable, fallback can interpret the retained old CVE
+reference as current evidence and set the track to `FIXED` again. This
+conservative ambiguity is accepted and made observable by the warning above.
+
+## RabbitMQ Package-Commit Acceleration
+
+A `suse.obs.package.commit` message is a wake-up hint, not source revision
+authority. The package-commit path uses the event's validated project and
+package identity only to select existing eligible tracks with the exact same
+`TicketPackageTrack.reference` and `TicketPackage.package_name`. It then obtains
+authoritative current `srcmd5` through source info and invokes the shared
+reconciliation boundary.
+
+An event package with no exact represented Sentinel package is ignored. This
+includes related packages and internal linked targets such as snapshot package
+names. Sentinel does not perform reverse-link fan-out. A target change that
+affects the expanded state of a represented logical linked package is still
+detected by the next scheduled source-info check, with ordinary latency of up
+to 24 hours.
+
+The package-commit path does not consume event `srcmd5`, does not rely on event
+`rev`, and cannot regress a checkpoint when messages are duplicate or out of
+order. Message acknowledgment and consumer retry/lifecycle behavior remain
+owned by `../integrations/ibs-rabbitmq-integration.md`.
+
+## Catch-Up
+
+`DetectIbsTrackReleases.catch_up(ticket_id, session)` is a custom non-CVE
+catch-up under the shared `BaseFetcher` contract. After package-tree
+re-resolution has attempted its units, catch-up selects the specified Ticket's
+existing IBS tracks in `ANALYSIS` or `AFFECTED` whose parent Ticket has a CVE,
+and invokes the same per-track checkpoint algorithm:
+
+- a track without a checkpoint uses `orev=0`;
+- a track with an equal current checkpoint is a no-op;
+- a changed or unusable checkpoint follows the ordinary diff or fallback path;
+  and
+- each track is an independent transaction unit.
+
+Per-item failures are logged and processing continues. Partial success returns
+normally; when every selected track fails, `catch_up()` propagates according to
+the shared `run_catch_up` contract. Duplicate catch-up and concurrent periodic
+or event processing are safe under the checkpoint concurrency rules.
+
+The next scheduled fetcher run retries failed eligible tracks. An administrator
+can accelerate a full retry through the existing generic manual fetcher trigger.
+No detector-specific endpoint or durable catch-up progress state is introduced.
+
+## XML and Response Safety
+
+The IBS client's incremental parsing, DTD/entity prohibition, complete-document
+validation, and no-arbitrary-cap contract are defined in
+`../integrations/ibs-integration.md`. For this detector, the parser retains only
+requested source-info entries and canonical labels needed by dependent tracks.
+A timeout, interrupted body, malformed document, or parser failure invalidates
+the affected request and leaves dependent checkpoints unchanged.
+
+Raw XML, response bodies, credentials, issue URLs, and event user/file fields
+are never written to logs. Package names, codestream names, internal track UUIDs,
+HTTP status codes, and bounded reason categories may be logged.
 
 ## Error Handling
 
-- **IBS unreachable / timeout**: skip the codestream with WARNING-level
-  log, `record_failed()`, retry on the next scheduled run. The
-  `items_failed` counter and `partial` run status surface the condition
-  on the fetcher dashboard.
-- **IBS returns error for a specific package diff**: log WARNING,
-  `record_failed()`, do NOT update the MD5 cache (the next run will
-  re-attempt the diff), continue with remaining packages.
-- **SMELT unreachable** (during Case B/C package resolution): log WARNING,
-  call `record_failed()`, skip the package addition, and retain the previous
-  MD5 so the next run re-attempts the diff and idempotent outcome processing.
-- **SMELT targets unresolved** (during Case B/C package resolution): handle
-  `PackageTargetsUnresolvedError` identically to SMELT unavailability: log
-  WARNING, call `record_failed()`, skip package addition, and retain the
-  previous MD5. Product catalog backfill cannot discover a package marker that
-  was never created, so the unchanged checkpoint is the permanent automatic
-  retry path.
-- **Product catalog not ready** (during Case B/C package resolution): handle
-  `ProductCatalogNotReadyError` identically to SMELT unavailability. No
-  package-tree records are written. Retain the previous MD5; the existing
-  failed-item metric and `partial` run status surface the skipped addition and
-  the next run re-attempts it.
-- **Deduplication** (Case C): if multiple packages in the same run yield
-  the same CVE-ID without a ticket, only one `create_ticket_from_detection`
-  task is enqueued. Every affected package remains an incomplete Case C outcome
-  for checkpoint purposes, so none of their checksums advances in that run. A
-  later run re-evaluates each package as Case A or B after the Ticket exists, or
-  as Case C if creation did not complete.
+| Condition | Per-track behavior | Recovery |
+|---|---|---|
+| IBS transport failure, timeout, 5xx, or rate limit after shared handling | `record_failed()` once for each dependent eligible track; keep checkpoints | Later event, manual run, catch-up, or scheduled run |
+| Source-info requested package missing, duplicate, malformed, or carrying an error | Fail each dependent track; valid sibling packages may continue | Same as above |
+| Malformed or interrupted source-info XML | Fail every dependent track in that request | Same as above |
+| Source diff HTTP or parser failure | Fail every dependent track sharing that diff | Same as above |
+| Persisted history authoritatively unavailable | Warn and use `orev=0`; fail only if fallback fails | Current-state fallback, then ordinary retry |
+| Ticket becomes `Ignored`/`Duplicated`, track disappears, or scope identity changes | Roll back local work and fail that track | Reactivation or later corrected invocation |
+| Concurrent checkpoint predecessor changed | Already-complete no-op, re-evaluate, or fail without writing stale state | Current or later invocation |
+| Status becomes final during I/O | Leave status unchanged; accept examined checkpoint | None |
+| No matching CVE evidence | Leave status unchanged; accept examined checkpoint | None |
 
-## Background Task
+One external failure shared by multiple tracks is logged at the request level
+and counts each affected track once, not once per parsing stage or retry attempt.
+Known failures use bounded sanitized reason categories. Unexpected exceptions
+follow `BaseFetcher` error sanitization and must not expose raw upstream data in
+the public `FetcherRun.error_message`.
+
+### Structured Logs
+
+Detector logs use these event names and fields. Standard correlation fields are
+added by the logging infrastructure and are not repeated here.
+
+| Event | Level | Required fields | Optional fields |
+|---|---|---|---|
+| `ibs_track_release_source_info_failed` | WARNING | `codestream`, `affected_track_count`, `reason_category` | `http_status` |
+| `ibs_track_release_package_source_invalid` | WARNING | `codestream`, `package_name`, `affected_track_count`, `reason_category` | — |
+| `ibs_track_release_diff_failed` | WARNING | `codestream`, `package_name`, `affected_track_count`, `reason_category` | `http_status` |
+| `ibs_track_release_issue_ignored` | WARNING | `codestream`, `package_name`, `reason_category="invalid_cve_label"` | — |
+| `ibs_track_release_history_unavailable` | WARNING | `codestream`, `package_name`, `track_id`, `reason_category` | `http_status` |
+| `ibs_track_release_track_failed` | WARNING | `codestream`, `package_name`, `track_id`, `reason_category` | — |
+
+`reason_category` is a bounded internal classification, not an upstream error
+string. At minimum it distinguishes transport, HTTP status, malformed XML,
+interrupted response, missing package, duplicate package, upstream package
+error, invalid source checksum, invalid issue structure, invalid CVE label,
+history unavailable, scope changed, Ticket not operable, stale checkpoint, and
+database/audit failure. Shared request failures produce one request-level log;
+the metric still counts each affected track once. The detector does not log raw
+CVE label text when it is invalid.
+
+## Background Fetcher
 
 ### Fetcher: `detect_ibs_track_releases`
 
 | Property | Value |
-|----------|-------|
+|---|---|
 | Fetcher name | `detect_ibs_track_releases` |
 | Class name | `DetectIbsTrackReleases` |
+| Base class | `BaseFetcher` |
+| Description | Reconcile existing active-Ticket IBS tracks against expanded package source state |
 | Schedule | Daily at 02:00 UTC (`0 2 * * *`) |
-| Source | IBS (`build.suse.de`) |
-| Scope | All codestreams with at least one `TicketPackageTrack` where `workflow_type = ibs` and status is `ANALYSIS` or `AFFECTED`, belonging to active Tickets (New, Analysis, Analyzed). VA-excluded and lifecycle-non-actionable tracks are included |
-| Auth | HTTP Basic / API token (internal) |
-| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
-| Custom settings | No |
+| Source | IBS HTTP API (`IBS_API_URL`) |
+| Scope | Existing IBS tracks in `ANALYSIS` or `AFFECTED` under active Tickets with a CVE; exclusions, EOL, and actionability do not narrow scope |
+| Auth | Configured IBS HTTP Basic/API-token credentials |
+| `participates_in_catch_up` | `True` — custom per-Ticket catch-up |
+| Custom settings | None |
 
-Catch-up mechanism for events missed by the real-time
-`IBSEventConsumer` (see
-`docs/features/integrations/ibs-rabbitmq-integration.md`).
+### Metrics and Run Status
 
-#### Catch-Up
+- `record_created()` is never called. The detector creates no domain record.
+- `record_updated()` is called once for each track effectively transitioned to
+  `FIXED` by this invocation.
+- `record_failed()` is called at most once for each selected track whose
+  reconciliation did not complete. Shared request failures count every affected
+  track once because the track is the reconciliation unit.
+- Every `no_op` outcome, including unchanged source, valid no-match,
+  final-status race, checkpoint-already-advanced, and repeated idempotent work,
+  leaves created and updated unchanged.
 
-`DetectIbsTrackReleases` implements `catch_up()` as a custom override
-(not the default CVE fetcher implementation). See
-[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
-("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
-contract.
+Fetcher status follows the shared `BaseFetcher` precedence. In particular, a
+normal return with failures and no effective track transitions is `failure`
+under the all-items-failed metric rule, even when other examined tracks were
+successful no-ops. Failures plus at least one effective transition produce
+`partial`; no failures produce `success`.
 
-**Scope**: after package-tree re-resolution has committed, extracts only the
-ticket's `TicketPackageTrack` records with `workflow_type = ibs` and status in
-`ANALYSIS` or `AFFECTED`. It performs a targeted current-state release check
-for the Ticket's CVE and package on each track. The shared
-`CodestreamPackageChecksum` is global to `(codestream, package)` and may already
-have advanced because another Ticket was active; therefore checksum equality
-MUST NOT by itself suppress this per-ticket check.
+## Audit and Transaction Guarantees
 
-The detailed bounded current-state algorithm remains owned by this
-track-release specification and must be complete before implementation. Catch-up
-recovers whether the fix is currently present, not every intervening source
-revision. It MUST NOT write `CodestreamPackageChecksum`: a targeted Ticket/CVE
-check has not processed every relevant outcome in the shared package revision,
-so only the periodic `execute()` flow or RabbitMQ package-event flow may advance
-that checkpoint after complete diff processing.
+The only detector-triggered Ticket audit event is the
+`track_status_changed` event created by `package_service.set_track_status()` for
+an effective transition. It has `user_id = NULL`, the true old status and
+`FIXED` as values, `comment = NULL`, and the standard track/package `detail`.
 
-#### Metrics
+Checkpoint creation, advancement, equality, fallback, and failure create no
+Ticket audit event. Audit history is never read as current checkpoint or VA
+override state.
 
-- `record_created`: a new ticket was created from a detected release
-  (Case C)
-- `record_updated`: a `TicketPackageTrack` status was transitioned to
-  `FIXED` (Case A), or a package was added to a ticket (Case B)
-- `record_failed`: a codestream could not be scanned (IBS API error)
+## Testing Requirements
 
-## Remaining Specification Work
+Future implementation tests must cover:
 
-Endpoint selection and diff matching are resolved:
+- strict active-Ticket, CVE-present, and `workflow_type = ibs` selection;
+- no Ticket/package/track/Product creation and no call to
+  `add_package_to_ticket()`;
+- first observation from `orev=0`, equal-checkpoint no-op, and ordinary
+  incremental comparison;
+- linked package expanded `srcmd5`, required `expand=1`, and ignored
+  unrepresented linked-target events;
+- `added`, `changed`, `deleted`, `bnc`, other tracker, invalid label, duplicate,
+  empty, and multi-CVE diff outcomes;
+- missing, duplicate, error-bearing, and malformed source-info entries;
+- malformed, interrupted, and safely streamed XML with DTD/entity expansion
+  disabled;
+- unavailable-history fallback, fallback failure, and the documented VA
+  correction ambiguity;
+- preservation of a VA `FIXED` to `AFFECTED`/`ANALYSIS` correction until new
+  source evidence;
+- one atomic status/audit/Ticket-reconciliation/checkpoint transaction and
+  rollback when any local step fails;
+- independent sibling success, exact metrics, and inherited run statuses;
+- concurrent polling, catch-up, event, and retry anti-regression using
+  independent database sessions;
+- status and Ticket-state races under the Ticket lock;
+- no external HTTP, Redis, or task publication while a Ticket lock is held;
+- exactly one service-owned audit event for an effective transition and none
+  for checkpoint-only or idempotent outcomes; and
+- sanitized logs and public fetcher errors with no raw response, credential, or
+  personal data.
 
-- **IBS endpoint** — Resolved: `GET /source/{project}?view=info` for
-  change detection, `POST /source/{project}/{package}?cmd=diff` for CVE
-  extraction. See [Detection Mechanism](#detection-mechanism) above
-  and `docs/features/integrations/ibs-integration.md`.
-- **Match strategy** — Resolved: the IBS diff endpoint provides an
-  explicit `CVE -> source package` link, so the Advisory ↔ Source Package
-  Match chain (used by the product-level detector) is not needed at the
-  codestream level.
+## External Contract Verification
 
-Before implementation, this specification must define the
-bounded first-run, long-gap, and per-ticket current-state procedures referenced
-above, including partial success for a diff containing multiple CVEs. These
-requirements belong to this detector and do not introduce a generic backfill
-framework.
+Verified behavior and remaining implementation gates are summarized in
+`../integrations/ibs-integration.md` and `../../data-sources.md`. Before parser
+implementation, retain a sanitized live fixture for every consumed source-info
+and diff shape. The exact unavailable-history discriminator remains unverified.
+
+Before package-commit parser implementation, capture a sanitized deployed
+`suse.obs.package.commit` payload under the field contract and verification gate
+in `../integrations/ibs-rabbitmq-integration.md`. Neither event `srcmd5` nor
+`rev` is required by this detector boundary.
+
+## Cross-references
+
+- `package-model.md` — workflow scope, active Tickets, release dimensions,
+  reactivation, and checkpoint safety
+- `package-service.md` — status mutation, Ticket locking, audit ownership, and
+  Ticket reconciliation
+- `../integrations/ibs-integration.md` — IBS HTTP and XML contracts
+- `../integrations/ibs-rabbitmq-integration.md` — package-commit acceleration
+  and consumer lifecycle
+- `../platform/fetcher-infrastructure.md` — `BaseFetcher`, catch-up, metrics,
+  manual triggering, and error sanitization
+- `../platform/networking.md` — HTTP timeout, retry, and TLS behavior
+- `../platform/testing-strategy.md` — integration and concurrency testing
+- `../tickets/ticket-audit-log.md` — `track_status_changed` field contract
+- `../../data-model.md` — `TrackReleaseCheckpoint` schema

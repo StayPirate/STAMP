@@ -299,11 +299,11 @@ erDiagram
         UUID user_id FK "nullable"
     }
 
-    CodestreamPackageChecksum {
+    TrackReleaseCheckpoint {
         UUID id PK
-        VARCHAR codestream_name
-        VARCHAR package_name
+        UUID ticket_package_track_id FK
         VARCHAR srcmd5
+        TIMESTAMPTZ last_seen_at
     }
 
     SubmissionRequest {
@@ -373,6 +373,7 @@ erDiagram
     TicketPackage ||--o{ TicketPackageMaintainer : "has maintainers"
     TicketPackageMaintainer }o--|| User : "references"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
+    TicketPackageTrack ||--o| TrackReleaseCheckpoint : "has release checkpoint"
     TicketPackageProduct }o--|| Product : "targets"
 
     Product ||--o{ ProductRepository : "has repositories"
@@ -409,7 +410,7 @@ erDiagram
 | **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
 | **IBS Integration** | SubmissionRequest, SubmissionRequestTrack, ReleaseRequest | IBS submission and release request tracking |
 | **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
-| **Operational** | CodestreamPackageChecksum | Release detection MD5 cache |
+| **Operational** | TrackReleaseCheckpoint | Per-track expanded IBS source state last successfully examined |
 
 ---
 
@@ -504,13 +505,17 @@ flowchart LR
         direction TB
         RT["Real-time:<br/>IBS RabbitMQ<br/>Consumer"]
         PERIODIC["Periodic:<br/>detect_ibs_track_releases<br/>(daily 02:00 UTC)"]
-        MD5["Shared MD5 cache<br/>(CodestreamPackageChecksum)"]
-        DIFF["IBS diff analysis<br/>(CVE-ID in changes)"]
+        SELECT["Select exact existing<br/>IBS project + package tracks"]
+        INFO["Targeted IBS source info<br/>(expanded srcmd5)"]
+        CHECKPOINT["Per-track checkpoint<br/>(TrackReleaseCheckpoint)"]
+        DIFF["Expanded IBS diff<br/>(canonical Ticket CVE)"]
         CS_REL["Codestream → FIXED"]
 
-        RT --> MD5
-        PERIODIC --> MD5
-        MD5 --> DIFF
+        RT --> SELECT
+        PERIODIC --> SELECT
+        SELECT --> INFO
+        INFO --> CHECKPOINT
+        CHECKPOINT --> DIFF
         DIFF --> CS_REL
     end
 
@@ -705,6 +710,7 @@ flowchart TD
     subgraph integration["External Integration"]
         OBS["ibs-integration"]
         RABBIT["ibs-rabbitmq-integration"]
+        TRACK_RELEASE["ibs-track-release-detection"]
         MAINTAINERSHIP["package-maintainership"]
         MAINT["maintainer"]
     end
@@ -740,6 +746,9 @@ flowchart TD
     OBS --> PKG
     RABBIT --> PKG
     RABBIT --> OBS
+    TRACK_RELEASE --> OBS
+    RABBIT --> TRACK_RELEASE
+    TRACK_RELEASE --> PKG
     MAINTAINERSHIP --> PKG
     MAINT --> MAINTAINERSHIP
     MAINT --> PKG
@@ -789,6 +798,7 @@ other feature:
 | [cpe-package-mapping](features/packages/cpe-package-mapping.md) | Ingestion | CPE-to-package resolution via static mapping file |
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, and requests |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
+| [ibs-track-release-detection](features/packages/ibs-track-release-detection.md) | Integration | Existing-track reconciliation via expanded IBS source state and per-track checkpoints |
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |
 | [identity-provisioning](features/identity/identity-provisioning.md) | Identity | External identity provisioning (not yet active) |
 | [rbac](features/identity/rbac.md) | Identity | Role-based access control and permissions |

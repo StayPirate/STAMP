@@ -110,7 +110,8 @@ SRs and RRs are tracked as **separate entities** with their own lifecycle,
 not as modifications to `PackageStatus`. The track's `delivery_status` is
 managed exclusively by the submission tracking mechanism (SR/RR lifecycle),
 while the track's affectedness `status` is managed independently by track
-release detection (MD5 match) or manual VA action. The two axes are fully
+release detection (canonical CVE evidence in an expanded source diff) or
+manual VA action. The two axes are fully
 decoupled — neither triggers changes on the other.
 
 **Why not a new PackageStatus value?** Adding an intermediate status (e.g.,
@@ -450,10 +451,11 @@ Returns `<issues>` block with structured entries:
 ```
 
 Only issues with `state="added"` and `tracker="cve"` are processed.
-Issues with `state="changed"` (pre-existing CVE references in diff
-context) and `state="deleted"` (removed references) are skipped. This
-filtering is consistent with `IBSTrackReleaseDetector` on the source
-diff endpoint (see `docs/features/integrations/ibs-integration.md`).
+Issues with `state="changed"` (pre-existing CVE references in request-diff
+context) and `state="deleted"` (removed references) are skipped. This is a
+request-correlation rule owned by this specification; track release detection
+has different source-state semantics and also accepts `changed` evidence. See
+`docs/features/integrations/ibs-integration.md`.
 
 Verified empirically on IBS (2026-04-29) with SR#407603: a changelog
 containing six pre-existing CVE references correctly reports them as
@@ -463,7 +465,7 @@ containing six pre-existing CVE references correctly reports them as
 ## Processing Pipelines
 
 Submission tracking is **independent** from release detection.
-`IBSTrackReleaseDetector` and the existing `IBSEventConsumer`
+`DetectIbsTrackReleases` and the existing `IBSEventConsumer`
 `package.commit` handler do NOT update `ReleaseRequest` records when
 they detect a codestream release. The RR state is updated exclusively
 by the submission tracking pipelines below (real-time consumer for
@@ -739,12 +741,11 @@ Step 3 — Delivery status reconciliation:
 #### Why This Approach
 
 The catch-up problem for request tracking differs from the
-`package.commit` catch-up (handled by `IBSTrackReleaseDetector`):
+`package.commit` catch-up (handled by `DetectIbsTrackReleases`):
 
-- For `package.commit`, the MD5 checksum cache
-  (`CodestreamPackageChecksum`) provides a "known good state" to diff
-  against — any MD5 change since the last check is detectable regardless
-  of missed events.
+- For `package.commit`, each represented track retains the expanded source
+  state it last examined. Targeted current source info can detect a change and
+  compare from that per-track checkpoint regardless of missed events.
 - For requests, there is no equivalent "state to compare" — a request
   created and accepted during downtime leaves no trace in Sentinel's local
   state.
@@ -782,9 +783,8 @@ A Celery sub-operation task (not a `BaseFetcher`) registered as a post-commit
 effect when `add_package_to_ticket` creates at least one new IBS track.
 Discovers SRs and RRs that predate Sentinel's tracking of that IBS scope.
 
-This is the same architectural pattern as `create_ticket_from_detection`:
-an on-demand task triggered by a parent operation, with no independent
-schedule or dashboard presence.
+This is an on-demand sub-operation triggered by a parent operation, with no
+independent schedule or dashboard presence.
 
 **Trigger**: after the package-tree transaction commits,
 `add_package_to_ticket` enqueues this task if it created at least one
@@ -793,8 +793,8 @@ acquired before the Ticket lock during package resolution; its non-blocking
 failure does not suppress submission discovery. Creating only Products,
 creating only Git tracks, or a package-tree
 no-op does not enqueue discovery. The rule is independent of what triggered
-the record creation (VA manual action, CVE ingestion, release detection Case
-B/C, or Product catalog backfill).
+the record creation (VA manual action, CVE ingestion, or Product catalog
+backfill). Track release detection does not create package-tree records.
 
 #### Procedure
 
@@ -834,8 +834,7 @@ B/C, or Product catalog backfill).
   lifecycle-non-actionable tracks are included because submission tracking
   records factual state regardless of operational participation (see Exclusion
   and Actionability in `docs/features/packages/package-model.md`). This ensures SR/RR data
-  is captured even for tracks already in `FIXED` state (e.g., Case C
-  tickets created by `create_ticket_from_detection`) or tracks excluded
+  is captured even for tracks already in `FIXED` state or tracks excluded
   by the VA. The data is not displayed in the UI for final-status or
   excluded tracks but is retained for audit and future use.
 - **14-day lookback window**: limits the volume of accepted SRs returned
@@ -843,8 +842,7 @@ B/C, or Product catalog backfill).
   only being created now is an extreme edge case with low informational
   value.
 - **Sub-operation task**: not a `BaseFetcher` — runs on-demand as a
-  side-effect of `add_package_to_ticket`, same category as
-  `create_ticket_from_detection`.
+  side-effect of `add_package_to_ticket`.
 - **Location of trigger**: the enqueue lives in `add_package_to_ticket`
   (in `package_service`). The discovery task performs external I/O (IBS
   queries) which is outside the responsibility of the record mutation
@@ -1111,8 +1109,7 @@ full-history scan is introduced.
 - `discover_submissions_for_ticket_package`: sub-operation for
   retroactive SR/RR discovery when a package is added to a ticket
 
-Both are sub-operation tasks (same category as
-`create_ticket_from_detection`): on-demand, no independent schedule, no
+Both are sub-operation tasks: on-demand, with no independent schedule or
 dashboard presence.
 
 ## Error Handling
@@ -1154,7 +1151,7 @@ mechanisms or credentials:
 - **API endpoints**: same access rules as
   `GET /api/v1/tickets/{ticket_id}` — no additional capability required.
 - **IBS API calls**: use the same IBS credentials already configured
-  for `IBSTrackReleaseDetector` and the existing `IBSEventConsumer`
+  for `DetectIbsTrackReleases` and the existing `IBSEventConsumer`
   (see `ibs-rabbitmq-integration.md` and `ibs-integration.md`).
 - **No sensitive data exposed**: endpoints return only IBS request
   numbers, package names, codestream names, and states.

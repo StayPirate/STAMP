@@ -39,9 +39,9 @@ specification extends.
   src.suse.de? polling? event bus?)
 - How is the CVE fix identified in a git commit? (commit message
   convention? changelog parsing? diff analysis similar to IBS?)
-- Is there an equivalent of the MD5 cache
-  (`CodestreamPackageChecksum`) for git, or is the detection mechanism
-  fundamentally different?
+- Does Git release detection need track-specific source progress analogous to
+  the IBS per-track checkpoint, or is its evidence mechanism fundamentally
+  different? The IBS model is not a generic checkpoint abstraction.
 - What is the periodic catch-up strategy? (equivalent of the 24h
   `detect_ibs_track_releases` fetcher for IBS)
 

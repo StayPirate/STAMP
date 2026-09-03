@@ -37,15 +37,15 @@ implemented directly in API endpoint handlers (see
 ### Async pattern
 
 The service is implemented as async functions. The API (FastAPI) is the
-primary consumer and calls the service directly with `await`. Entry
-points that operate in a synchronous context (Celery tasks) call the
-service via `asyncio.run()`.
+primary consumer and calls the service directly with `await`. Synchronous
+process entry points establish one async workflow boundary and await service
+calls within it; they do not create a new event loop for each mutation. See
+`docs/conventions.md` (Sync-to-Async Bridging).
 
 | Entry point            | Invocation pattern                                          |
 |------------------------|-------------------------------------------------------------|
 | API endpoint           | `await ticket_service.assign_ticket(session, ...)`          |
 | cve_service (async)    | `await ticket_service.create_ticket(session, ...)`          |
-| Celery task (release detection) | `asyncio.run(ticket_service.create_ticket(session, ...))` |
 
 ### Transaction ownership
 
@@ -65,7 +65,8 @@ parameter:
 - `UUID` — action performed by an authenticated user. Enables
   auto-assignment on unassigned tickets if the user holds the
   `vulnerability_analyst` role
-- `None` — system action (CVE ingestion, release detection). Auto-
+- `None` — system action (CVE ingestion or another specified automatic
+  creation source). Auto-
   assignment does not apply
 
 **API handler rule**: API endpoint handlers MUST always pass the UUID of
@@ -156,10 +157,9 @@ async def create_ticket(
 ```
 
 `TicketCreationSource` is a service-layer-only Python enum (not a
-database column — it is never persisted). Values: `manual`,
-`cve_ingestion`, `release_detection`. It determines the audit event
-comment (e.g., "Ticket created manually", "CVE ingested from NVD",
-"CVE fix detected in codestream"). Defined in
+database column — it is never persisted). Values: `manual` and
+`cve_ingestion`. It determines the audit event comment (e.g., "Ticket created
+manually" or "CVE ingested from NVD"). Defined in
 `backend/app/services/ticket_service.py`.
 
 **Preconditions**:
