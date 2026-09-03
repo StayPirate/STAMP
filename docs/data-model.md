@@ -23,7 +23,7 @@ implemented as SQLAlchemy ORM classes in `backend/app/models/`.
 
 ## Entity Relationship Overview
 
-The data model comprises 35 entities organized into five domains. The
+The data model comprises 34 entities organized into five domains. The
 overview below shows the core entities and their cross-domain
 relationships. Domain-specific diagrams follow with key columns (primary
 keys, foreign keys, and discriminant fields). Full column definitions
@@ -56,6 +56,7 @@ flowchart TB
 
     subgraph packages["Package Model"]
         TicketPackage
+        TicketPackageMaintainer
         TicketPackageTrack
         TicketPackageProduct
         Product
@@ -93,6 +94,8 @@ flowchart TB
     Ticket -->|"assignee"| User
     TicketAccessGrant -->|"user_id, granted_by_id"| User
     TicketPackage --> TicketPackageTrack
+    TicketPackage --> TicketPackageMaintainer
+    TicketPackageMaintainer --> User
     TicketPackageTrack --> TicketPackageProduct
     Product --> TicketPackageProduct
     User --> UserRole
@@ -230,6 +233,12 @@ erDiagram
         VARCHAR_255 package_name "NOT NULL"
         TIMESTAMPTZ deleted_at "nullable"
     }
+    TicketPackageMaintainer {
+        UUID id PK
+        UUID ticket_package_id FK "NOT NULL"
+        UUID user_id FK "NOT NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
+    }
     TicketPackageTrack {
         UUID id PK
         UUID ticket_package_id FK "NOT NULL"
@@ -267,9 +276,14 @@ erDiagram
         VARCHAR_255 repo_name "NOT NULL"
         TIMESTAMPTZ catalog_last_seen_at "NOT NULL"
     }
+    User {
+        UUID id PK
+    }
 
     Ticket ||--o{ TicketPackage : "has packages"
     TicketPackage ||--o{ TicketPackageTrack : "has tracks"
+    TicketPackage ||--o{ TicketPackageMaintainer : "has maintainers"
+    TicketPackageMaintainer }o--|| User : "references"
     TicketPackageTrack ||--o{ TicketPackageProduct : "has products"
     Product ||--o{ TicketPackageProduct : "referenced by"
     Product ||--o{ ProductRepository : "has repositories"
@@ -424,18 +438,6 @@ erDiagram
         VARCHAR_255 package_name "NOT NULL"
         VARCHAR_32 srcmd5 "NOT NULL"
     }
-    PackageBugowner {
-        UUID id PK
-        VARCHAR_255 package_name UK "NOT NULL"
-        VARCHAR_20 bugowner_type "nullable"
-        VARCHAR_100 bugowner_name "nullable"
-    }
-    PackageBugownerMember {
-        UUID id PK
-        UUID package_bugowner_id FK "NOT NULL"
-        VARCHAR_64 userid "NOT NULL"
-        VARCHAR_255 email "NOT NULL"
-    }
     TicketPackageTrack {
         UUID id PK
     }
@@ -443,7 +445,6 @@ erDiagram
     SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
     SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
     SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
-    PackageBugowner ||--o{ PackageBugownerMember : "has members"
 ```
 
 ## Tables
@@ -970,7 +971,11 @@ system action).
 
 Classifies the action recorded in a `TicketAuditEvent`. Category B —
 classification (Python Enum only). Adding a value requires only a code
-change.
+change. The enum additionally includes `package_maintainer_added`: package
+resolution associated an existing active User with a `TicketPackage`. Its actor
+is NULL, `old_value` is NULL, `new_value` is the event-time target username,
+`comment` is NULL, and `detail` contains the package name. The exact field
+contract is in `docs/features/tickets/ticket-audit-log.md`.
 
 | Value                      | Description                                        |
 |----------------------------|----------------------------------------------------|
@@ -980,6 +985,7 @@ change.
 | duplicate_removed          | Duplicate mark was reverted                        |
 | duplicate_target_changed   | Atomic repoint: the ticket's `duplicate_of_id` was updated because its previous target was marked as duplicate. `old_value` is the previous target identifier (`SNTL-{n}`). `new_value` is the new target identifier. `user_id` is NULL (system action). `detail` contains `{"triggered_by_ticket": "SNTL-{n}"}` identifying the ticket whose mark-as-duplicate operation triggered this repoint. |
 | package_added              | Package tree added or completed (manual by VA or automatic via CVE ingestion, track release detection, or Product catalog backfill). `user_id` is set for VA actions, NULL for automatic. `comment` provides context for automatic additions. A complete no-op creates no event. |
+| package_maintainer_added   | Package resolution associated an existing active User with a TicketPackage. `user_id` is NULL, `old_value` is NULL, `new_value` is the event-time target username, `comment` is NULL, and `detail` contains `{"package": "fictional-package"}`. |
 | package_excluded           | Package directly soft-deleted from the Ticket by a VA. `old_value` contains the package name and `user_id` identifies the VA. `detail` is NULL. Child records are not modified; they become effectively VA-excluded through the hierarchy. |
 | package_restored           | Directly soft-deleted package restored by VA. `new_value` contains the package name. `user_id` is the VA who performed the action. Only the package record is restored — child records are not modified. |
 | track_status_changed       | Track affectedness status changed. `user_id` is set for VA-initiated changes, `NULL` for automatic transitions (e.g., release detected sets FIXED). `detail` carries `{"track", "package"}` context. |
@@ -1039,6 +1045,36 @@ entity for tracks and products. See
 | updated_at   | TIMESTAMPTZ | NOT NULL, DEFAULT            | Record update timestamp            |
 
 **Unique constraint**: (ticket_id, package_name)
+
+#### TicketPackageMaintainer
+
+Immutable, additive maintainership association for one `TicketPackage`
+occurrence. It provides package provenance for confidential visibility and the
+maintainer workbench. It is populated only from a successful SMELT
+maintainership response during package resolution; it does not store email,
+username, group, codestream, freshness, or source-response data. See
+`docs/features/packages/package-maintainership.md`.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| ticket_package_id | UUID | FK(ticket_package.id) ON DELETE RESTRICT, NOT NULL | Maintained package occurrence |
+| user_id | UUID | FK(user.id) ON DELETE RESTRICT, NOT NULL | Existing Sentinel user acquired as maintainer |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | When the association was acquired |
+
+**Unique constraint**: `(ticket_package_id, user_id)`.
+
+**Indexes**:
+
+- `user_id` - supports caller-first confidential visibility and maintainer
+  workbench queries. Package-first acquisition is covered by the unique
+  constraint.
+
+`TicketPackage.maintainers` and `User.maintained_packages` are explicit ORM
+relationships using `back_populates`. Both foreign keys use `ON DELETE
+RESTRICT`: users are deactivated rather than deleted, and package occurrences
+are soft-deleted rather than hard-deleted. Rows have no `updated_at`; they are
+never updated or removed by normal application workflows.
 
 #### TicketPackageTrack
 
@@ -1195,8 +1231,8 @@ the authenticated administrator API or bootstrap/recovery CLI. Users can hold
 zero, one, or multiple roles via the UserRole
 junction table. Authenticated users with no roles have an effective scope
 of `non_confidential` and no capabilities; unlike unauthenticated users,
-they can access specific confidential tickets via `TicketAccessGrant` or
-bugowner matching.
+they can access specific confidential tickets via `TicketAccessGrant` or an
+included `TicketPackageMaintainer` association.
 
 | Column           | Type        | Constraints              | Description                      |
 |------------------|-------------|--------------------------|----------------------------------|
@@ -1612,55 +1648,6 @@ of the release detection mechanism.
 
 **Unique constraint**: (codestream_name, package_name)
 
-#### PackageBugowner
-
-Caches one current bugowner for each source package actively tracked in
-Sentinel tickets. The value is global across workflows and Tickets: all
-`TicketPackage` records with the same `package_name` reference the same
-bugowner. The current resolver and maintenance fetcher use IBS; source
-authority and any fallback are finalized by the owning bugowner
-specification. Records are created on demand when resolution is requested,
-maintained by the current `sync_ibs_bugowners` fetcher, and removed when the
-package no longer appears in any active ticket. See
-`docs/features/packages/package-bugowner.md` for the full specification.
-
-| Column         | Type        | Constraints          | Description                        |
-|----------------|-------------|----------------------|------------------------------------|
-| id             | UUID        | PK                   | Internal identifier                |
-| package_name   | VARCHAR(255) | UNIQUE, NOT NULL     | Source package name (matches `TicketPackage.package_name`) |
-| bugowner_type  | VARCHAR(20) | nullable             | BugownerType: `person`, `group`. NULL if the bugowner could not be resolved from IBS |
-| bugowner_name  | VARCHAR(100) | nullable             | IBS userid (for person) or group name (for group). NULL if unresolved |
-| bugowner_email | VARCHAR(255) | nullable             | Email of the person or collective email of the group (stored as lowercase). NULL if unresolved |
-| created_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record creation timestamp          |
-| updated_at     | TIMESTAMPTZ   | NOT NULL, DEFAULT    | Record update timestamp            |
-
-#### BugownerType Enum
-
-Classifies the type of IBS bugowner. Category B — classification
-(Python Enum only). Adding a value requires only a code change.
-
-| Value | Description |
-|-------|-------------|
-| `person` | Individual IBS user |
-| `group` | IBS group with collective email and members |
-
-#### PackageBugownerMember
-
-Stores the individual members of group bugowners. Populated only when
-the parent `PackageBugowner.bugowner_type` is `group`. Each record
-represents one member of the IBS group. See
-`docs/features/packages/package-bugowner.md` for the full specification.
-
-| Column               | Type        | Constraints                          | Description                        |
-|----------------------|-------------|--------------------------------------|------------------------------------|
-| id                   | UUID        | PK                                   | Internal identifier                |
-| package_bugowner_id  | UUID        | FK(package_bugowner.id), NOT NULL    | Parent bugowner record             |
-| userid               | VARCHAR(64)  | NOT NULL                             | IBS username of the group member   |
-| email                | VARCHAR(255) | NOT NULL                             | Email of the group member (stored as lowercase) |
-| created_at           | TIMESTAMPTZ   | NOT NULL, DEFAULT                    | Record creation timestamp          |
-
-**Unique constraint**: (package_bugowner_id, userid)
-
 #### SubmissionRequest
 
 Tracks an IBS submission request (type `maintenance_incident`) relevant
@@ -1750,7 +1737,7 @@ a value requires an Alembic migration.
 - All tables include `created_at` and `updated_at` timestamps (exceptions:
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `UserRole`,
-  `PackageBugownerMember`, `FetcherRun`, `FetcherAuditEvent`,
+  `TicketPackageMaintainer`, `FetcherRun`, `FetcherAuditEvent`,
   `SubmissionRequestTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`
   only have `created_at`; most are immutable write-once records or are
@@ -1759,8 +1746,6 @@ a value requires an Alembic migration.
   write-once records) and has no `updated_at` —
   `CVEAffectedVersion` records are replaced via delete-and-reinsert during
   sync, never updated in place;
-  `PackageBugownerMember` records are deleted and recreated when
-  group membership changes;
   `ApiKey` uses `last_used_at` and `revoked_at` as the authoritative
   timestamps for its only in-place changes, so a generic `updated_at` would
   be redundant;

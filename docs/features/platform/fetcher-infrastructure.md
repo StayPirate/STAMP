@@ -799,7 +799,6 @@ successfully added records.
 | `detect_ibs_product_releases` | Product occurrences below IBS tracks in active tickets | **Custom override** | Check current `updateinfo.xml` data, including valid advisories that predate reactivation |
 | `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Perform targeted historical query → recover current SR/RR chain, correlations, and delivery state |
 | `evaluate_lifecycle_transitions` | Product eligibility and gate-zone Ticket lifecycle reconciliation | **Custom override** | Extract Ticket Products after manual-zone exit → recalculate lifecycle-driven eligibility; EOL actionability itself is derived |
-| `sync_ibs_bugowners` | Packages in active tickets | **Custom override** | Current source-specific owner refresh; final source strategy and fetcher identity remain owned by `package-bugowner.md` |
 
 Note: for NVD, MITRE, and kernel CVE fetchers, `execute()` is global
 (not filtered by ticket status), but they still benefit from

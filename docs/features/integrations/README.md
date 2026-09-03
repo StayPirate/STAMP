@@ -13,7 +13,8 @@ ibs-rabbitmq-integration.md   IBS RabbitMQ consumer, connection management
 
 - `ibs-integration.md` defines the HTTP client used by multiple
   consumers: codestream release detection, product release detection,
-  submission tracking, and package bugowner resolution.
+  and submission tracking. Package maintainership is consumed from SMELT, not
+  IBS.
 - `ibs-rabbitmq-integration.md` defines the event consumer process that
   feeds real-time data to codestream release detection and submission
   tracking.

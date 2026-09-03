@@ -25,9 +25,9 @@ correlation, RabbitMQ-driven mutation, or IBS release mutation.
 
 Product-level IBS repository processing qualifies each
 `TicketPackageProduct` through its parent IBS track. The same catalog Product
-below a Git track is outside IBS scope. Bugowner is global package metadata and
-uses a source-neutral resolver boundary; the IBS endpoints below describe the
-current IBS resolver, not a workflow-specific bugowner value.
+below a Git track is outside IBS scope. Package maintainership is not an IBS
+consumer: Sentinel obtains it exclusively from SMELT for both IBS and Git/SLFO
+package occurrences.
 
 The complete active-ticket, reactivation, acceleration, and recovery ownership
 contract is defined in `docs/features/packages/package-model.md` (IBS Workflow
@@ -50,8 +50,7 @@ Applicability and Convergence).
 The following IBS API endpoints are used by Sentinel for codestream-level
 release detection (see `docs/features/packages/ibs-track-release-detection.md`),
 product-level release detection (see
-`docs/features/packages/ibs-product-release-detection.md`), package
-bugowner resolution (see `docs/features/packages/package-bugowner.md`), and
+`docs/features/packages/ibs-product-release-detection.md`), and
 submission request tracking (see `docs/features/packages/ibs-submission-tracking.md`):
 
 #### Project Source Info
@@ -108,17 +107,6 @@ Parameters:
 
 The `IBSTrackReleaseDetector` filters for issues with `state="added"`
 and `tracker` equal to `cve` or `bnc`.
-
-#### Package Bugowner Resolution
-
-Sentinel also uses IBS to resolve package bugowners. These endpoints are
-documented in `docs/features/packages/package-bugowner.md` (IBS API Integration
-section):
-
-- `GET /search/owner?package={name}&filter=bugowner` — resolve effective
-  bugowner through the project hierarchy
-- `GET /person/{userid}` — user email and real name
-- `GET /group/{group_name}` — group email and member list
 
 #### Request Search
 

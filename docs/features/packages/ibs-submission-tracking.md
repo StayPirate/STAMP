@@ -788,9 +788,10 @@ schedule or dashboard presence.
 
 **Trigger**: after the package-tree transaction commits,
 `add_package_to_ticket` enqueues this task if it created at least one
-`TicketPackageTrack` with `workflow_type = ibs`. Bugowner availability is a
-separate independent post-commit effect: neither effect waits for or blocks the
-other. Creating only Products, creating only Git tracks, or a package-tree
+`TicketPackageTrack` with `workflow_type = ibs`. Package maintainership is
+acquired before the Ticket lock during package resolution; its non-blocking
+failure does not suppress submission discovery. Creating only Products,
+creating only Git tracks, or a package-tree
 no-op does not enqueue discovery. The rule is independent of what triggered
 the record creation (VA manual action, CVE ingestion, release detection Case
 B/C, or Product catalog backfill).

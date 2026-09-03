@@ -379,7 +379,11 @@ After dispatch, it:
    in active-ticket-only mode, with `acting_user_id = None` and the system
    audit comment `Product catalog backfill`. The mutation boundary re-checks
    the Ticket status while holding its row lock; if the Ticket is no longer
-   active, the pair is skipped without mutation or post-commit effects.
+   active, the pair is skipped without database mutation or post-commit
+   effects. The already completed external requests remain diagnostic work only.
+   The normal pre-lock SMELT maintainership request runs for every selected
+   pair, including a package-tree no-op; an active locked Ticket may therefore
+   gain missing additive `TicketPackageMaintainer` associations.
 3. Product resolution emits the structured partial-resolution warning defined
    in `package-model.md` when applicable. Because resolution precedes the
    Ticket lock, this warning may also be emitted for a pair subsequently
@@ -395,8 +399,10 @@ beneath existing tracks and may create a previously omitted track; a new track
 starts in `ANALYSIS`/`PENDING`, and normal status reconciliation may regress
 an `Analyzed` Ticket to `Analysis`. The normal `add_package_to_ticket()`
 post-commit effects apply only when the backfill creates at least one IBS
-track. Adding Products below existing tracks, adding only Git tracks, or a
-package-tree no-op performs no post-commit effects.
+track. Adding Products below existing tracks, adding only Git tracks,
+maintainer-only mutation, or a package-tree no-op performs no post-commit
+effects. Maintainer association is a transactional database mutation, not a
+post-commit effect.
 
 Backfill completes only package trees represented by an existing active
 `TicketPackage`. A package addition that previously failed with

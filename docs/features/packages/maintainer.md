@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide package maintainers (bugowners) with API access to their pending
+Provide package maintainers with API access to their pending
 work, in-progress submissions, and completed releases across all packages
 they maintain. This gives maintainers immediate visibility into what needs
 fixing, what is already in the pipeline, and what has been recently
@@ -14,35 +14,25 @@ a specific ticket.
 
 ## Target Audience
 
-This feature targets **package maintainers (bugowners)** — SUSE employees
-who maintain one or more source packages in IBS. It complements the
+This feature targets **package maintainers** associated with one or more
+Ticket package occurrences. It complements the
 VA-focused ticket workflow by providing a package-centric perspective on
 security update work.
 
 ## User Identification
 
-A user is identified as a maintainer of a package through the existing
-`PackageBugowner` data (see `docs/features/packages/package-bugowner.md`):
+A user is identified as a maintainer through
+`TicketPackageMaintainer.user_id` (see
+`docs/features/packages/package-maintainership.md`). The authenticated User ID
+must match the association; runtime email or group matching is not used. If a
+user has no package association, all endpoints return empty results.
 
-- **Person bugowner**: the user's email matches
-  `PackageBugowner.bugowner_email`
-- **Group bugowner**: the user's email matches
-  `PackageBugownerMember.email` for a group-type `PackageBugowner`
+### Package-wide visibility
 
-The match is automatic — no manual configuration. If a user is not a
-bugowner of any package, all endpoints return empty results.
-
-### Group Visibility
-
-When a package has a group bugowner, **all members** of that group see the
-same information for that package across all sections (Pending Fixes, In
-Progress, Completed). The data is package-centric: it shows the state of
-packages the user is responsible for, regardless of which individual
-performed a specific action.
-
-When a group member submits a fix (SR created), the corresponding
-codestream moves from "Pending Fixes" to "In Progress" for all members of
-the group.
+One association applies to every track under its `TicketPackage`. The data is
+package-centric regardless of whether SMELT originally discovered the user
+directly or through group membership and regardless of which individual
+performed a specific action. Sentinel stores no group provenance.
 
 ## Filtering Criteria
 
@@ -55,7 +45,7 @@ with no actionable Products does not appear in the maintainer work queue.
 
 Codestreams where:
 
-1. The user is bugowner of the package (direct or via group membership)
+1. The user is associated as a maintainer of the parent package occurrence
 2. The `TicketPackageTrack.status` is `AFFECTED`
 3. The parent ticket status is `Analyzed` (the VA has confirmed that
    fixes are needed)
@@ -70,7 +60,7 @@ These represent actionable work: the maintainer needs to submit a fix.
 
 Codestreams where:
 
-1. The user is bugowner of the package (direct or via group membership)
+1. The user is associated as a maintainer of the parent package occurrence
 2. There is at least one active `SubmissionRequest` correlated to this
    `TicketPackageTrack` (via `SubmissionRequestTrack`) in a
    non-final or progressing state
@@ -79,7 +69,7 @@ Codestreams where:
 
 Codestreams where:
 
-1. The user is bugowner of the package (direct or via group membership)
+1. The user is associated as a maintainer of the parent package occurrence
 2. The `TicketPackageTrack.status` is `FIXED`, OR
 3. There is a `ReleaseRequest` in `accepted` state correlated to this
    track
@@ -90,7 +80,7 @@ These represent finished work.
 
 The per-ticket endpoint returns all three sections (pending, in-progress,
 completed) for a specific ticket, filtered to only the packages where the
-requesting user is bugowner (direct or via group). Packages in the ticket
+requesting user is an associated maintainer. Packages in the ticket
 that the user does not maintain are excluded.
 
 ### Evaluation Order
@@ -101,7 +91,7 @@ wins):
 
 1. Ticket does not exist → 404 `TICKET_NOT_FOUND`
 2. Ticket status is not `Analyzed` → 200 with `error_state` (status-specific)
-3. User is not a bugowner of any package in the ticket → 200 with `error_state`
+3. User is not a maintainer of any package in the ticket → 200 with `error_state`
 4. All checks pass → 200 with normal data
 
 **Error state conditions:**
@@ -113,7 +103,7 @@ wins):
 | Ticket status is `Resolved` | 200 | `resolved` |
 | Ticket status is `Ignored` | 200 | `ignored` |
 | Ticket status is `Duplicated` | 200 | `duplicated` (includes `duplicate_of`) |
-| User is not a bugowner | 200 | `no_packages` |
+| User is not a maintainer | 200 | `no_packages` |
 
 **Duplicated link**: the `duplicate_of` value in the error-state
 response is the `SNTL-{n}` identifier of the target ticket (always
@@ -269,7 +259,7 @@ specific ticket, filtered to the authenticated user's packages.
 | 404  | `TICKET_NOT_FOUND` | Ticket does not exist |
 
 **Response (normal view)**: returned when ticket status is `Analyzed` and
-the user is a bugowner of at least one package. Object with three arrays
+the user is a maintainer of at least one package. Object with three arrays
 using a reduced item schema (ticket-level fields like `severity` and
 `cve_id` are excluded since they are available from the ticket header):
 
@@ -314,7 +304,7 @@ using a reduced item schema (ticket-level fields like `severity` and
 No pagination (a single ticket has a bounded number of codestreams).
 
 **Response (error state)**: returned when ticket status is not `Analyzed`
-or the user is not a bugowner. Object with an `error_state` key:
+or the user is not a maintainer. Object with an `error_state` key:
 
 ```json
 {
@@ -346,16 +336,15 @@ containing the `SNTL-{n}` identifier of the target ticket.
 - All endpoints require authentication
 - No capability restriction — any authenticated user can access their own
   maintainer data
-- Users can only see data for packages they are bugowner of (enforced
-  server-side via email matching)
+- Users can only see data for package occurrences associated to their User ID
 - The per-ticket endpoint filters by the authenticated user's packages;
   users cannot see other maintainers' pending work through this endpoint
 - **Confidentiality filtering**: all maintainer endpoints MUST apply
   `confidential_ticket_filter()` (see
   `docs/features/tickets/tickets.md`, Confidentiality Filtering) to
   exclude packages belonging to confidential tickets that the caller is
-  not authorized to access. Although the bugowner email match already
-  coincides with authorization rules 3 and 4, the confidentiality filter
+  not authorized to access. Although the package-maintainer association already
+  coincides with the maintainer visibility rule, the confidentiality filter
   MUST be applied explicitly as defense in depth
 
 ## Performance Considerations
@@ -363,9 +352,9 @@ containing the `SNTL-{n}` identifier of the target ticket.
 The "Pending Fixes" query involves a multi-table join:
 
 ```
-User.email
-  → PackageBugowner (bugowner_email) OR PackageBugownerMember (email)
-    → TicketPackageTrack (package_name match, status = AFFECTED)
+User.id
+  → TicketPackageMaintainer → TicketPackage
+    → TicketPackageTrack (status = AFFECTED)
       → Ticket (status = Analyzed)
         → LEFT JOIN SubmissionRequestTrack (absence of active SR)
 ```
@@ -374,23 +363,22 @@ For users who maintain many packages (e.g., kernel team), this could
 return a significant number of rows. Mitigation strategies:
 
 - **Pagination**: all endpoints are paginated (default 20 items per page)
-- **Indexes**: ensure indexes exist on `PackageBugowner.bugowner_email`,
-  `PackageBugownerMember.email`, `TicketPackageTrack.package_name`,
-  and `Ticket.status`
+- **Indexes**: use `TicketPackageMaintainer.user_id`, the unique
+  `(ticket_package_id, user_id)` key, and existing package/track/Ticket keys
 - **Future**: if performance becomes an issue, consider a materialized
   view or periodic pre-computation of the maintainer work queue
 
 ## Future Considerations
 
-- **Claim mechanism**: for group bugowners, ability to "claim" a pending
-  fix to signal to other group members that someone is working on it
+- **Claim mechanism**: ability to claim a pending fix to signal that someone is
+  working on it
 - **Metrics**: aggregate statistics (average time to fix, submission
   success rate) per maintainer or team
 
 ## Dependencies
 
-- `docs/features/packages/package-bugowner.md` — bugowner resolution and
-  group membership data
+- `docs/features/packages/package-maintainership.md` — package-wide
+  association acquisition and visibility
 - `docs/features/packages/package-model.md` — TicketPackageTrack status
   and delivery status model
 - `docs/features/packages/ibs-submission-tracking.md` — SubmissionRequest

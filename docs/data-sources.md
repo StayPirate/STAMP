@@ -23,7 +23,7 @@ relevant feature specifications in `docs/features/`.
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
 | IBS RabbitMQ | Internal | Real-time build and publish events | Active |
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
-| SMELT | Internal | Aggregated Product catalog and package-target resolution | Active |
+| SMELT | Internal | Aggregated Product catalog, package-target resolution, and maintainership | Active |
 | SCC | Internal | Product registration catalog, architectures, extensions, migrations | Reference only |
 | AIMAAS | Internal | Product lifecycle dates, CVSS thresholds | Active |
 | SUSE Active Directory | Internal | Employee identity, line manager, groups | Not integrated |
@@ -304,9 +304,7 @@ whether update advisories have been published to product repositories.
   change detection), source diffs with embedded CVE and Bugzilla references
   (to confirm which vulnerabilities a commit addresses), build results,
   published repository metadata including `updateinfo.xml` (which
-  contains advisory details with CVE references and release dates),
-  and package bugowner roles (person or group responsible for package
-  maintenance)
+  contains advisory details with CVE references and release dates)
 - **Product channel projects**:
   - `SUSE:Channels` contains the current declarative IBS delivery mapping.
     Each `_channel` file associates source packages and binaries from one or
@@ -327,10 +325,6 @@ whether update advisories have been published to product repositories.
     checksums
   - `POST /source/{project}/{package}?cmd=diff&view=xml&onlyissues=1` —
     source diff with CVE/Bugzilla tracker references
-  - `GET /search/owner?package={name}&filter=bugowner` — resolve
-    effective bugowner of a package through the project hierarchy
-  - `GET /person/{userid}` — user details (email, real name)
-  - `GET /group/{group_name}` — group details (email, member list)
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
   via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
@@ -339,9 +333,8 @@ whether update advisories have been published to product repositories.
   (`detect_ibs_product_releases`) runs as a periodic `BaseFetcher` subclass.
   All IBS package operations require a parent track whose persisted
   `workflow_type` is `ibs`; a Git reference is never interpreted as an IBS
-  project. The current package bugowner resolver uses the owner search, person,
-  and group endpoints behind a source-neutral package-level boundary — see
-  `docs/features/packages/package-bugowner.md`
+  project. IBS owner/person/group endpoints are not consumed for package
+  maintainership; SMELT is the sole Sentinel boundary for that concern
 - **Documentation**: https://build.suse.de (internal). The OBS API
   documentation at https://api.opensuse.org/apidocs/ applies to IBS as
   both run the same software
@@ -355,8 +348,7 @@ whether update advisories have been published to product repositories.
 - **See also**: `docs/features/integrations/ibs-integration.md`,
   `docs/features/packages/package-model.md`,
   `docs/features/packages/ibs-track-release-detection.md`,
-  `docs/features/packages/ibs-product-release-detection.md`,
-  `docs/features/packages/package-bugowner.md`
+  `docs/features/packages/ibs-product-release-detection.md`
 
 ### OBS (Open Build Service)
 
@@ -674,7 +666,8 @@ attribute it exposes.
 - **Relevant data**: Product catalog (name, version, CPE identifier,
   associated repository project names) and per-package maintenance
   information (which codestreams contain a given package and which
-  Products it is shipped to, with direct CPE identification)
+  Products it is shipped to, with direct CPE identification), plus package
+  maintainership aggregated across IBS roles and Git/SLFO declarations
 - **Access**: REST API at `smelt.suse.de/api`. Key endpoints:
   - `v1/basic/products/` relative to the API prefix (paginated) — product
     listing
@@ -687,6 +680,11 @@ attribute it exposes.
     aggregated targets. Sentinel consumes only the fields required for
     package resolution (see `package-model.md`, SMELT Query for Package
     Resolution)
+  - `experimental/v2/packages/{package_name}/maintainership` relative to the
+    API prefix (non-paginated) - package maintainership across IBS and
+    Git/SLFO sources. Sentinel consumes only non-null individual emails from
+    direct users and group members; it ignores username, group name,
+    collective group email, and codestream for persistence and identity
 - **Integration status**: **Active**. Sentinel periodically syncs the product
   catalog (`sync_smelt_products` fetcher) and queries package maintenance
   information on demand when adding packages to tickets. CPE identifiers
@@ -699,7 +697,15 @@ attribute it exposes.
   configured HTTPS API prefix and treats continuation URLs only as consistency
   metadata. The maintained-package endpoint (`experimental/v2/maintained/`)
   uses a JSend envelope `{status, data}` and returns all results in a single
-  non-paginated response. Both endpoints require no authentication.
+  non-paginated response. The maintainership endpoint also uses JSend, is
+  non-paginated, and exposes no freshness marker. These endpoints require no
+  authentication.
+- **Maintainership contract status**: the structured identity response is
+  merged upstream but was not yet deployed-and-verified on 2026-09-03. Deployed
+  OpenAPI and representative live responses are a mandatory implementation
+  gate. SMELT exposes no freshness SLA or response timestamp; Sentinel
+  assignments are additive, so freshness is not used for revocation. See
+  `package-maintainership.md` for the evidence, exact field contract, and gate.
 - **Source semantics**:
   - IBS package resolution originates from declarative `SUSE:Channels`
     records. With Reactive LTSS explicitly requested
@@ -713,9 +719,15 @@ attribute it exposes.
     resolved and is not workflow authority.
   - Absence from one upstream catalog is not evidence that a Product is EOL,
     deleted, or ineligible. Catalog presence and lifecycle are independent.
+  - Maintained-package codestreams identify delivery/update or compose targets;
+    maintainership codestreams may identify assignment origins. Sanitized live
+    comparison found the namespaces neither equal nor directly joinable.
+    Sentinel therefore applies maintainership package-wide to one
+    `TicketPackage` and does not map it to tracks.
 - **Documentation**: https://smelt.suse.de (internal)
 - **See also**: `docs/features/packages/product-catalog.md` (product
-  sync), `docs/features/packages/package-model.md` (package query)
+  sync), `docs/features/packages/package-model.md` (package query),
+  `docs/features/packages/package-maintainership.md` (maintainer acquisition)
 
 ### SCC (SUSE Customer Center)
 
@@ -1099,7 +1111,6 @@ feature documentation (not its implementation status):
 | `sync_aimaas_thresholds` | AIMAAS | Daily at 02:45 UTC | None | N/A (internal) | CVSS thresholds per product via in-memory join (product list + threshold list); threshold clearing to NULL on disappearance with eligibility re-evaluation | [product-catalog.md](features/packages/product-catalog.md#fetcher-sync_aimaas_thresholds) | Complete |
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Active-Ticket IBS track release detection; shared MD5 is a fully processed checkpoint | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Partial |
 | `detect_ibs_product_releases` | IBS | TBD | HTTP Basic / API token (internal) | N/A (internal) | Product-level release detection for occurrences below active-Ticket IBS tracks (updateinfo.xml) | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Partial |
-| `sync_ibs_bugowners` | IBS (current strategy; final source authority deferred) | Every 14 days at 03:00 UTC | HTTP Basic / API token (internal) | Admin-configurable via `FetcherConfig.request_delay` | Global package bugowner cache maintenance (cleanup, update, repair) | [package-bugowner.md](features/packages/package-bugowner.md#fetcher-properties) | Partial |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:15 UTC | N/A | N/A | Reconciles automatic eligibility and Ticket gate state from derived Product lifecycle and package-tree actionability | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Complete |
 | `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS SR/RR state and correlation for active-Ticket IBS tracks; targeted historical catch-up on reactivation | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |

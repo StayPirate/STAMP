@@ -580,7 +580,7 @@ The dependency evaluates conditions in this exact order:
    (`is_confidential=TRUE`) and the caller does not satisfy any
     visibility rule from `docs/features/identity/rbac.md` (Scope and
     Confidential Ticket Visibility) — scope `all`, explicit
-    `TicketAccessGrant`, or bugowner match — return `404
+    `TicketAccessGrant`, or included-package maintainer association — return `404
     TICKET_NOT_FOUND` — indistinguishable from a non-existent ticket.
     The confidentiality evaluation reuses the shared
     `confidential_ticket_filter()` utility (see

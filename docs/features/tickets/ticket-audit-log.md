@@ -32,6 +32,7 @@ fields populated according to this table:
 | `duplicate_removed` | Duplicate mark reverted | VA user | `SNTL-{n}` identifier of the original ticket | `NULL` | `NULL` | `NULL` |
 | `duplicate_target_changed` | Atomic repoint: the ticket's `duplicate_of_id` was updated within the same transaction as the triggering mark-as-duplicate operation, because the ticket's previous target was itself marked as duplicate | `NULL` | `SNTL-{n}` identifier of the previous target | `SNTL-{n}` identifier of the new target | `NULL` | `{"triggered_by_ticket": "SNTL-{n}"}` — the identifier of the ticket whose mark-as-duplicate operation triggered this repoint |
 | `package_added` | Package tree created or incrementally completed (manual or automatic). One event per invocation that creates at least one package, track, or Product record; child records do not generate separate events. A completely no-op invocation creates no `package_added` event. | VA user for manual, `NULL` for automatic | `NULL` | Package name | `NULL` for manual; contextual description for automatic (e.g., `"CPE match"`, `"vendor:product match"`, `"resolved_packages"`, `"Detected in track SUSE:SLE-15-SP6:Update"`, `"Product catalog backfill"`) | `NULL` |
+| `package_maintainer_added` | Package resolution creates one `TicketPackageMaintainer` association | `NULL` | `NULL` | Event-time target username | `NULL` | `{"package": "fictional-package"}` |
 | `package_excluded` | Package directly soft-deleted by a VA. Child tracks and Products are not modified and do not generate events; they become effectively VA-excluded through the hierarchy | VA user | Package name | `NULL` | `NULL` | `NULL` |
 | `package_restored` | Directly excluded package restored to ticket. Only the package record is restored — child records are not modified | VA user | `NULL` | Package name | `NULL` | `NULL` |
 | `track_status_changed` | Track status changed (VA action, admin force-FIXED, or release detection) | VA user for manual changes, `NULL` for automatic transitions (e.g., release detected sets FIXED) | Old status | New status | `NULL` | `{"track": "...", "package": "..."}` (see detail contract) |
@@ -109,9 +110,16 @@ types not listed here MUST set `detail` to `NULL`.
 | `reference_title_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `reference_description_changed` | `url` (string) | — | `{"url": "https://bugzilla.suse.com/show_bug.cgi?id=12345"}` |
 | `duplicate_target_changed` | `triggered_by_ticket` (string) | — | `{"triggered_by_ticket": "SNTL-42"}` |
+| `package_maintainer_added` | `package` (string) | — | `{"package": "fictional-package"}` |
 
 **Notes**:
 
+- `package_maintainer_added` is emitted once for each newly created immutable
+  association, including when maintainer associations are the only database
+  mutation. Its `new_value` snapshots the target username so the event remains
+  readable after a later username change. The event is system-attributed even
+  when acquisition was triggered by a user-facing package addition. A repeated
+  acquisition that finds the association already present emits no event.
 - `product_eligibility_changed`: `reason` values are `reactive_ltss`,
   `threshold`, `reactivation`, `cvss`, or `va_override`. Product-originated
   automatic recalculation (`reactive_ltss`, `threshold`, or `reactivation`)
@@ -289,6 +297,9 @@ Tests for any ticket-mutating service MUST verify:
    timestamp, including retroactive advisory dates
 9. VA eligibility events distinguish `override_action` values `set`,
    `changed`, and `cleared`; automatic events omit that key
+10. Maintainer acquisition creates one `package_maintainer_added` event per new
+    association, with exact detail schema and system attribution; duplicate,
+    inactive-user, and unmatched-email outcomes create none
 
 See Guardrail 6 (Mandatory testing) and Guardrail 11 (Ticket event logging)
 in `AGENTS.md` for enforcement.

@@ -62,7 +62,7 @@ capabilities control *what you can do*.
 effective scope is `all`. Otherwise, the effective scope is
 `non_confidential`. Authenticated users with no roles have an effective
 scope of `non_confidential`. Unauthenticated users have no scope (treated
-as `None` — only non-confidential tickets visible, no grant/bugowner
+as `None` — only non-confidential tickets visible, no grant/maintainership
 checks).
 
 > **Design note — scope is API-layer only**: scope is enforced at the API
@@ -99,7 +99,7 @@ Design notes:
   — the system does not enforce mutual exclusivity between roles
 - A user with no roles has an effective scope of `non_confidential` and no
   capabilities. They can still access specific confidential tickets via
-  `TicketAccessGrant` or bugowner matching — these per-ticket mechanisms
+  `TicketAccessGrant` or package maintainership — these per-ticket mechanisms
   are independent of scope
 
 > **Design note — VA role granularity**: the VA role intentionally bundles
@@ -224,15 +224,15 @@ A ticket is visible to a user if ANY of the following is true:
 1. The ticket is not confidential (always visible to everyone)
 2. The user's effective scope is `all`
 3. The user has an explicit `TicketAccessGrant` for this ticket
-4. The user's email matches a `PackageBugowner` (person) for a package
-   associated with this ticket
-5. The user's email matches a `PackageBugownerMember` (group member) for
-   a package associated with this ticket
+4. The user's ID matches a `TicketPackageMaintainer.user_id` whose parent
+   `TicketPackage` belongs to this Ticket and has `deleted_at IS NULL`
 
-Email comparison for rules 4 and 5 is case-insensitive, guaranteed by
-normalized lowercase storage on both sides: User.email (from external sync)
-and bugowner emails (from IBS sync). A standard equality operator (`=`)
-is sufficient — no runtime ILIKE or lower() is needed.
+The persisted user-ID association is package-wide. Track/Product exclusion,
+Product lifecycle, and Ticket resolution do not revoke it; package exclusion
+disables it until restore. Maintainership creates no `TicketAccessGrant`.
+Like an explicit grant, maintainership changes visibility only. It grants no
+capability; the caller can perform only operations already permitted by their
+roles.
 
 This means a user with `manage_confidentiality` capability can grant
 explicit access to a confidential ticket to a user with
@@ -249,7 +249,7 @@ with a grant can both see and modify the ticket because they have
 capabilities like `triage_ticket` and `manage_packages`. The two checks
 are independent:
 
-- **Scope** (+ grant/bugowner) determines: *can you see this ticket?*
+- **Scope** (+ grant/maintainership) determines: *can you see this ticket?*
 - **Capability** determines: *can you perform this operation?*
 
 Both checks must pass for a write operation to succeed.
@@ -262,14 +262,13 @@ def confidential_ticket_filter(
     ...,
     caller_scope: Scope | None,     # None for unauthenticated
     caller_user_id: UUID | None,
-    caller_email: str | None,
     ...
 )
 ```
 
 When `caller_scope` is `None` (unauthenticated), the function
 short-circuits: only non-confidential tickets are returned, and
-grant/bugowner checks are skipped (no user identity to match against).
+grant/maintainership checks are skipped (no user identity to match against).
 
 ### Optional Principal to Caller Context
 
@@ -277,12 +276,12 @@ Public endpoints that depend on caller identity obtain
 `AuthenticatedPrincipal | None` from `get_optional_current_user` before
 building visibility or field-level authorization rules.
 
-- For `None`, pass `caller_scope=None`, `caller_user_id=None`, and
-  `caller_email=None`. No roles are loaded and grant/bugowner checks remain
+- For `None`, pass `caller_scope=None` and `caller_user_id=None`. No roles are
+  loaded and grant/maintainership checks remain
   disabled as described above.
 - For an `AuthenticatedPrincipal`, load the user's current roles, resolve the
   effective scope using the normal Scope resolution rule, and pass that scope
-  together with `principal.user.id` and `principal.user.email`.
+  together with `principal.user.id`.
 
 Only a completely validated principal reaches this mapping. A selected invalid
 credential returns 401 at the authentication boundary before confidentiality,
@@ -344,8 +343,8 @@ specific ticket, the authorization chain evaluates in this order:
    not. This check is user-level (does not depend on the specific
    ticket), so it does not leak information about ticket existence.
 3. **Ticket accessibility** (`require_accessible_ticket`) — check that
-   the ticket exists and is visible to the caller (scope + grant +
-   bugowner). Returns 404 for invisible tickets.
+   the ticket exists and is visible to the caller (scope + grant + package
+   maintainership). Returns 404 for invisible tickets.
 
 For mutation endpoints, a fourth check occurs at the **service layer**
 (not as an API dependency):
@@ -596,7 +595,7 @@ here with the required authorization level and a link to the owning spec.
    activity. See `docs/features/identity/authentication.md`
 8. Authenticated users with no roles have an effective scope of
    `non_confidential` and no capabilities. They can access specific
-   confidential tickets via `TicketAccessGrant` or bugowner matching —
+   confidential tickets via `TicketAccessGrant` or package maintainership —
    unlike unauthenticated users, who see only non-confidential tickets
    with no per-ticket override mechanisms
 9. Admin bootstrap:
