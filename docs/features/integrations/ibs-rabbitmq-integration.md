@@ -626,6 +626,35 @@ connection and process the full event stream.
   `IBS_PASSWORD` environment variables as the periodic fetcher (see
   `docs/features/integrations/ibs-integration.md`)
 
+## Contract Verification Tooling
+
+`scripts/capture-ibs-rabbitmq.py` is a standalone developer utility that
+captures raw IBS RabbitMQ events for external contract verification per
+`docs/conventions.md` (External Integration Contract Verification). It
+connects to `rabbit.suse.de`, declares an exclusive transient queue, and
+writes unmodified event payloads and AMQP delivery metadata to an
+append-only JSONL file outside the repository worktree.
+
+Typical verification captures:
+
+- **`suse.obs.request.#`** (multi-day): captures `request.create`,
+  `request.state_change`, `request.review_changed`,
+  `request.review_wanted`, `request.reviews_done`, and
+  `request.comment` events (routing keys per OBS source at
+  `src/api/app/models/event/` — verified at IBS-deployed revision
+  `fb99b659ff`) for SR/RR payload structure, action cardinality,
+  field types/nullability, and state transitions.
+- **`suse.obs.#`** with `--max-samples` (short): inventories all
+  routing keys published on IBS, with volume and sample payloads.
+- **`suse.obs.package.commit`** (multi-day): verifies commit event
+  envelope, `project`/`package` types, `rev` shape, and any
+  IBS-specific extensions.
+
+Output files contain real IBS data and must not be committed. Only
+sanitized, minimized fixtures derived from captured evidence belong in
+`backend/tests/fixtures/`. See the script's `--help` and
+`CONTRIBUTING.md` (Developer Utilities) for usage.
+
 ## Dependencies
 
 - `docs/features/packages/package-model.md`: defines IBS workflow scope,
