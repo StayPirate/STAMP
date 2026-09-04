@@ -238,6 +238,34 @@ Sentinel follows a **specs-first** development model: feature specifications in 
 
 See [docs/conventions.md](docs/conventions.md) (Function Specification Completeness) for the full rules on what specifications cover and what remains an implementation choice.
 
+## Developer Utilities
+
+### IBS RabbitMQ Event Capture
+
+`scripts/capture-ibs-rabbitmq.py` connects to the IBS RabbitMQ broker and captures raw events into an append-only JSONL file. It is used for external contract verification during IBS integration development.
+
+The script manages its own dependencies via [PEP 723](https://peps.python.org/pep-0723/) inline metadata — no manual install required:
+
+```bash
+# See all options
+uv run scripts/capture-ibs-rabbitmq.py --help
+
+# Capture all request/review events for 3 days
+uv run scripts/capture-ibs-rabbitmq.py \
+    --routing-key 'suse.obs.request.#' \
+    --duration 259200
+
+# Inventory of every event type for 1 hour (5 samples per key)
+uv run scripts/capture-ibs-rabbitmq.py \
+    --routing-key 'suse.obs.#' \
+    --duration 3600 \
+    --max-samples 5
+```
+
+Output defaults to `${XDG_RUNTIME_DIR}/sentinel/ibs-rabbitmq/` (or `/tmp/sentinel-<uid>/ibs-rabbitmq/`). Override with `--output`.
+
+**Important**: output files contain unmodified IBS event payloads with real usernames and internal data. They must not be committed to the repository or shared externally. Only sanitized and minimized fixtures belong under `backend/tests/fixtures/`.
+
 ## Working with OpenCode
 
 This project includes first-class [OpenCode](https://opencode.ai) configuration.
