@@ -79,6 +79,31 @@ def _run_compose_bounded(
         )
 
 
+def _restart_compose_service(
+    service: str,
+    *,
+    compose_cmd: list[str],
+    file_args: list[str],
+    project: str,
+    wait_for_ready: bool = True,
+    timeout: float = 60.0,
+) -> subprocess.CompletedProcess[str]:
+    """Stop and start one compose service, optionally waiting for readiness."""
+    common_args = [*compose_cmd, "-p", project, *file_args]
+    stop_result = _run_compose_bounded(
+        [*common_args, "stop", service],
+        timeout,
+    )
+    if stop_result.returncode != 0:
+        return stop_result
+
+    wait_args = ["--wait"] if wait_for_ready else []
+    return _run_compose_bounded(
+        [*common_args, "up", "-d", *wait_args, service],
+        timeout,
+    )
+
+
 @pytest.hookimpl(tryfirst=True, wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
@@ -287,44 +312,30 @@ def compose_run() -> Callable[..., subprocess.CompletedProcess[str]]:
 
 @pytest.fixture(scope="session")
 def compose_restart() -> Callable[..., subprocess.CompletedProcess[str]]:
-    """Restart a service in the *primary* smoke stack by stopping its
-    container, removing it, and re-creating it from scratch.
+    """Restart a service in the *primary* smoke stack and wait for readiness.
 
-    Returns a callable ``(service, *, timeout=60.0) -> CompletedProcess``.
-    Unlike ``compose_exec``/``compose_run`` (which target a throwaway
-    process), this stops the running service and brings it back with
-    ``up -d`` — which recreates the container and therefore re-runs
-    the application entrypoint and lifespan. A plain ``compose restart``
-    would only issue SIGTERM+start inside the existing container,
-    which does not guarantee the FastAPI lifespan hook re-executes in
-    every container runtime. Does not wait for the restarted container
-    to become healthy; callers poll separately via ``wait_for_status``
-    below.
+    Returns a callable ``(service, *, wait_for_ready=True, timeout=60.0)
+    -> CompletedProcess``. The service is stopped and brought back with
+    ``up -d --wait`` by default, so a successful result means a service
+    with a healthcheck is healthy and a service without one is running.
+    Callers may set ``wait_for_ready=False`` only for scenarios that
+    intentionally expect startup to fail and observe that failure themselves.
+
+    A failed ``stop`` is returned immediately without attempting ``up``.
     """
     compose_cmd, file_args, project = _resolve_compose_invocation()
 
     def _restart(
-        service: str, *, timeout: float = 60.0
+        service: str, *, wait_for_ready: bool = True, timeout: float = 60.0
     ) -> subprocess.CompletedProcess[str]:
-        stop_cmd = [
-            *compose_cmd,
-            "-p",
-            project,
-            *file_args,
-            "stop",
+        return _restart_compose_service(
             service,
-        ]
-        _run_compose_bounded(stop_cmd, timeout)
-        up_cmd = [
-            *compose_cmd,
-            "-p",
-            project,
-            *file_args,
-            "up",
-            "-d",
-            service,
-        ]
-        return _run_compose_bounded(up_cmd, timeout)
+            compose_cmd=compose_cmd,
+            file_args=file_args,
+            project=project,
+            wait_for_ready=wait_for_ready,
+            timeout=timeout,
+        )
 
     return _restart
 

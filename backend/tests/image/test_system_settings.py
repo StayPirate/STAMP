@@ -180,7 +180,6 @@ def _restore_default_setting(
 def _default_setting_lifecycle(
     compose_run: Callable[..., subprocess.CompletedProcess[str]],
     compose_restart: Callable[..., subprocess.CompletedProcess[str]],
-    http_client: httpx.Client,
 ) -> Iterator[None]:
     """Ensure `system_setting`/`setting_audit_event` exist with the
     seeded default value before the test, and restore that exact known
@@ -203,9 +202,6 @@ def _default_setting_lifecycle(
         f"api restart failed during test cleanup "
         f"(stdout={restart_result.stdout!r} stderr={restart_result.stderr!r})"
     )
-    assert wait_for_status(http_client, expect_healthy=True, timeout=30.0), (
-        "api did not return to a healthy state during test cleanup"
-    )
 
 
 @pytest.mark.image
@@ -220,7 +216,6 @@ class TestBootstrapSelfHealingAndPreservation:
         self,
         compose_run: Callable[..., subprocess.CompletedProcess[str]],
         compose_restart: Callable[..., subprocess.CompletedProcess[str]],
-        http_client: httpx.Client,
     ) -> None:
         delete_result = compose_run(
             "api", "python", "-c", _DELETE_DEFAULT_SETTING_SCRIPT
@@ -234,9 +229,6 @@ class TestBootstrapSelfHealingAndPreservation:
         assert restart_result.returncode == 0, (
             f"api restart failed "
             f"(stdout={restart_result.stdout!r} stderr={restart_result.stderr!r})"
-        )
-        assert wait_for_status(http_client, expect_healthy=True, timeout=30.0), (
-            "api did not become healthy again after restart"
         )
 
         check_result = compose_run(
@@ -253,7 +245,6 @@ class TestBootstrapSelfHealingAndPreservation:
         self,
         compose_run: Callable[..., subprocess.CompletedProcess[str]],
         compose_restart: Callable[..., subprocess.CompletedProcess[str]],
-        http_client: httpx.Client,
     ) -> None:
         set_result = compose_run("api", "python", "-c", _SET_CUSTOM_VALUE_SCRIPT)
         assert set_result.returncode == 0, (
@@ -265,9 +256,6 @@ class TestBootstrapSelfHealingAndPreservation:
         assert restart_result.returncode == 0, (
             f"api restart failed "
             f"(stdout={restart_result.stdout!r} stderr={restart_result.stderr!r})"
-        )
-        assert wait_for_status(http_client, expect_healthy=True, timeout=30.0), (
-            "api did not become healthy again after restart"
         )
 
         check_result = compose_run(
@@ -301,10 +289,13 @@ class TestBootstrapFailurePreventsServing:
             f"stdout={drop_result.stdout!r} stderr={drop_result.stderr!r}"
         )
 
-        # `compose restart` itself only issues stop+start — it does not
-        # wait for the lifespan to complete, so a non-zero exit here is
-        # not expected even though the container will fail to boot.
-        compose_restart("api")
+        # This scenario expects startup to fail, so it opts out of the
+        # fixture's normal readiness wait and observes the negative result.
+        restart_result = compose_restart("api", wait_for_ready=False)
+        assert restart_result.returncode == 0, (
+            f"api restart command failed "
+            f"(stdout={restart_result.stdout!r} stderr={restart_result.stderr!r})"
+        )
 
         assert wait_for_status(http_client, expect_healthy=False, timeout=20.0), (
             "api unexpectedly became healthy despite the missing system_setting table"

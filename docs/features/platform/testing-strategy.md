@@ -1064,6 +1064,17 @@ detection would otherwise pick an unusable runtime. The script:
 4. Tears the stack down (`down -v`) unconditionally and exits with the
    pytest exit code.
 
+Tests that restart a primary-stack service use the shared
+`compose_restart` fixture. By default, the fixture returns successfully only
+after Compose reports the restarted service healthy when it defines a
+healthcheck, or running when it does not. A caller may disable this readiness
+wait only when the scenario intentionally expects startup to fail; that caller
+must then perform its own bounded observation of the expected failure.
+Consequently, callers do not add retries around an immediate `compose_exec` or
+repeat an HTTP health poll after a successful default restart. Service-specific
+effects that occur after container readiness, such as Beat schedule
+reconciliation, still require their own bounded behavioral poll.
+
 `docker-compose.smoke.yml` is **self-contained**: it defines one service
 per process role (`api`, `migrate`, `worker`, `beat`, `git-worker`), all
 sharing the same image per the "single Docker image, multiple
