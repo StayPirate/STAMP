@@ -774,7 +774,7 @@ does not change its runtime contents.
 
 #### SBOM format and scope
 
-The authoritative release inventory is CycloneDX 1.5 JSON generated with Syft
+The authoritative release inventory is CycloneDX 1.7 JSON generated with Syft
 from the final, locally loaded image after the image smoke test and before the
 first registry push. Scanning the final image covers installed Python and
 Debian packages while excluding builder-only tools and development
