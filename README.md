@@ -114,6 +114,16 @@ See the [Release Process](docs/deployment.md#release-process).
 See the [implementation milestones](https://github.com/StayPirate/sentinel/milestones)
 for detailed progress tracking.
 
+## Verifying Releases
+
+Each versioned container release includes a CycloneDX SBOM plus signed SBOM and
+build-provenance attestations bound to the immutable image digest. Download the
+SBOM from the GitHub Release assets and verify the image attestations with
+`gh attestation verify`. See
+[Release Supply-Chain Artifacts](docs/deployment.md#release-supply-chain-artifacts)
+for artifact meanings, locations, scope, limitations, and tested verification
+commands.
+
 ## Tech Stack
 
 | Component | Technology |

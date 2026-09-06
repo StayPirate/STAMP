@@ -61,5 +61,8 @@ Sentinel employs the following security practices:
 - **Static analysis**: ruff, bandit, and mypy (strict mode) run on every pull request
 - **Dependency auditing**: pip-audit checks for known vulnerabilities in dependencies
 - **Container scanning**: Trivy scans the Docker image weekly
+- **Release transparency**: versioned images include a CycloneDX SBOM and
+  signed SBOM/build-provenance attestations; see
+  [Release Supply-Chain Artifacts](docs/deployment.md#release-supply-chain-artifacts)
 - **Secret detection**: gitleaks runs in pre-commit hooks to prevent accidental secret commits
 - **Type safety**: strict static type checking catches type-related bugs before runtime

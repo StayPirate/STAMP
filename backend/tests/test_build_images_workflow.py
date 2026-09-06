@@ -23,7 +23,6 @@ import os
 import re
 import stat
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -52,31 +51,31 @@ if [[ "${1:-}" == "push" ]]; then
     fi
     exit 0
 fi
+if [[ "${1:-}" == "buildx" && "${2:-}" == "imagetools" && "${3:-}" == "inspect" ]]; then
+    if [[ "${4:-}" == *malformed* ]]; then
+        echo '{"digest":"not-a-digest"}'
+        exit 0
+    fi
+    if [[ "${4:-}" == *different* ]]; then
+        digest="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    else
+        digest="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    fi
+    printf '{"digest":"sha256:%s"}\n' "${digest}"
+    exit 0
+fi
 exit 0
 """
 
 
 def _push_loop_script() -> str:
-    """Extract the shell script executed by the image push step."""
-    lines = WORKFLOW_PATH.read_text(encoding="utf-8").splitlines()
-    marker_index = next(
-        index for index, line in enumerate(lines) if STEP_NAME_MARKER in line
-    )
-    run_index = next(
-        index
-        for index in range(marker_index, len(lines))
-        if lines[index].strip() == "run: |"
-    )
-    run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
-    script_lines: list[str] = []
-
-    for line in lines[run_index + 1 :]:
-        indentation = len(line) - len(line.lstrip())
-        if line.strip() and indentation <= run_indent:
-            break
-        script_lines.append(line)
-
-    return textwrap.dedent("\n".join(script_lines))
+    """Return the standalone script invoked by the image push step."""
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert STEP_NAME_MARKER in workflow
+    assert "run: ./scripts/publish-image.sh" in workflow
+    return (
+        Path(__file__).resolve().parents[2] / "scripts" / "publish-image.sh"
+    ).read_text(encoding="utf-8")
 
 
 def _install_docker_stub(bin_dir: Path) -> None:
@@ -100,6 +99,7 @@ def _run_push_loop(
         "SMOKE_IMAGE": "sentinel-backend:smoke",
         "IMAGE_TAGS": image_tags,
         "DOCKER_STUB_LOG": str(log_file),
+        "GITHUB_OUTPUT": str(tmp_path / "github-output"),
     }
     result = subprocess.run(
         ["bash", "-c", _push_loop_script()],
@@ -152,6 +152,36 @@ def test_push_loop_pushes_all_tags_when_all_succeed(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_push_loop_rejects_tags_with_different_registry_digests(
+    tmp_path: Path,
+) -> None:
+    tags = "ghcr.io/example/sentinel:1.2.3\nghcr.io/example/sentinel:different"
+
+    result, _ = _run_push_loop(tmp_path, image_tags=tags)
+
+    assert result.returncode != 0
+    assert "do not resolve to one digest" in result.stderr
+
+
+@pytest.mark.unit
+def test_push_loop_rejects_malformed_registry_digest(tmp_path: Path) -> None:
+    result, _ = _run_push_loop(
+        tmp_path, image_tags="ghcr.io/example/sentinel:malformed"
+    )
+
+    assert result.returncode != 0
+    assert "invalid digest" in result.stderr
+
+
+@pytest.mark.unit
+def test_push_loop_rejects_tag_list_without_publishable_entry(tmp_path: Path) -> None:
+    result, _ = _run_push_loop(tmp_path, image_tags="\n")
+
+    assert result.returncode != 0
+    assert "did not contain a publishable tag" in result.stderr
+
+
+@pytest.mark.unit
 def test_push_loop_skips_blank_tag_lines(tmp_path: Path) -> None:
     tags = "ghcr.io/example/sentinel:master\n\nghcr.io/example/sentinel:1.2.3"
 
@@ -185,10 +215,10 @@ _STEP_MARKER = re.compile(r"^ {6}- ")
 
 
 def _step_start_indices(lines: list[str]) -> list[int]:
-    """Indices of every top-level step marker line (`      - `) under
-    the job's `steps:` list. This workflow has a single job with a flat
-    step list at a fixed 6-space indent — matching the minimal,
-    dependency-free scanning approach already used by
+    """Indices of every top-level step marker line (`      - `).
+
+    Both jobs use flat step lists at a fixed 6-space indent. This matches
+    the minimal, dependency-free scanning approach already used by
     `test_workflow_timeouts.py` rather than introducing a PyYAML parse.
     """
     return [index for index, line in enumerate(lines) if _STEP_MARKER.match(line)]
@@ -241,3 +271,96 @@ def test_smoke_test_step_precedes_push_step() -> None:
         "The blocking smoke gate must run before the publish step so a "
         "failing smoke test prevents any push"
     )
+
+
+@pytest.mark.unit
+def test_sbom_gate_precedes_push_and_release_metadata_depends_on_build() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert (
+        workflow.index("name: Image smoke test (blocking gate)")
+        < workflow.index("name: Generate and validate release SBOM candidate")
+        < workflow.index(STEP_NAME_MARKER)
+    )
+    assert "if: startsWith(github.ref, 'refs/tags/v')" in workflow
+    assert "needs: build-backend" in workflow
+    assert workflow.count("create-storage-record: false") == 2
+    assert workflow.count("push-to-registry: true") == 2
+    assert "gh release upload" in workflow
+    assert "--clobber" in workflow
+
+
+@pytest.mark.unit
+def test_release_attestations_use_build_outputs_and_expected_predicates() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    attest_references = re.findall(
+        r"uses: actions/attest@([0-9a-f]{40}) # v[0-9]+\.[0-9]+\.[0-9]+",
+        workflow,
+    )
+    assert len(attest_references) == 2
+    assert len(set(attest_references)) == 1
+    assert (
+        workflow.count(
+            "subject-digest: ${{ needs.build-backend.outputs.image-digest }}"
+        )
+        == 2
+    )
+    assert (
+        "sbom-path: ${{ runner.temp }}/release-sbom/"
+        "${{ needs.build-backend.outputs.sbom-file-name }}" in workflow
+    )
+    assert "name: ${{ needs.build-backend.outputs.sbom-artifact-name }}" in workflow
+
+
+@pytest.mark.unit
+def test_build_job_exports_exact_release_metadata_outputs() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    outputs = workflow.split("    outputs:", 1)[1].split("    permissions:", 1)[0]
+
+    assert "image-name: ${{ steps.push.outputs.image_name }}" in outputs
+    assert "image-digest: ${{ steps.push.outputs.digest }}" in outputs
+    assert (
+        "sbom-artifact-name: ${{ steps.sbom-metadata.outputs.artifact_name }}"
+        in outputs
+    )
+    assert "sbom-file-name: ${{ steps.sbom-metadata.outputs.file_name }}" in outputs
+
+
+@pytest.mark.unit
+def test_release_metadata_job_has_only_required_write_permissions() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    job = workflow.split("  publish-release-metadata:", 1)[1]
+
+    permissions = job.split("    steps:", 1)[0]
+    permission_lines = {
+        line.strip()
+        for line in permissions.splitlines()
+        if line.strip().endswith(": write")
+    }
+    assert permission_lines == {
+        "attestations: write",
+        "contents: write",
+        "id-token: write",
+        "packages: write",
+    }
+
+
+@pytest.mark.unit
+def test_sbom_metadata_outputs_enter_shell_via_environment() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    step = workflow.split("- name: Generate and validate release SBOM candidate", 1)[
+        1
+    ].split("- name: Retain validated SBOM", 1)[0]
+
+    assert "SBOM_FILE_PATH: ${{ steps.sbom-metadata.outputs.file_path }}" in step
+    assert "SBOM_VERSION: ${{ steps.sbom-metadata.outputs.version }}" in step
+    run_block = step.split("run:", 1)[1]
+    assert "steps.sbom-metadata.outputs" not in run_block
+
+
+@pytest.mark.unit
+def test_sbom_subject_name_is_normalized_for_ghcr() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert '"${REGISTRY}/${IMAGE_NAME,,}"' in workflow

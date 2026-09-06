@@ -1004,6 +1004,12 @@ through the following required gates:
    pass. This gate verifies the inter-process fetcher pipeline using
    real worker and Beat processes against the test infrastructure. It
    is a separate invocation from the coverage-measured suite.
+10. **Release SBOM validation** — on pull requests, the final image built for
+    the image smoke gate MUST also produce a valid CycloneDX SBOM with the
+    required runtime-component coverage. The SBOM is retained as a short-lived
+    workflow artifact for inspection but is not published as release metadata.
+    This validation does not run in `ci.yml` on pushes to `master`;
+    `build-images.yml` performs the equivalent check for `master` and tag builds.
 
 The test execution environment MUST provide PostgreSQL 18 and Redis 8
 instances, exposed to the test harness via `TEST_DATABASE_URL` and
@@ -1094,6 +1100,34 @@ against that exact artifact, and only on success is the **same image
 digest** re-tagged and pushed. A failing smoke test prevents `latest`
 and semver tags from ever being published. The tested and published
 artifacts are guaranteed identical — no second build is performed.
+
+### SBOM Gate
+
+The pull-request `image-smoke` job reuses the image it already built and tested
+to exercise release SBOM generation without publishing an image, GitHub
+Release asset, or signed attestation. A shared repository script owns the gate
+so CI and release workflows cannot acquire separate implementations. Pinned
+tool versions live in one CI-consumed configuration file read by that script.
+The gate MUST:
+
+1. generate CycloneDX 1.5 JSON from `SMOKE_IMAGE` with the same pinned Syft
+   version used by the release workflow;
+2. validate it with the same pinned official CycloneDX validator image used by
+   the release workflow;
+3. run Sentinel's semantic validator, which checks the required CycloneDX
+   fields, non-empty inventory, all direct runtime Python dependencies declared
+   by `backend/pyproject.toml`, Debian runtime packages, and exclusion of direct
+   development-only Python dependencies declared by that same file; and
+4. upload the validated file as a seven-day workflow artifact so reviewers can
+   inspect the exact candidate output.
+
+The release workflow performs the same two validation mechanisms after its smoke
+gate and before pushing the image. Structural unit tests verify workflow
+permissions, release-only publication conditions, fixed artifact naming,
+step ordering, digest consistency, and fail-fast behavior. These tests mock
+publication commands; the first version-tag execution after implementation is
+the end-to-end verification of GitHub OIDC signing, the Attestations API, GHCR
+OCI attachment, and GitHub Release asset upload.
 
 ### Growth Rule
 

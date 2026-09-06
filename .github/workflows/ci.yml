@@ -259,3 +259,20 @@ jobs:
           # fail. See scripts/image-smoke.sh (COMPOSE_CMD).
           COMPOSE_CMD: "docker compose"
         run: ./scripts/image-smoke.sh --no-build
+      - name: Generate and validate release SBOM candidate
+        env:
+          IMAGE_NAME: ${{ github.repository }}
+        run: >-
+          ./scripts/sbom-gate.sh
+          "${SMOKE_IMAGE}"
+          "${RUNNER_TEMP}/sentinel-pr.sbom.cdx.json"
+          "ghcr.io/${IMAGE_NAME,,}"
+          "${GITHUB_SHA}"
+      - name: Upload release SBOM candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sentinel-sbom-candidate
+          path: ${{ runner.temp }}/sentinel-pr.sbom.cdx.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
