@@ -33,6 +33,7 @@ import pytest
 # operation (e.g. a poll loop for a broker-delivered task effect) pass an
 # explicit `timeout=` override.
 _DEFAULT_EXEC_TIMEOUT = 30.0
+_DIAGNOSTIC_TIMEOUT = 15.0
 
 
 def _resolve_compose_invocation() -> tuple[list[str], list[str], str]:
@@ -104,22 +105,62 @@ def _restart_compose_service(
     )
 
 
+def _capture_compose_diagnostics(phase: str) -> list[tuple[str, str]]:
+    """Capture bounded primary-stack state and logs for one failed phase."""
+    compose_cmd, file_args, project = _resolve_compose_invocation()
+    common_args = [*compose_cmd, "-p", project, *file_args]
+    commands = [
+        (
+            "compose ps --all",
+            [*common_args, "ps", "--all", "--format", "json"],
+        ),
+        (
+            "compose logs (tail=100)",
+            [
+                *common_args,
+                "logs",
+                "--timestamps",
+                "--tail=100",
+                "--no-color",
+            ],
+        ),
+    ]
+    sections: list[tuple[str, str]] = []
+
+    for title, command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_DIAGNOSTIC_TIMEOUT,
+            )
+            output = (
+                (result.stdout or "") + (result.stderr or "")
+            ).strip() or "[no output]"
+            if result.returncode != 0:
+                output = f"[diagnostic command exited {result.returncode}]\n{output}"
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            output = f"[diagnostic command failed: {exc!r}]"
+        sections.append((f"{title} ({phase})", output))
+
+    return sections
+
+
 @pytest.hookimpl(tryfirst=True, wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """Attach primary-stack container logs to the report of any failed
-    ``image``-marked test.
+    """Attach primary-stack state and logs to failed image-test phases.
 
-    Fires on every test in this suite, but only acts when the ``call``
-    phase (the test body itself, as opposed to fixture setup/teardown)
-    fails. Captures ``docker compose logs --tail=100`` with no service
-    filter — every service in the primary smoke stack, chronologically
-    interleaved, including a container that has already exited (e.g. a
-    crashed `beat` after a restart) — and attaches it as a report
-    section, so the failure is diagnosable directly from the pytest/CI
-    output without reproducing it or waiting for a container teardown
-    that would otherwise discard the evidence.
+    Fires on every test in this suite, but only acts when an image-marked
+    test's setup, call, or teardown phase fails. Captures ``compose ps
+    --all --format json`` plus timestamped ``compose logs --tail=100``
+    with no service filter. Including stopped containers preserves clean
+    and failed process exits; timestamped, interleaved logs preserve the
+    events that led to them. Both snapshots are attached as report
+    sections before the runner tears down the stack.
 
     Scoped to this suite only (`item.get_closest_marker("image") is not
     None`). This is load-bearing today, not just a safety net for a
@@ -139,39 +180,19 @@ def pytest_runtest_makereport(
     differently-named compose project, while this hook always targets
     the primary stack resolved by `_resolve_compose_invocation()`.
 
-    Best-effort: a timeout or missing compose binary yields a
-    placeholder note instead of masking the original test failure with
-    a second exception.
+    Best-effort: each diagnostic command has its own bounded timeout. A
+    non-zero exit retains its output with an annotation, while a timeout
+    or missing compose binary yields a placeholder note. Neither path
+    masks the original test failure.
     """
     report = yield
 
-    if report.when != "call" or not report.failed:
+    if not report.failed:
         return report
     if item.get_closest_marker("image") is None:
         return report
 
-    compose_cmd, file_args, project = _resolve_compose_invocation()
-    try:
-        result = subprocess.run(
-            [
-                *compose_cmd,
-                "-p",
-                project,
-                *file_args,
-                "logs",
-                "--tail=100",
-                "--no-color",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        logs = (result.stdout + result.stderr).strip()
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        logs = f"[container log capture failed: {exc!r}]"
-
-    if logs:
-        report.sections.append(("docker compose logs (tail=100)", logs))
+    report.sections.extend(_capture_compose_diagnostics(report.when))
     return report
 
 
