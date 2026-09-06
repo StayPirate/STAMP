@@ -1081,6 +1081,14 @@ repeat an HTTP health poll after a successful default restart. Service-specific
 effects that occur after container readiness, such as Beat schedule
 reconciliation, still require their own bounded behavioral poll.
 
+When an image-marked test fails during fixture setup, its test body, or fixture
+teardown, the suite captures the primary stack's complete container state and
+bounded recent logs before the runner destroys the stack. State output includes
+stopped containers; logs are timestamped, color-free, and tail-limited. Each
+diagnostic command has an independent finite timeout and degrades to a report
+note if collection itself fails, so diagnostics never mask the original test
+failure. Passing phases and non-image tests perform no diagnostic Compose calls.
+
 `docker-compose.smoke.yml` is **self-contained**: it defines one service
 per process role (`api`, `migrate`, `worker`, `beat`, `git-worker`), all
 sharing the same image per the "single Docker image, multiple
