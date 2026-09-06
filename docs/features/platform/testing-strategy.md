@@ -1118,7 +1118,7 @@ so CI and release workflows cannot acquire separate implementations. Pinned
 tool versions live in one CI-consumed configuration file read by that script.
 The gate MUST:
 
-1. generate CycloneDX 1.5 JSON from `SMOKE_IMAGE` with the same pinned Syft
+1. generate CycloneDX 1.7 JSON from `SMOKE_IMAGE` with the same pinned Syft
    version used by the release workflow;
 2. validate it with the same pinned official CycloneDX validator image used by
    the release workflow;

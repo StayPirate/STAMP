@@ -104,7 +104,7 @@ def test_sbom_gate_runs_pinned_tools_and_semantic_validator(tmp_path: Path) -> N
     assert "--source-name ghcr.io/example/sentinel" in docker_calls[1]
     assert "--source-version 1.2.3" in docker_calls[1]
     spec_version = tool_pins["CYCLONEDX_SPEC_VERSION"]
-    assert spec_version == "1.5"
+    assert spec_version == "1.7"
     assert (
         f"cyclonedx-json@{spec_version}=/output/candidate.cdx.json" in docker_calls[1]
     )

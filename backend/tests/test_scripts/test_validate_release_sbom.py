@@ -29,7 +29,7 @@ def _pyproject() -> dict[str, Any]:
 def _sbom() -> dict[str, Any]:
     return {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "serialNumber": "urn:uuid:12345678-1234-1234-1234-123456789abc",
         "metadata": {"component": {"type": "container", "name": "sentinel"}},
         "components": [
@@ -49,7 +49,7 @@ def _validate(sbom: dict[str, Any], pyproject: dict[str, Any] | None = None) -> 
     validate_release_sbom(
         sbom,
         pyproject or _pyproject(),
-        expected_version="1.5",
+        expected_version="1.7",
         expected_subject="sentinel",
     )
 
@@ -64,7 +64,7 @@ def test_validate_release_sbom_accepts_runtime_inventory() -> None:
     ("field", "value", "message"),
     [
         ("bomFormat", "SPDX", "format must be CycloneDX"),
-        ("specVersion", "1.7", "specVersion must be 1.5"),
+        ("specVersion", "1.5", "specVersion must be 1.7"),
         ("serialNumber", None, "serialNumber must be"),
         ("serialNumber", "not-a-uuid", "serialNumber must be"),
     ],
@@ -184,7 +184,7 @@ def test_main_reads_files_and_reports_success(
             str(sbom_path),
             str(pyproject_path),
             "--expected-version",
-            "1.5",
+            "1.7",
             "--expected-subject",
             "sentinel",
         ],
@@ -213,7 +213,7 @@ def test_main_rejects_non_object_json_root(
             str(sbom_path),
             str(pyproject_path),
             "--expected-version",
-            "1.5",
+            "1.7",
             "--expected-subject",
             "sentinel",
         ],
