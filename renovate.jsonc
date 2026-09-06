@@ -32,6 +32,26 @@
         "#\\s*renovate:\\s*depName=(?<depName>[a-z0-9._-]+)\\s+\\w+\\s*=\\s*\\w+Container\\(\"[a-z0-9._/-]+:(?<currentValue>[^\"]+)\"\\)"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Syft image used by both release-SBOM workflow paths",
+      "managerFilePatterns": ["/.github/sbom-tools\\.env$/"],
+      "matchStrings": [
+        "SYFT_IMAGE=anchore/syft:v(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "anchore/syft"
+    },
+    {
+      "customType": "regex",
+      "description": "CycloneDX CLI validator image used by both release-SBOM workflow paths",
+      "managerFilePatterns": ["/.github/sbom-tools\\.env$/"],
+      "matchStrings": [
+        "CYCLONEDX_CLI_IMAGE=cyclonedx/cyclonedx-cli:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "cyclonedx/cyclonedx-cli"
     }
   ],
   "packageRules": [

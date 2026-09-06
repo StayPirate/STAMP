@@ -162,3 +162,35 @@ def test_drift_check_accepts_well_formed_minor_only_version(tmp_path: Path) -> N
 
     assert result.returncode == 0
     assert result.stdout == ""
+
+
+@pytest.mark.unit
+def test_pull_request_image_job_generates_validated_sbom_candidate() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    assert "if: github.event_name == 'pull_request'" in workflow
+    assert "name: Generate and validate release SBOM candidate" in workflow
+    assert "./scripts/sbom-gate.sh" in workflow
+    assert "name: sentinel-sbom-candidate" in workflow
+    assert '"ghcr.io/${IMAGE_NAME,,}"' in workflow
+    assert "retention-days: 7" in workflow
+    assert "actions/attest@" not in workflow
+    assert "gh release upload" not in workflow
+    assert workflow.index("name: Image smoke test (blocking gate)") < workflow.index(
+        "name: Generate and validate release SBOM candidate"
+    )
+
+
+@pytest.mark.unit
+def test_ci_and_release_workflows_share_sbom_gate() -> None:
+    release_workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "build-images.yml"
+    ).read_text(encoding="utf-8")
+    ci_workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    gate_command = "./scripts/sbom-gate.sh"
+    assert ci_workflow.count(gate_command) == 1
+    assert release_workflow.count(gate_command) == 1

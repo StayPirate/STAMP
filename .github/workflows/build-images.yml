@@ -20,6 +20,7 @@ permissions: {}
 env:
   REGISTRY: ghcr.io
   SMOKE_IMAGE: sentinel-backend:smoke
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   build-backend:
@@ -37,6 +38,11 @@ jobs:
        github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      image-name: ${{ steps.push.outputs.image_name }}
+      image-digest: ${{ steps.push.outputs.digest }}
+      sbom-artifact-name: ${{ steps.sbom-metadata.outputs.artifact_name }}
+      sbom-file-name: ${{ steps.sbom-metadata.outputs.file_name }}
     permissions:
       contents: read
       packages: write
@@ -101,7 +107,34 @@ jobs:
           COMPOSE_CMD: "docker compose"
         run: ./scripts/image-smoke.sh --no-build
 
-      # Only reached if the smoke gate passed. Publish the SAME local
+      - name: Select SBOM metadata
+        id: sbom-metadata
+        env:
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: ./scripts/select-sbom-metadata.sh
+
+      - name: Generate and validate release SBOM candidate
+        env:
+          SBOM_FILE_PATH: ${{ steps.sbom-metadata.outputs.file_path }}
+          SBOM_VERSION: ${{ steps.sbom-metadata.outputs.version }}
+        run: >-
+          ./scripts/sbom-gate.sh
+          "${SMOKE_IMAGE}"
+          "${SBOM_FILE_PATH}"
+          "${REGISTRY}/${IMAGE_NAME,,}"
+          "${SBOM_VERSION}"
+
+      - name: Retain validated SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.sbom-metadata.outputs.artifact_name }}
+          path: ${{ steps.sbom-metadata.outputs.file_path }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+      # Only reached if the smoke and SBOM gates passed. Publish the SAME local
       # image artifact by re-tagging it with each metadata-action tag and
       # pushing. No second docker/build-push-action build is performed, so
       # the published digest is identical to the tested one.
@@ -113,13 +146,55 @@ jobs:
       # loop iteration's exit code. The here-string (<<<) avoids piping
       # into a subshell so set -e inside the loop body works as expected.
       - name: Push tested image (same digest)
+        id: push
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          set -euo pipefail
-          while read -r tag; do
-            [ -z "$tag" ] && continue
-            echo "Tagging and pushing $tag"
-            docker tag "${SMOKE_IMAGE}" "$tag"
-            docker push "$tag"
-          done <<<"${IMAGE_TAGS}"
+        run: ./scripts/publish-image.sh
+
+  publish-release-metadata:
+    name: Publish Release Metadata
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build-backend.outputs.sbom-artifact-name }}
+          path: ${{ runner.temp }}/release-sbom
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest release SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.build-backend.outputs.image-name }}
+          subject-digest: ${{ needs.build-backend.outputs.image-digest }}
+          sbom-path: ${{ runner.temp }}/release-sbom/${{ needs.build-backend.outputs.sbom-file-name }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest release build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.build-backend.outputs.image-name }}
+          subject-digest: ${{ needs.build-backend.outputs.image-digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Upload SBOM to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SBOM_PATH: ${{ runner.temp }}/release-sbom/${{ needs.build-backend.outputs.sbom-file-name }}
+        run: gh release upload "${GITHUB_REF_NAME}" "${SBOM_PATH}" --clobber
