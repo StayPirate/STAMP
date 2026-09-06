@@ -825,11 +825,21 @@ only to organization-owned repositories.
 #### Consumer discovery and verification
 
 The downloadable inventory is listed under **Assets** on the version's GitHub
-Release. Consumers should deploy an exact version and resolve it to its digest
-before verification:
+Release. Consumers should use an exact version tag only to discover the image,
+then retain the digest-qualified reference returned by the registry for both
+verification and deployment:
+
+The commands below require Docker with the Buildx CLI plugin, `jq`, and an
+authenticated GitHub CLI (`gh`).
 
 ```bash
-IMAGE="ghcr.io/staypirate/sentinel:0.6.0"
+set -euo pipefail
+
+TAGGED_IMAGE="ghcr.io/staypirate/sentinel:0.6.0"
+IMAGE_NAME="${TAGGED_IMAGE%:*}"
+DIGEST="$(docker buildx imagetools inspect "$TAGGED_IMAGE" \
+  --format '{{json .Manifest}}' | jq -er '.digest')"
+IMAGE="${IMAGE_NAME}@${DIGEST}"
 docker pull "$IMAGE"
 
 # Verify SLSA build provenance from Sentinel's release workflow.
@@ -842,10 +852,20 @@ gh attestation verify "oci://$IMAGE" \
   --repo StayPirate/sentinel \
   --signer-workflow StayPirate/sentinel/.github/workflows/build-images.yml \
   --predicate-type https://cyclonedx.org/bom
+
+# Configure every runtime role to use this exact $IMAGE value for deployment.
 ```
 
-Add `--bundle-from-oci` to either command to retrieve and verify the registry-
-side OCI copy instead of querying GitHub's Attestations API.
+Add `--bundle-from-oci` to either verification command to retrieve and verify
+the registry-side OCI copy instead of querying GitHub's Attestations API.
+
+An exact-version tag such as `0.6.0` expresses release identity, but remains a
+registry lookup reference and can technically be repointed unless a separate
+publisher-side control prevents it. Reusing the resolved `name@sha256:digest`
+value closes the tag-movement window between verification and deployment and
+keeps an existing deployment on the verified artifact. It does not by itself
+prevent the publisher from associating the same nominal version with another
+digest later; exact-version tag immutability is a separate release control.
 
 Verification checks the Sigstore-backed signer identity, predicate type, and
 subject digest. Build provenance establishes which repository commit and
