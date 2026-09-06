@@ -215,10 +215,10 @@ _STEP_MARKER = re.compile(r"^ {6}- ")
 
 
 def _step_start_indices(lines: list[str]) -> list[int]:
-    """Indices of every top-level step marker line (`      - `) under
-    the job's `steps:` list. This workflow has a single job with a flat
-    step list at a fixed 6-space indent — matching the minimal,
-    dependency-free scanning approach already used by
+    """Indices of every top-level step marker line (`      - `).
+
+    Both jobs use flat step lists at a fixed 6-space indent. This matches
+    the minimal, dependency-free scanning approach already used by
     `test_workflow_timeouts.py` rather than introducing a PyYAML parse.
     """
     return [index for index, line in enumerate(lines) if _STEP_MARKER.match(line)]
@@ -294,10 +294,12 @@ def test_sbom_gate_precedes_push_and_release_metadata_depends_on_build() -> None
 def test_release_attestations_use_build_outputs_and_expected_predicates() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert (
-        workflow.count("uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6")
-        == 2
+    attest_references = re.findall(
+        r"uses: actions/attest@([0-9a-f]{40}) # v[0-9]+\.[0-9]+\.[0-9]+",
+        workflow,
     )
+    assert len(attest_references) == 2
+    assert len(set(attest_references)) == 1
     assert (
         workflow.count(
             "subject-digest: ${{ needs.build-backend.outputs.image-digest }}"

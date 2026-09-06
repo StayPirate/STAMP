@@ -11,6 +11,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "sbom-gate.sh"
+TOOLS_ENV_PATH = REPO_ROOT / ".github" / "sbom-tools.env"
 
 DOCKER_STUB = """\
 #!/usr/bin/env bash
@@ -45,6 +46,14 @@ exit "${UV_STUB_EXIT:-0}"
 def _install_stub(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _tool_pins() -> dict[str, str]:
+    return dict(
+        line.split("=", 1)
+        for line in TOOLS_ENV_PATH.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    )
 
 
 def _run_gate(
@@ -87,15 +96,21 @@ def _run_gate(
 @pytest.mark.unit
 def test_sbom_gate_runs_pinned_tools_and_semantic_validator(tmp_path: Path) -> None:
     result, docker_calls, uv_calls, output = _run_gate(tmp_path)
+    tool_pins = _tool_pins()
 
     assert result.returncode == 0
     assert docker_calls[0] == f"save --output {output}.image.tar sentinel:test"
-    assert "anchore/syft:v1.51.1@sha256:" in docker_calls[1]
+    assert tool_pins["SYFT_IMAGE"] in docker_calls[1]
     assert "--source-name ghcr.io/example/sentinel" in docker_calls[1]
     assert "--source-version 1.2.3" in docker_calls[1]
-    assert "cyclonedx-json@1.5=/output/candidate.cdx.json" in docker_calls[1]
-    assert "cyclonedx/cyclonedx-cli:0.33.1@sha256:" in docker_calls[2]
-    assert "--input-version v1_5 --fail-on-errors" in docker_calls[2]
+    spec_version = tool_pins["CYCLONEDX_SPEC_VERSION"]
+    assert spec_version == "1.5"
+    assert (
+        f"cyclonedx-json@{spec_version}=/output/candidate.cdx.json" in docker_calls[1]
+    )
+    assert tool_pins["CYCLONEDX_CLI_IMAGE"] in docker_calls[2]
+    cli_version = f"v{spec_version.replace('.', '_')}"
+    assert f"--input-version {cli_version} --fail-on-errors" in docker_calls[2]
     assert len(uv_calls) == 1
     assert "scripts/validate_release_sbom.py" in uv_calls[0]
     assert "--expected-subject ghcr.io/example/sentinel" in uv_calls[0]
