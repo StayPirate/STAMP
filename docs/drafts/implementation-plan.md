@@ -126,9 +126,9 @@ A piece is complete only when all applicable conditions below are satisfied:
    fixed in the same PR.
 7. **Manual verification addressed.** The PR satisfies the manual verification
    evidence requirement in `docs/conventions.md` (Pull Request Requirements).
-8. **Image smoke coverage addressed.** Apply the Growth Rule in
-   `docs/features/platform/testing-strategy.md` in the introducing piece; the
-   PR records the result or why it is not applicable.
+8. **Image artifact risk addressed.** Apply the Artifact-Risk Rule in
+   `docs/features/platform/testing-strategy.md`; the PR records the applicable
+   artifact risk and image verification, or why neither applies.
 9. **PR and merge gates passed.** The PR satisfies `docs/conventions.md` and
    Guardrail 25, is squash-merged, and closes its issue. Project automation
    should then reflect Done; Project status is presentation, not an additional
@@ -289,8 +289,8 @@ elaboration rule.
 
 ## Prep Effort — Image Testing Setup
 
-**Status: Completed (2026-07-29).** Established black-box testing of the built
-OCI image. The durable contract lives in
+**Status: Completed (2026-07-29).** Established testing of the built OCI image.
+The durable artifact-gate contract lives in
 `docs/features/platform/testing-strategy.md` (Image / Container Smoke
 Testing).
 
@@ -301,7 +301,7 @@ Delivered artifacts:
 - `scripts/image-smoke.sh`
 - blocking build → smoke → push gate in `.github/workflows/build-images.yml`
 
-Image-suite growth follows the authoritative Growth Rule in
+Image-suite growth follows the authoritative Artifact-Risk Rule in
 `docs/features/platform/testing-strategy.md`.
 
 ## Phase 0 — Infrastructure Completion and Validation
@@ -632,11 +632,12 @@ blockers.
 | `P4-34` | User deactivation impact, API, and CLI | `P4-32` | identity user service/management |
 | `P4-35` | Settings PATCH and CVSS recalculation task | `SG4-12`, `P4-12` | system settings, CVSS scoring |
 
-Each piece owns focused tests and the image-suite Growth Rule consequences of
+Each piece owns focused tests and applies the image-suite Artifact-Risk Rule to
 the artifacts it introduces. Model pieces own their migrations and migration
-tests. API pieces own permission, validation, error, OpenAPI, and image
-coverage. Task pieces own task registration, cross-loop engine disposal, and
-sync-entry-point structural tests.
+tests. API pieces own permission, validation, error, and OpenAPI coverage;
+being externally observable does not itself require image coverage. Task
+pieces own task registration, cross-loop engine disposal, and sync-entry-point
+structural tests.
 
 `P4-05` is the sole implementation owner for the committed mapping data,
 canonical key grammar, CPE parser, package-relative loader, process cache,
@@ -693,13 +694,14 @@ ingestion, and remaining non-WIP administrative surfaces are completed.
 | `P6-01` | Real-ingestion CVE → Ticket → package-tree E2E verification | Phase 5 | ingestion and package specs |
 | `P6-02` | Fetcher-to-CVE source failure drill-down E2E verification | Phase 5, `P3-06` | fetcher operations and CVE service specs |
 | `P6-03` | Full local identity/ticket interaction E2E verification | `P4-33`, `P4-34` | identity and ticket specs |
-| `P6-04` | Cross-surface image smoke assertions not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
+| `P6-04` | Cross-surface artifact verification not naturally owned by one introducing piece | `P6-01` through `P6-03` | `platform/testing-strategy.md` |
 | `P6-05` | Operational release checkpoint and manual acceptance | `P6-04` | deployment and testing docs |
 
 Every endpoint is introduced with its owning service slice in Phase 4, before
-real fetchers are enabled in Phase 5. Phase 6 does not postpone endpoint smoke
+real fetchers are enabled in Phase 5. Phase 6 does not postpone focused API
 coverage that belongs to an earlier introducing PR; it contains only scenarios
-that genuinely span multiple already-merged surfaces.
+that genuinely span multiple already-merged surfaces. Image coverage applies
+only when the Artifact-Risk Rule identifies an OCI or packaged-topology risk.
 
 ## Phase 7+ — Integrations Requiring WIP Specifications
 
@@ -728,8 +730,8 @@ single `Phase 7+` label is a roadmap placeholder, not a branch or PR scope.
 
 ## Progress Log
 
-- **2026-07-29 — Prep Effort completed.** Added image smoke compose,
-  black-box tests, runner, and blocking build/publish gate. No seam introduced.
+- **2026-07-29 — Prep Effort completed.** Added image smoke Compose tests,
+  runner, and blocking build/publish gate. No seam introduced.
 - **2026-07-30 — Phase 0 completed.** Added `structlog`, `cvss`, and
   `celery-redbeat`; validated tests, lint, Alembic, image build, and Python 3.13
   drift checks. No domain code or seam introduced.

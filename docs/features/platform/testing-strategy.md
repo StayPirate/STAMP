@@ -16,10 +16,25 @@ implementation is owned by `.github/workflows/ci.yml` and
 
 ---
 
-## Test Pyramid
+## Test Pyramid and Suite Taxonomy
 
 Sentinel uses a three-tier test pyramid. Each tier has distinct
 characteristics and isolation rules.
+
+The unit, integration, and end-to-end tiers form the **default in-process
+suite**. `pytest` without a marker filter runs this suite; "default" describes
+its normal invocation, not a claim that it includes every test boundary.
+
+Two separately invoked suites sit outside the pyramid:
+
+- the **system suite** starts real local application processes and verifies
+  inter-process communication against test infrastructure; and
+- the **image suite** verifies the final OCI artifact and acts as a blocking
+  publication gate.
+
+Neither separate suite contributes to coverage measured for the default
+in-process suite. They complement the pyramid rather than forming fourth and
+fifth functional tiers.
 
 ### Tier 1 — Unit Tests
 
@@ -73,13 +88,13 @@ HTTP layer.
 
 Tests without an explicit marker are treated as **integration** tests.
 This is the safe default — a test that accidentally omits its marker
-gets the full database fixture rather than failing mysteriously.
+gets the database fixture rather than failing mysteriously.
 
 This is a classification convention, not a pytest enforcement
 mechanism — `pytest -m integration` selects only tests explicitly
 marked `@pytest.mark.integration`, not all unmarked tests. To run
 integration tests plus unmarked tests, use `pytest` without a marker
-filter (the full suite includes them).
+filter (the default in-process suite includes them).
 
 The `asyncio_mode = "auto"` setting in `pyproject.toml` applies to all
 tiers (all async tests run without manual `@pytest.mark.asyncio`
@@ -100,7 +115,7 @@ markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
-    "image: Black-box container smoke tests (require Docker Engine and Docker Compose; excluded from default run)",
+    "image: OCI artifact and publication-gate tests (require Docker Engine and Docker Compose; excluded from default run)",
     "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 ```
@@ -883,7 +898,7 @@ verified with unit-level mock tests asserting call order — see
 Developers (and OpenCode agents) run tests locally using:
 
 ```bash
-# Full suite
+# Default in-process suite
 cd backend && pytest
 
 # Unit tests only (fast feedback)
@@ -984,9 +999,9 @@ through the following required gates:
 2. **Static type checking** — strict-mode type checking MUST pass over
    application code (`app/`), tests (`tests/`), and Alembic migration
    scripts (`alembic/`).
-3. **Full test suite with coverage threshold** — the complete test suite
-   MUST pass with a minimum line-coverage percentage enforced as a
-   blocking gate.
+3. **Default in-process suite with coverage threshold** — the unit,
+   integration, and e2e suite MUST pass with a minimum line-coverage
+   percentage enforced as a blocking gate.
 4. **Migration drift detection** — model definitions and migration
    scripts MUST remain in sync; the build fails if they diverge.
 5. **OpenAPI schema verification** — the OpenAPI schema generation MUST
@@ -998,10 +1013,9 @@ through the following required gates:
 7. **Shell script lint/format and workflow validation** — all tracked
    shell scripts and git hooks MUST pass lint and format checks; all
    GitHub Actions workflow files MUST pass syntax validation.
-8. **Container image smoke test** — on pull requests, the built Docker
-   image MUST pass a black-box smoke test that verifies the container
-   starts correctly and responds to health checks. This gate is blocking
-   on PRs only (not on pushes to `master`).
+8. **Container image artifact gate** — on pull requests, the final OCI
+   candidate MUST pass the artifact-risk checks defined below. This gate is
+   blocking on PRs only (not on pushes to `master`).
 9. **Local process system test** — the system suite (`-m system`) MUST
    pass. This gate verifies the inter-process fetcher pipeline using
    real worker and Beat processes against the test infrastructure. It
@@ -1027,16 +1041,19 @@ dedicated database per worker (see Worker and Test Isolation, above).
 
 ## Image / Container Smoke Testing
 
-The three-tier pyramid above runs **in-process** against the local
-virtual environment. It never exercises the built Docker image, so it
-cannot catch failures that only manifest when the image runs as a
-container: files not copied into the image (`alembic/`, `certs/`),
-missing OS-level binaries, a broken entrypoint/`CMD`, non-root
-permission issues, or process-role startup failures. The **image smoke
-suite** is a distinct, black-box suite (outside the three-tier pyramid)
-that fills this gap by running the actual image as a container and
-asserting against it over HTTP (and, where a check requires it, via
-`compose exec`).
+The three-tier pyramid runs against the local installation and cannot prove
+that the final OCI image has the right contents, metadata, permissions, or
+runtime topology. The **image suite** fills that gap. It is an
+artifact-verification and publication gate, not a second product/API test
+suite and not another tier of the functional pyramid.
+
+Assertions prefer an external observation through the candidate's normal
+runtime boundary. A small gray-box probe through `compose exec` or an
+equivalent one-shot container is permitted when it is the narrowest sound way
+to inspect a physical artifact property such as a file, runtime user, installed
+command or import, task registration, or certificate store. Large injected
+programs that recreate service, API, schema, or algorithm tests are not
+justified merely by running inside the container.
 
 ### Location and Marker
 
@@ -1044,58 +1061,105 @@ asserting against it over HTTP (and, where a check requires it, via
 |----------|-------|
 | Location | `backend/tests/image/` (one file per concern/role) |
 | Marker | `@pytest.mark.image` |
-| Isolation | Black-box: talks to a running container over the network. Does NOT use the in-process `db_session` / `client` fixtures |
+| Isolation | Final-image containers and self-contained infrastructure. Does NOT use the in-process `db_session` / `client` fixtures |
 | Default run | **Excluded** — `pyproject.toml` sets `addopts = "-m 'not image and not system'"` |
 
 Because the marker is excluded from the default invocation, `cd backend
 && uv run pytest` never attempts to start containers, and — since
 coverage is measured on that same default invocation — the image suite
 **does not contribute to, and is not counted toward, the ≥95% coverage
-gate**. This is intentional: it is a black-box suite running against a
-separately-built artifact, not against the instrumented local venv.
+gate**. This is intentional: it runs against a separately built artifact,
+not the instrumented local installation.
+
+### Artifact-Risk Rule
+
+A change adds or extends image-suite coverage only when it introduces an
+**artifact risk**: a plausible failure that focused tests against the local
+installation would not detect because the final image or its real runtime
+topology differs. Applicable risks include:
+
+- OCI contents and omitted runtime assets, including Alembic files,
+  certificates, package resources, required binaries, and exclusion of test
+  code;
+- image metadata and filesystem behavior, including the runtime user,
+  non-root permissions, `PATH`, working directory, installed entry points,
+  default command, and application importability;
+- a documented process-role command and the runtime dependencies needed for
+  that role to complete startup;
+- real container networking or dependency topology;
+- execution of migrations from the candidate image and external migration-job
+  ordering before runtime startup; and
+- behavior that genuinely changes across a real server or process boundary,
+  including one representative broker-delivered path when needed to prove the
+  packaged process topology.
+
+The following normally remain at focused in-process or system boundaries, even
+though they are observable over HTTP, CLI, or a process interface:
+
+- API business semantics, envelopes, filtering, sorting, pagination, and
+  authentication/authorization/error matrices;
+- mutation, audit, transaction, idempotency, locking, and concurrency rules;
+- exhaustive schema, index, and constraint assertions;
+- detailed CLI option, rendering, interactive, and domain-error behavior;
+- configuration validators, client defaults, and algorithms reproducible at a
+  focused boundary; and
+- reconciliation semantics whose only artifact-specific claim is that the
+  packaged process starts and invokes already-tested logic.
+
+When exact coverage exists at a focused integration, e2e, CLI, model,
+migration, task, lifespan, or system boundary, it MAY replace an image
+assertion if the behavior is not artifact-sensitive. The change that removes
+the image assertion MUST record the exact parity first. Facts that exist only
+in the OCI artifact, such as physical exclusion of test code, cannot be
+replaced by source-level or system-suite coverage.
 
 ### Execution
 
-The suite runs **exclusively** via `scripts/image-smoke.sh`, used
-identically in local development and in CI (single source of truth for
-"how to smoke-test the image"). The supported harness environment is Docker
-Engine with the Docker Compose CLI plugin (`docker compose`) version 2.7.0 or
-later. Version 2.7.0 is the minimum because the stack uses `compose up --wait`
-with the one-shot `migrate` service and
-`condition: service_completed_successfully`; earlier versions do not reliably
-apply that dependency condition while waiting. The runner obtains the Compose
-version from `docker compose version --short`, extracts its numeric
-major/minor/patch core, and compares those components numerically; an optional
-leading `v` and vendor/build suffix do not affect the comparison.
+The suite runs exclusively through this chain:
 
-The script fails before any build or stack operation when the Docker CLI is
-missing, the daemon is unreachable, the Compose plugin is missing, or its
-version is unparseable or earlier than 2.7.0. It also inspects the product
-identity reported by the server through `docker version`, rather than trusting
-the CLI binary name or context label, and accepts only an identity that reports
-Docker Engine or Docker Desktop. A Podman API endpoint reached through the
-Docker CLI or a `podman-docker` compatibility wrapper is unsupported and fails
-this check. The script does not auto-detect Podman, `podman-compose`, or the
-standalone `docker-compose` command. `COMPOSE_CMD` and equivalent command
-overrides are not supported; every runner and fixture operation uses the
-validated `docker compose` invocation. The script:
+```text
+scripts/image-smoke.sh -> Docker Compose -> pytest on the host
+```
 
-1. Builds the image once from `backend/Dockerfile` (skippable with
-   `--no-build` when a pre-built image is supplied via `SENTINEL_IMAGE`).
-2. Brings up the self-contained smoke stack — `docker-compose.smoke.yml`
-   — with `compose up -d --wait`, blocking until every active service
-   passes its `healthcheck` (or, for one-shot services like `migrate`
-   that have no healthcheck, exits cleanly).
-3. Runs `uv run pytest -m image tests/image/` against the running stack.
-4. Tears the stack down (`down -v`) unconditionally and exits with the
-   pytest exit code when pytest ran, or the earlier failing command's exit
-   code when it did not.
+The same runner is used locally and in CI. The supported harness environment
+is Docker Engine or Docker Desktop with the Docker Compose CLI plugin
+(`docker compose`) version 2.7.0 or later. The runner validates the CLI,
+server identity, daemon reachability, and Compose version before build or stack
+operations. Podman compatibility endpoints, `podman-compose`, standalone
+`docker-compose`, and command-selection overrides are not supported.
 
-If build or initial stack bring-up fails before pytest starts, the failing
-Compose command's output remains the diagnostic record and the script exits
-non-zero after teardown; the pytest failure-phase diagnostic hook does not run.
-Once pytest starts, the bounded state-and-log capture below applies to failed
-test phases.
+Compose version acceptance compares numeric major, minor, and patch components
+against 2.7.0. An optional leading `v` and vendor or build suffix do not alter
+the comparison; an unparseable version fails preflight.
+
+Host pytest reaches the API through a daemon-allocated port bound explicitly
+to the pytest host's loopback interface. A remote Docker context that cannot
+provide that local reachability MUST fail during preflight rather than timing
+out against host `localhost`. A daemon endpoint located on another host is
+incompatible; local Docker Engine or Docker Desktop contexts that expose the
+published port on the pytest host remain supported.
+
+Each invocation owns a unique Compose project name and its corresponding
+containers, network, volumes, and disposable projects. It MUST pass the
+resolved project identity, candidate-image identity, and API endpoint to every
+fixture and diagnostic command. No invocation may discover, address, or tear
+down resources belonging to another invocation.
+
+The runner:
+
+1. resolves or builds the candidate image once;
+2. records an immutable local image identity and requires every application
+   role and one-shot probe to use that candidate without a rebuild or pull;
+3. starts a fresh self-contained primary Compose stack;
+4. waits for the role-readiness evidence below;
+5. runs `uv run pytest -m image tests/image/` on the host;
+6. captures diagnostics when any phase fails; and
+7. removes every owned project and volume.
+
+`--no-build` may use a pre-built image supplied through `SENTINEL_IMAGE`, but
+the same identity requirements apply. A failure before pytest preserves the
+failing phase as the primary result and receives the same project-aware
+diagnostics as a pytest failure.
 
 This Docker-only requirement applies to the repository's image-smoke harness,
 not to the published OCI artifact; see Deployment-agnostic packaging in
@@ -1103,34 +1167,72 @@ not to the published OCI artifact; see Deployment-agnostic packaging in
 provisioning, and the image-smoke suite all standardize on Docker, but remain
 separate execution paths with distinct lifecycle contracts.
 
-Tests that restart a primary-stack service use the shared
-`compose_restart` fixture. By default, the fixture returns successfully only
-after Compose reports the restarted service healthy when it defines a
-healthcheck, or running when it does not. A caller may disable this readiness
-wait only when the scenario intentionally expects startup to fail; that caller
-must then perform its own bounded observation of the expected failure.
-Consequently, callers do not add retries around an immediate `compose_exec` or
-repeat an HTTP health poll after a successful default restart. Service-specific
-effects that occur after container readiness, such as Beat schedule
-reconciliation, still require their own bounded behavioral poll.
+### Primary and Disposable Topologies
 
-When an image-marked test fails during fixture setup, its test body, or fixture
-teardown, the suite captures the primary stack's complete container state and
-bounded recent logs before the runner destroys the stack. State output includes
-stopped containers; logs are timestamped, color-free, and tail-limited. Each
-diagnostic command has an independent finite timeout and degrades to a report
-note if collection itself fails, so diagnostics never mask the original test
-failure. Passing phases and non-image tests perform no diagnostic Compose calls.
+`docker-compose.smoke.yml` defines a self-contained primary stack with its own
+PostgreSQL and Redis services, the one-shot migration job, and each implemented
+and deployable application role. All application roles use the exact candidate
+image. Infrastructure services publish no host ports; only the API is exposed,
+on the invocation's loopback-bound dynamic port. A future process role gains an
+image assertion when it becomes implemented and deployable, not while its
+service remains speculative or commented out.
 
-`docker-compose.smoke.yml` is **self-contained**: it defines one service
-per process role (`api`, `migrate`, `worker`, `beat`, `git-worker`), all
-sharing the same image per the "single Docker image, multiple
-entrypoints" architecture, **plus its own `postgres` + `redis`**. The
-infra services publish **no host ports** (they are reached over the
-compose network only) and the `api` service is published on a non-8000
-host port (`IMAGE_SMOKE_PORT`, default 18000). This lets the smoke stack
-run even while `scripts/dev-env.sh` (which owns host ports 5432/6379) and
-a local `uvicorn` dev server (port 8000) are running — no port conflict.
+The primary stack starts from fresh volumes and is predominantly
+observational. Tests MUST NOT drop and recreate its tables, corrupt and repair
+its Redis state, or restart services merely to repeat service, lifespan, or
+reconciliation contracts. Manual repair of primary PostgreSQL or Redis state
+is forbidden because later assertions would depend on the repair succeeding.
+
+Failed migration, deliberately failed process startup, destructive
+infrastructure lifecycle, or another irreducibly mutable artifact scenario
+runs in a dedicated disposable Compose project. Each disposable project owns
+fresh resources, independent finite bounds, diagnostics, and cleanup. A full
+Compose project per ordinary assertion is not required.
+
+### Process Readiness
+
+Container existence or process-running state alone is not readiness when
+required initialization continues afterward. The gate uses bounded positive
+evidence appropriate to each active role:
+
+- **Migration:** the one-shot migration job exits successfully after upgrading
+  fresh PostgreSQL. An incomplete or failed migration prevents application
+  roles from starting.
+- **API:** the server responds through the published loopback endpoint with
+  readiness evidence that depends on both PostgreSQL and Redis. The gate also
+  exercises the image's default API command instead of always replacing it in
+  Compose.
+- **Worker:** a Celery control round-trip succeeds and a representative set of
+  application tasks is registered after startup bootstrap completes.
+- **Beat:** bounded evidence shows startup bootstrap and schedule reconciliation
+  completed; merely observing the Beat process still running is insufficient.
+
+Readiness MUST NOT use arbitrary fixed sleeps, invent a fake Beat ping, enable
+a Celery result backend, or make a Redis key the authoritative record that a
+process is ready. Redis remains ephemeral and PostgreSQL remains the source of
+persistent truth.
+
+### Lifecycle Bounds, Diagnostics, and Failure Precedence
+
+Preflight, image resolution/build, initial stack startup, per-role readiness,
+pytest, every disposable project, diagnostics, and teardown each have an
+explicit finite bound. The CI job timeout is only the final safety net. Polls
+use monotonic deadlines and produce the last relevant observation on timeout.
+
+For startup, readiness, pytest, or disposable-project failure, diagnostics are
+captured before teardown and include, when available:
+
+- the resolved candidate image identity;
+- Compose project identity and complete container state, including stopped
+  containers;
+- bounded recent timestamped, color-free logs;
+- migration exit evidence; and
+- the phase, command, and captured output that failed.
+
+Each diagnostic command is independently bounded. Diagnostic failure is
+reported but never replaces the primary failure. Cleanup always runs and also
+cannot hide the primary failure; however, a cleanup failure makes an otherwise
+successful run fail. Passing phases do not perform diagnostic collection.
 
 ### CI Gate
 
@@ -1141,6 +1243,11 @@ against that exact artifact, and only on success is the **same image
 digest** re-tagged and pushed. A failing smoke test prevents `latest`
 and semver tags from ever being published. The tested and published
 artifacts are guaranteed identical — no second build is performed.
+
+The SBOM gate runs only after artifact verification succeeds and scans that
+same candidate identity. Image smoke, SBOM generation/validation, and
+publication therefore form one ordered chain; none may silently substitute a
+different tag resolution, pulled image, or rebuilt artifact.
 
 ### SBOM Gate
 
@@ -1170,52 +1277,34 @@ publication commands; the first version-tag execution after implementation is
 the end-to-end verification of GitHub OIDC signing, the Attestations API, GHCR
 OCI attachment, and GitHub Release asset upload.
 
-### Growth Rule
+### Representative Gate Evidence
 
-The image smoke suite is not a fixed set of checks — it grows with the
-system. **Whenever a change introduces new container-observable
-behavior — a new endpoint, a new process role, a new startup validation,
-or a new runtime dependency (e.g. an OS binary) — the same change MUST
-add a corresponding assertion under `backend/tests/image/` (and, if it
-introduces a new process role, the corresponding service in
-`docker-compose.smoke.yml`).** This is the container-level counterpart of
-the Mandatory Test Scenarios rule for in-process tests (see Guardrail 6
-in `AGENTS.md`): container-observable behavior is not done until the
-image suite covers it.
+The gate keeps the smallest set of observations that localize the following
+artifact facts without duplicating focused behavior tests:
 
-#### System Settings Growth Requirements
+- expected non-root execution, required runtime imports/assets, Alembic files,
+  certificate file and system trust store, installed CLI entry points, and
+  physical exclusion of test code;
+- successful fresh migration and migration-gated application startup, plus a
+  disposable failed-migration ordering scenario;
+- external `/health`, `/ready`, and `/openapi.json` availability through the
+  candidate's default API command;
+- startup of each implemented API, worker, and Beat role from the same image,
+  with representative worker task registration and Beat post-reconciliation
+  readiness;
+- one representative broker-delivered task producing a durable PostgreSQL
+  outcome without a Celery result backend; and
+- only the smallest justified process-command-specific startup failure, in a
+  disposable project, when positive startup plus focused tests cannot establish
+  the artifact risk.
 
-The work item that introduces system-setting persistence and bootstrap adds
-image-smoke assertions that:
-
-- the one-shot migration completes before the API starts and seeds
-  `default_cvss_version = "3.1"`;
-- a failed migration prevents API startup;
-- deleting the required row and restarting the API restores `"3.1"` before
-  the API becomes healthy and creates no `SettingAuditEvent`;
-- restarting the API preserves an existing `"4.0"` value; and
-- a controlled bootstrap failure prevents the API from becoming healthy or
-  serving requests.
-
-One controlled image-level bootstrap failure is sufficient to prove the
-container-observable fail-fast contract. Database-unavailable and
-schema-unavailable propagation are covered by focused service/lifespan tests;
-separate image scenarios for every underlying failure are not required.
-
-The persistence/bootstrap work item also adds focused unit and integration
-coverage for first, repeated, and concurrent bootstrap; custom-value
-preservation; absent-row getter failure without fallback; database/schema
-exception propagation; zero initialization audit events; typed setting audit
-validation; flush visibility without commit; and mutation/audit rollback
-atomicity.
-
-The work item that introduces the two settings read APIs applies the standard
-API endpoint scenarios below and adds image-smoke assertions for representative
-authorized responses from both endpoints. Its focused coverage includes exact
-setting-key filtering, repeatable enum filtering, actor filtering, inclusive
-date normalization, inverted and malformed ranges, filtered totals, empty and
-out-of-range pages, equal-timestamp ordering, and the missing-required-setting
-`500 INTERNAL_ERROR` response.
+One observation MAY establish multiple closely related facts when failure
+localization remains clear. Detailed API responses, system-setting self-healing
+and preservation, RedBeat reconciliation algorithms, CLI domain errors, and
+Celery configuration validation remain in their focused suites. The image gate
+does not restart the primary stack to repeat them. Database-unavailability
+variants of worker and Beat startup failure remain in focused startup-handler
+tests.
 
 ---
 
@@ -1256,9 +1345,9 @@ cd backend && uv run pytest -m system tests/system/
 ```
 
 This invocation is included in the **pre-push hook** (after the
-ordinary full suite) and as a **separate blocking CI gate** on every
+default in-process suite) and as a **separate blocking CI gate** on every
 pull request and push to `master`. The CI environment provides the
-same `TEST_DATABASE_URL` and `TEST_REDIS_URL` used by the ordinary
+same `TEST_DATABASE_URL` and `TEST_REDIS_URL` used by the default in-process
 suite.
 
 ### Test-Only Fetcher
@@ -1388,22 +1477,22 @@ assertion already failed.
 
 ### Relationship to Other Test Suites
 
-The local process system suite is **additive**. It does NOT replace:
+The local process system suite complements focused unit and integration tests;
+it does not replace their lifecycle, bootstrap, acquisition, reconciliation,
+or serialization assertions. It MAY replace image coverage for real-process or
+broker behavior under the Artifact-Risk Rule above, which requires exact parity
+and absence of artifact sensitivity before removal.
 
-- Focused unit and integration tests for `BaseFetcher` lifecycle,
-  config bootstrap, task acquisition, reconciliation, or API
-  serialization (owned by their respective introducing work items).
-- Image smoke tests for shipped-image startup, task registration,
-  reconciliation behavior, and fail-fast assertions.
-- The production-exclusion assertion that the shipped image and
-  normal API output do not contain the test-only fetcher (owned by
-  the image smoke suite).
+The image suite retains only the artifact-specific remainder, such as startup
+of a packaged role or physical exclusion of the test-only fetcher source from
+the shipped image. It does not retain detailed process behavior solely because
+that behavior was once exercised in a container.
 
 ### Automation
 
 The system suite MUST be executed automatically:
 
-- **Pre-push hook**: invoked after the ordinary full suite completes
+- **Pre-push hook**: invoked after the default in-process suite completes
   successfully.
 - **CI pipeline**: a separate blocking invocation alongside the
   existing gates (not merged into the coverage-measured run).
@@ -1765,14 +1854,14 @@ CLI commands MUST be tested against the Output Contract in
 - `--help` at the root, group, and command levels and root `--version` exit 0
   without loading application settings or opening database/Redis connections
 
-When the installed CLI first becomes container-visible, image smoke coverage
-asserts `sentinel --help`, `sentinel --version`, `python -m app.cli --help`,
-parity of the two entry points, and discovery of every command introduced by
-that implementation piece. Later CLI pieces extend command discovery and add
-representative non-destructive paths. Interactive mutation verification may be
-recorded manually when a pseudo-terminal would add disproportionate harness
-complexity; entry-point and command discovery remain automated under the Image
-Smoke Growth Rule.
+The image suite verifies only CLI artifact risks: the installed `sentinel`
+entry point is on `PATH`, package version metadata is readable, and
+`python -m app.cli` reaches the packaged module. The gate MAY reuse a root-help
+invocation as a compact command-discovery signal, but command discovery is not
+a separate required artifact assertion. Detailed subcommand discovery,
+options, output, interactive behavior, domain errors, and mutation workflows
+remain in focused CLI tests; adding a command does not automatically require
+another image test.
 
 ---
 
