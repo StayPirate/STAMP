@@ -1258,13 +1258,13 @@ These rules apply to:
 - **Quoting**: quote all variable expansions (`"${var}"`). The only
   accepted exception is an intentional word-split of an assembled command
   string, which MUST carry a narrowly-scoped, justified
-  `# shellcheck disable=SC2086` directive (see `scripts/dev-env.sh` for the
-  canonical pattern)
+  `# shellcheck disable=SC2086` directive
 - **Diagnostics and exit codes**: write error and warning messages to
   stderr; reserve stdout for results. Return a non-zero exit code on
   failure and propagate the exit code of the meaningful inner command
   when the script is a wrapper (e.g., `scripts/image-smoke.sh` exits with
-  the pytest exit code)
+  the pytest exit code, or with the earlier failing command's exit code if
+  pytest never ran)
 
 ### Static Analysis — shellcheck
 

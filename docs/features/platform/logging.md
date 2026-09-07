@@ -46,7 +46,7 @@ here.
    aggregation, retention, and backup of log *output* are the
    deployment platform's responsibility — see `docs/deployment.md`
    (Log Aggregation) for how each supported deployment context
-   (Docker/Podman, Kubernetes) surfaces and retains this stream. This
+   (container runtime, Kubernetes) surfaces and retains this stream. This
    directly answers the question raised in `docs/drafts/ideas.md`
    ("where are logs saved / rotated / backed up"): **nowhere, by the
    application; the platform owns it.**

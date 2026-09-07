@@ -148,8 +148,9 @@ Two provisioning modes, selected automatically:
    per test session and destroyed at the end. Zero manual setup required
    — the developer just runs `pytest`.
 
-   Prerequisite: Docker or Podman must be available locally (already
-   required by `scripts/dev-env.sh`).
+   Prerequisite: Docker Engine or Docker Desktop must be available locally.
+   Testcontainers uses the Docker daemon; Podman compatibility endpoints are
+   not a supported test-provisioning path.
 
 ### Schema Setup
 
@@ -898,7 +899,8 @@ cd backend && pytest -k "test_set_track_status"
 
 When `TEST_DATABASE_URL` or `TEST_REDIS_URL` is not set, the corresponding
 shared fixture automatically starts a PostgreSQL 18 or Redis 8 container
-via testcontainers. Containers are reused for the test session. Redis
+via testcontainers through the Docker daemon. Containers are reused for the
+test session. Redis
 tests require no application `REDIS_URL` or `CELERY_BROKER_URL`; leaving
 `TEST_REDIS_URL` unset is the normal local setup.
 
@@ -1096,12 +1098,10 @@ Once pytest starts, the bounded state-and-log capture below applies to failed
 test phases.
 
 This Docker-only requirement applies to the repository's image-smoke harness,
-not to the published OCI artifact. The deployment-agnostic packaging contract
-in `docs/architecture.md` remains unchanged: Docker, Podman, and Kubernetes
-consume the same image, with no runtime-specific application code or image
-variant. `scripts/dev-env.sh` and testcontainers provisioning retain their
-separate local-runtime contracts; they are not alternate ways to execute the
-image-smoke suite.
+not to the published OCI artifact; see Deployment-agnostic packaging in
+`docs/architecture.md`. Repository-managed local development, testcontainers
+provisioning, and the image-smoke suite all standardize on Docker, but remain
+separate execution paths with distinct lifecycle contracts.
 
 Tests that restart a primary-stack service use the shared
 `compose_restart` fixture. By default, the fixture returns successfully only

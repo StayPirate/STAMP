@@ -167,9 +167,12 @@ volumes used by CVE fetchers, may use persistent storage for performance when
 the application remains correct without them.
 
 **Deployment-agnostic packaging.** The application must not depend on a
-specific runtime orchestrator. Docker, Podman, and Kubernetes must consume the
-same images without environment-specific variants. Runtime differences belong
-in deployment configuration, not in application code.
+specific runtime orchestrator. Sentinel publishes one OCI image without
+environment-specific variants. Consumers may run that image with Docker,
+Podman, Kubernetes, or another compatible runtime at their discretion; runtime
+differences belong in deployment configuration, not in application code.
+Repository-managed development and test tooling may standardize on Docker
+without making the published artifact Docker-specific.
 
 **API-first.** The REST API is the primary interface. Every operation needed by
 any consumer (web UI, CLI, scripts, or third-party integrations) must be

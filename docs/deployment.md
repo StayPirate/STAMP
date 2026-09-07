@@ -65,8 +65,8 @@ For architectural decisions and design constraints, see
 
 | Component | Minimum Version | Purpose |
 |-----------|----------------|---------|
-| Docker or Podman | Docker 24+ / Podman 4+ | Container runtime |
-| Docker Compose CLI plugin | 2.7.0+ | Development and CI image-smoke harness only; requires Docker Engine or Docker Desktop |
+| Docker Engine or Docker Desktop | No independent floor | Repository-managed local development and test container runtime; must support the required Compose plugin |
+| Docker Compose CLI plugin | 2.7.0+ | Repository-managed development and test orchestration |
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
@@ -77,6 +77,13 @@ For architectural decisions and design constraints, see
 | [shfmt](https://github.com/mvdan/sh) | match `ci.yml` (shell-lint) | Optional, development only — formats shell scripts via the pre-commit hook. Match the CI version to avoid formatting drift. See `docs/conventions.md` (Shell Scripting) |
 | [actionlint](https://github.com/rhysd/actionlint) | match `ci.yml` (shell-lint) | Optional, development only — validates GitHub Actions workflows locally before pushing. See `docs/conventions.md` (Shell Scripting) |
 | [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
+
+Repository tooling uses one Docker Compose minimum rather than maintaining
+different local toolchains. The image-smoke harness determines the 2.7.0 floor
+because it relies on `up --wait` and `service_completed_successfully`; simpler
+development-stack commands use that same supported baseline. See
+`docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing)
+for the full justification.
 
 ### Network Access (Staging/Production)
 
@@ -142,6 +149,11 @@ All environments share the same `SSO_CLIENT_ID` and `SSO_CLIENT_SECRET`
 ## Environments
 
 ### Local Development
+
+Repository-managed local development uses Docker Engine or Docker Desktop with
+the Docker Compose CLI plugin. Podman compatibility wrappers, standalone
+`docker-compose`, and command-selection overrides are not supported. This
+tooling policy is separate from the deployment-agnostic OCI image contract.
 
 #### Quick Start
 
@@ -1168,7 +1180,7 @@ alembic revision --autogenerate -m "description"
 - Never run migrations automatically on API container startup
 - Always run migrations as a separate step before deploying new code
 - In Kubernetes: use a Job that runs before the Deployment rollout
-- In Docker/Podman: run as a one-shot container before starting services
+- In a container runtime: run as a one-shot container before starting services
 
 #### Migration Failure Recovery
 
@@ -1255,7 +1267,7 @@ hard dependency. Feature-specific fallback behavior remains defined in
 three commands named above is defined in
 `docs/features/identity/user-service.md`.
 
-**Docker / Podman Compose pattern.** The recommended pattern generalizes
+**Container runtime pattern.** The Docker example below generalizes
 the one-off container approach already used for Alembic migrations
 (see [Database Migrations](#database-migrations)):
 
@@ -1271,6 +1283,10 @@ docker exec -it <container> sentinel <group> <command> ...
 Interactive commands (`manage-user create`, `manage-user set-password`)
 prompt for a hidden password and require a TTY — the `-it` flags shown
 above are mandatory for these commands.
+
+Consumers deploying the OCI image through another compatible runtime may adapt
+these runtime-shell commands to their chosen environment. Sentinel does not
+require a runtime-specific image variant.
 
 **Kubernetes pattern.** The deployment target (Kubernetes, Docker
 Compose, or another orchestrator) remains undecided (see
@@ -1469,14 +1485,14 @@ and is retained in each deployment context — the application itself
 never writes, rotates, or persists log files; it only writes to
 stdout/stderr.
 
-#### Docker / Podman
+#### Container runtimes
 
 Logs are captured via the container engine's logging driver. For
 local rotation without any external log shipper, configure the
-`json-file` (Docker) or `local` (Podman) logging driver with
-`max-size`/`max-file` options in `docker-compose.yml` — this is a
-platform/engine configuration concern, not something Sentinel
-implements. Example:
+runtime's bounded logging driver with rotation options. The repository-managed
+Docker Compose environment uses `json-file` with `max-size`/`max-file` options
+in `docker-compose.yml` — this is a platform/engine configuration concern, not
+something Sentinel implements. Example:
 
 ```yaml
 services:

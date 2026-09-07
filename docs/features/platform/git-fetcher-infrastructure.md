@@ -175,7 +175,7 @@ $GIT_CLONE_BASE_DIR/
 ```
 
 The base directory MUST be backed by persistent storage in containerized
-deployments (named volume in Docker/Podman, PersistentVolumeClaim in
+deployments (named volume in a container runtime, PersistentVolumeClaim in
 Kubernetes). The storage is treated as a **recoverable cache**, not as a
 source of truth — if lost or corrupted, the fetcher re-clones
 automatically (see Recovery below).
@@ -214,7 +214,7 @@ volume mounted. This is achieved via a dedicated Celery queue:
   routing. This ensures on-demand fetches for git-based fetchers
   reach the worker with the volume mounted
 
-In single-worker deployments (local dev, simple Docker/Podman), all
+In single-worker deployments (local dev, simple container runtime), all
 queues are consumed by the same worker process and no explicit routing
 configuration is needed.
 

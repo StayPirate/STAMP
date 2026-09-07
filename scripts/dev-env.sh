@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sentinel Development Environment Manager
 #
-# Auto-detects Podman or Docker and manages development services
-# (PostgreSQL, Redis) defined in docker-compose.yml.
+# Uses Docker Engine or Docker Desktop with the Docker Compose CLI plugin to
+# manage development services (PostgreSQL, Redis) defined in docker-compose.yml.
 #
 # Usage: ./scripts/dev-env.sh <command>
 #
@@ -11,7 +11,7 @@
 #   down     Stop and remove development services
 #   logs     Follow service logs (Ctrl+C to stop)
 #   ps       Show status of development services
-#   status   Show detected runtime and service status
+#   status   Show Docker versions and service status
 #   help     Show this help message
 
 set -euo pipefail
@@ -20,18 +20,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 PROJECT_NAME="sentinel"
+MINIMUM_COMPOSE_VERSION="2.7.0"
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
     RED='\033[0;31m'
     GREEN='\033[0;32m'
-    YELLOW='\033[0;33m'
     BLUE='\033[0;34m'
     NC='\033[0m' # No Color
 else
     RED=''
     GREEN=''
-    YELLOW=''
     BLUE=''
     NC=''
 fi
@@ -44,111 +43,92 @@ log_success() {
     echo -e "${GREEN}[Sentinel]${NC} $1"
 }
 
-log_warn() {
-    echo -e "${YELLOW}[Sentinel]${NC} $1" >&2
-}
-
 log_error() {
     echo -e "${RED}[Sentinel]${NC} $1" >&2
 }
 
-# --- Runtime Detection ---
+# --- Docker preflight ---
 
-RUNTIME=""
-COMPOSE_CMD=""
+DOCKER_VERSION=""
+COMPOSE_VERSION=""
 
-detect_runtime() {
-    # Priority 1: Podman
-    if command -v podman &>/dev/null; then
-        # Check if running rootless
-        local rootless
-        rootless=$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || echo "unknown")
+version_is_at_least() {
+    local version="$1"
+    local minimum_major="$2"
+    local minimum_minor="$3"
+    local minimum_patch="$4"
 
-        if [[ "${rootless}" == "true" ]]; then
-            log_info "Detected Podman (rootless)"
-        elif [[ "${rootless}" == "false" ]]; then
-            log_warn "Detected Podman (rootful). Rootless mode is recommended."
-            log_warn "See: https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md"
-        else
-            log_info "Detected Podman"
-        fi
-
-        RUNTIME="podman"
-
-        # Check for compose: native plugin first, then podman-compose
-        if podman compose version &>/dev/null; then
-            COMPOSE_CMD="podman compose"
-            log_info "Using Podman Compose plugin"
-            return 0
-        elif command -v podman-compose &>/dev/null; then
-            COMPOSE_CMD="podman-compose"
-            log_info "Using podman-compose"
-            return 0
-        else
-            log_error "Podman is installed but no Compose tool was found."
-            {
-                echo ""
-                echo "  Install one of the following:"
-                echo ""
-                echo "    Option A: Podman Compose plugin (if available for your Podman version)"
-                echo "      Check your distribution's package manager for 'podman-plugins' or similar."
-                echo ""
-                echo "    Option B: podman-compose (Python package)"
-                echo "      pip install podman-compose"
-                echo ""
-            } >&2
-            return 1
-        fi
+    if [[ ! "${version}" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)([-+._][0-9A-Za-z.+_-]+)?$ ]]; then
+        return 2
     fi
 
-    # Priority 2: Docker
-    if command -v docker &>/dev/null; then
-        log_info "Detected Docker"
-        RUNTIME="docker"
+    local major="${BASH_REMATCH[1]}"
+    local minor="${BASH_REMATCH[2]}"
+    local patch="${BASH_REMATCH[3]}"
 
-        # Check for compose: plugin first, then standalone
-        if docker compose version &>/dev/null; then
-            COMPOSE_CMD="docker compose"
-            log_info "Using Docker Compose plugin"
-            return 0
-        elif command -v docker-compose &>/dev/null; then
-            COMPOSE_CMD="docker-compose"
-            log_info "Using docker-compose (standalone)"
-            return 0
-        else
-            log_error "Docker is installed but no Compose tool was found."
-            {
-                echo ""
-                echo "  Install Docker Compose:"
-                echo "    https://docs.docker.com/compose/install/"
-                echo ""
-            } >&2
-            return 1
-        fi
+    ((major > minimum_major)) && return 0
+    ((major < minimum_major)) && return 1
+    ((minor > minimum_minor)) && return 0
+    ((minor < minimum_minor)) && return 1
+    ((patch >= minimum_patch))
+}
+
+check_docker_environment() {
+    if ! command -v docker &>/dev/null; then
+        log_error "Docker CLI not found."
+        log_error "Install Docker Engine or Docker Desktop with Docker Compose ${MINIMUM_COMPOSE_VERSION} or later."
+        return 1
     fi
 
-    # Nothing found
-    log_error "No container runtime found."
-    {
-        echo ""
-        echo "  To run the Sentinel development environment, install one of the following:"
-        echo ""
-        echo "    Option 1 (recommended): Podman + Compose (rootless)"
-        echo "      https://podman.io/getting-started/installation"
-        echo "      pip install podman-compose"
-        echo ""
-        echo "    Option 2: Docker + Docker Compose"
-        echo "      https://docs.docker.com/engine/install/"
-        echo ""
-    } >&2
-    return 1
+    local server_identity
+    if ! server_identity=$(docker version --format '{{.Server.Platform.Name}}|{{(index .Server.Components 0).Name}}'); then
+        log_error "Docker Engine is unreachable."
+        log_error "Start Docker Engine or Docker Desktop and verify the active Docker context."
+        return 1
+    fi
+
+    # Docker Engine may leave Platform.Name empty and identify its first
+    # server component as exactly "Engine".
+    case "${server_identity}" in
+        Docker\ Engine* | Docker\ Desktop* | \|Engine) ;;
+        *)
+            log_error "Unsupported container server '${server_identity:-unknown}'."
+            log_error "Repository development tooling requires Docker Engine or Docker Desktop."
+            return 1
+            ;;
+    esac
+
+    if ! DOCKER_VERSION=$(docker version --format '{{.Server.Version}}'); then
+        log_error "Unable to determine the Docker Engine version."
+        return 1
+    fi
+    if [[ -z "${DOCKER_VERSION}" ]]; then
+        log_error "Docker Engine returned an empty version."
+        return 1
+    fi
+
+    if ! COMPOSE_VERSION=$(docker compose version --short); then
+        log_error "Docker Compose CLI plugin not found."
+        log_error "Install Docker Compose ${MINIMUM_COMPOSE_VERSION} or later for the 'docker compose' command."
+        return 1
+    fi
+    if version_is_at_least "${COMPOSE_VERSION}" 2 7 0; then
+        :
+    else
+        local version_status=$?
+        if ((version_status == 2)); then
+            log_error "Unable to parse Docker Compose version '${COMPOSE_VERSION}'."
+        else
+            log_error "Docker Compose ${COMPOSE_VERSION} is unsupported; ${MINIMUM_COMPOSE_VERSION} or later is required."
+        fi
+        return 1
+    fi
 }
 
 # --- Commands ---
 
 compose_exec() {
-    # shellcheck disable=SC2086
-    ${COMPOSE_CMD} -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" "$@"
+    docker compose -f "${COMPOSE_FILE}" -p "${PROJECT_NAME}" "$@"
 }
 
 cmd_up() {
@@ -185,8 +165,8 @@ cmd_ps() {
 
 cmd_status() {
     echo ""
-    log_info "Runtime: ${RUNTIME}"
-    log_info "Compose: ${COMPOSE_CMD}"
+    log_info "Docker Engine: ${DOCKER_VERSION}"
+    log_info "Docker Compose: ${COMPOSE_VERSION}"
     echo ""
     compose_exec ps
 }
@@ -202,7 +182,7 @@ cmd_help() {
     echo "  down     Stop and remove development services"
     echo "  logs     Follow service logs (Ctrl+C to stop)"
     echo "  ps       Show status of development services"
-    echo "  status   Show detected runtime and service status"
+    echo "  status   Show Docker versions and service status"
     echo "  help     Show this help message"
     echo ""
 }
@@ -217,7 +197,7 @@ main() {
         exit 0
     fi
 
-    if ! detect_runtime; then
+    if ! check_docker_environment; then
         exit 1
     fi
 

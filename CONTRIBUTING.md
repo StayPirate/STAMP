@@ -38,9 +38,8 @@ Please report unacceptable behavior to security@suse.com.
 ### Prerequisites
 
 - **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
-- **Podman** or **Docker** (for local PostgreSQL and Redis)
-- **Docker Engine or Docker Desktop with Docker Compose 2.7.0+** (for the
-  image-smoke suite only)
+- **Docker Engine or Docker Desktop with Docker Compose 2.7.0+** (for local
+  PostgreSQL and Redis, automatic test provisioning, and the image-smoke suite)
 
 ### Quick Start
 
@@ -177,9 +176,10 @@ uv run pytest -k "test_create_user"
 cd .. && make smoke
 ```
 
-The image-smoke harness supports Docker Compose only. This does not change the
-published OCI image's compatibility with Docker, Podman, and Kubernetes, or the
-Podman support in `scripts/dev-env.sh` and testcontainers-based tests.
+Repository-managed development and test tooling supports Docker Compose only.
+This does not make the published OCI image Docker-specific: consumers may
+deploy the same image with Podman, Kubernetes, or another compatible runtime at
+their discretion.
 
 ### Test Requirements
 
