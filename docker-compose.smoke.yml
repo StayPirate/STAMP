@@ -9,18 +9,17 @@
 #
 # The canonical Docker Compose runner is scripts/image-smoke.sh.
 #
-# Why self-contained: postgres/redis here publish NO host ports — the
+# Why self-contained: postgres/redis here publish NO host ports - the
 # services reach each other over the compose network only. This lets the
 # smoke test run even while the dev-infra stack (scripts/dev-env.sh) is
 # up on the standard host ports 5432/6379, with no conflict. The only
-# published port is the api service, and it defaults to a non-8000 host
-# port (IMAGE_SMOKE_PORT, default 18000) so it does not clash with a
-# uvicorn dev server a developer may be running locally on 8000.
+# published port is the api service. Docker allocates its host port and
+# binds it only to 127.0.0.1; the runner discovers that mapping atomically.
 #
-# The application image is built once from ./backend and tagged as
-# ${SENTINEL_IMAGE}. CI sets SENTINEL_IMAGE to a pre-built, already-loaded
-# tag and runs the runner with --no-build so the tested artifact is
-# byte-identical to the published one (see
+# The runner builds or selects the application image once, resolves its
+# immutable local ID, and supplies IMAGE_SMOKE_IMAGE_ID. App services have
+# no build definition or mutable fallback, so they cannot substitute a
+# different artifact (see
 # docs/features/platform/testing-strategy.md, Image / Container Smoke
 # Testing).
 #
@@ -35,9 +34,7 @@
 # `git-worker` remains commented out (Phase 5, git-based CVE fetchers).
 
 x-app-common: &app-common
-  image: ${SENTINEL_IMAGE:-sentinel-backend:smoke}
-  build:
-    context: ./backend
+  image: ${IMAGE_SMOKE_IMAGE_ID:?IMAGE_SMOKE_IMAGE_ID is required}
   # Minimum configuration app/config.py requires to start without
   # crashing. JWT_SECRET_KEY is a fictional, fixed test value (>=32
   # chars) — NOT a real secret; safe to commit.
@@ -55,7 +52,8 @@ x-app-common: &app-common
 services:
   # Dedicated infra for the smoke stack. No host ports are published, so
   # this coexists with scripts/dev-env.sh (which owns 5432/6379 on the
-  # host) without conflict.
+  # host) without conflict. Keep these image references aligned with the
+  # bounded pre-pull list in scripts/image-smoke.sh.
   postgres:
     image: postgres:18
     environment:
@@ -92,11 +90,10 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    # Published on a non-8000 host port by default to avoid clashing with
-    # a local uvicorn dev server. pytest reaches it via
-    # IMAGE_SMOKE_BASE_URL, so the host port number is transparent.
+    # The omitted host port requests an atomic daemon allocation. An
+    # explicit host IP prevents exposure beyond the pytest host loopback.
     ports:
-      - "${IMAGE_SMOKE_PORT:-18000}:8000"
+      - "127.0.0.1::8000"
     # Liveness probe: the runtime image is python:slim (no curl), so the
     # probe uses urllib instead. Probes /health (see
     # docs/features/platform/health-endpoints.md), which performs no

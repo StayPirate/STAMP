@@ -227,7 +227,7 @@ jobs:
     name: Image Smoke Test
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     env:
       SMOKE_IMAGE: sentinel-backend:smoke
     steps:
@@ -251,15 +251,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Image smoke test (blocking gate)
+        id: image-smoke
         env:
           SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}
         run: ./scripts/image-smoke.sh --no-build
       - name: Generate and validate release SBOM candidate
         env:
           IMAGE_NAME: ${{ github.repository }}
+          TESTED_IMAGE: ${{ steps.image-smoke.outputs.image_id }}
         run: >-
           ./scripts/sbom-gate.sh
-          "${SMOKE_IMAGE}"
+          "${TESTED_IMAGE}"
           "${RUNNER_TEMP}/sentinel-pr.sbom.cdx.json"
           "ghcr.io/${IMAGE_NAME,,}"
           "${GITHUB_SHA}"

@@ -10,11 +10,9 @@ Covers two related invariants:
    succeeded. See issue #69.
 2. **Single build, tested artifact published unchanged**: the image is
    built exactly once (`push: false`, `load: true`), the blocking smoke
-   gate runs against that exact local artifact, and only if it passes
-   is the SAME local image re-tagged and pushed — never rebuilt. See
-   issue #185 (this hardens the structural proof that the published
-   digest is the tested one, rather than relying only on human review
-   of the workflow comments).
+   gate runs against that exact local artifact, and its immutable image
+   ID feeds both SBOM generation and publication. See issues #185 and
+   #473.
 """
 
 from __future__ import annotations
@@ -286,11 +284,34 @@ def test_smoke_step_uses_loaded_image_without_compose_override() -> None:
 
 
 @pytest.mark.unit
+def test_smoke_output_is_the_sbom_and_publish_source() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow.split("- name: Image smoke test (blocking gate)", 1)[1].split(
+        "- name: Select SBOM metadata", 1
+    )[0]
+    sbom_step = workflow.split(
+        "- name: Generate and validate release SBOM candidate", 1
+    )[1].split("- name: Retain validated SBOM", 1)[0]
+    publish_step = workflow.split(STEP_NAME_MARKER, 1)[1].split(
+        "  publish-release-metadata:", 1
+    )[0]
+
+    smoke_output = "${{ steps.image-smoke.outputs.image_id }}"
+    assert "id: image-smoke" in smoke_step
+    assert f"TESTED_IMAGE: {smoke_output}" in sbom_step
+    assert '"${TESTED_IMAGE}"' in sbom_step
+    assert '"${SMOKE_IMAGE}"' not in sbom_step
+    assert f"SMOKE_IMAGE: {smoke_output}" in publish_step
+    assert "SMOKE_IMAGE: sentinel-backend:smoke" not in publish_step
+
+
+@pytest.mark.unit
 def test_sbom_gate_precedes_push_and_release_metadata_depends_on_build() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     assert (
-        workflow.index("name: Image smoke test (blocking gate)")
+        workflow.index("name: Build backend image (load only, no push)")
+        < workflow.index("name: Image smoke test (blocking gate)")
         < workflow.index("name: Generate and validate release SBOM candidate")
         < workflow.index(STEP_NAME_MARKER)
     )

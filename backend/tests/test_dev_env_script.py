@@ -28,7 +28,7 @@ if [[ "${1:-}" == "version" && "$*" == *"Server.Version"* ]]; then
 fi
 
 if [[ "${1:-}" == "compose" && "${2:-}" == "version" ]]; then
-    printf '%s\n' "${DETECTED_COMPOSE_VERSION:-2.7.0}"
+    printf '%s\n' "${DETECTED_COMPOSE_VERSION:-2.32.2}"
     exit "${COMPOSE_VERSION_EXIT:-0}"
 fi
 
@@ -138,7 +138,7 @@ def test_runner_rejects_empty_docker_version(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("env_overrides", "diagnostic"),
     [
-        ({"DETECTED_COMPOSE_VERSION": "2.6.9"}, "Docker Compose 2.6.9"),
+        ({"DETECTED_COMPOSE_VERSION": "2.32.1"}, "Docker Compose 2.32.1"),
         (
             {"DETECTED_COMPOSE_VERSION": "not-a-version"},
             "Unable to parse Docker Compose version",
@@ -165,7 +165,7 @@ def test_runner_rejects_unsupported_toolchain(
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ("docker_version", "compose_version"),
-    [("1.0.0", "2.7.0"), ("99.1.0", "99.1.0")],
+    [("1.0.0", "2.32.2"), ("99.1.0", "99.1.0")],
 )
 def test_runner_accepts_compose_minimum_and_future_versions(
     tmp_path: Path,
