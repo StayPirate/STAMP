@@ -52,6 +52,16 @@
       ],
       "datasourceTemplate": "docker",
       "depNameTemplate": "cyclonedx/cyclonedx-cli"
+    },
+    {
+      "customType": "regex",
+      "description": "Renovate validation container used by the advisory pull-request workflow",
+      "managerFilePatterns": ["/.github/workflows/renovate-validation\\.yml$/"],
+      "matchStrings": [
+        "RENOVATE_IMAGE:\\s+renovate/renovate:(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "renovate/renovate"
     }
   ],
   "packageRules": [

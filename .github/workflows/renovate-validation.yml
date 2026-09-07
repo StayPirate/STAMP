@@ -1,0 +1,55 @@
+name: Renovate Validation
+
+# Read-only validation of repository Renovate configuration and dependency
+# lookups. This workflow is intentionally advisory: it reports a native red
+# status when validation fails but is not a required merge check. The Mend
+# Renovate App remains the only component authorized to create Renovate PRs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: renovate-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RENOVATE_IMAGE: renovate/renovate:44.65.5@sha256:4e10f76a79f1c597f427f83c788a9f5b14a6295784c4cb68307b89b0a954abce
+
+jobs:
+  validate:
+    name: Validate Renovate configuration and lookups
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pull pinned Renovate image
+        run: docker pull "${RENOVATE_IMAGE}"
+
+      - name: Validate Renovate configuration
+        run: >-
+          docker run --rm --pull=never
+          -v "${GITHUB_WORKSPACE}:/workspace:ro"
+          -w /workspace
+          "${RENOVATE_IMAGE}"
+          renovate-config-validator --strict --no-global renovate.jsonc
+
+      - name: Run read-only Renovate lookup
+        env:
+          RENOVATE_GITHUB_COM_TOKEN: ${{ github.token }}
+        run: >-
+          docker run --rm --pull=never
+          -v "${GITHUB_WORKSPACE}:/workspace:ro"
+          -w /workspace
+          -e RENOVATE_GITHUB_COM_TOKEN
+          "${RENOVATE_IMAGE}"
+          --platform=local
+          --dry-run=lookup
+          --require-config=required
+          --onboarding=false
+          --enabled=true

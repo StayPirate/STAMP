@@ -1011,6 +1011,10 @@ through the following required gates:
     This validation does not run in `ci.yml` on pushes to `master`;
     `build-images.yml` performs the equivalent check for `master` and tag builds.
 
+The advisory `renovate-validation.yml` workflow is documented in
+`docs/deployment.md` (Workflow Inventory and Workflow Conventions). It is
+separate from the required `ci.yml` gates and is not a required merge check.
+
 The test execution environment MUST provide PostgreSQL 18 and Redis 8
 instances, exposed to the test harness via `TEST_DATABASE_URL` and
 `TEST_REDIS_URL` respectively. When the suite runs with parallel
