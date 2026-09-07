@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.yml"
 PROJECT_NAME="sentinel"
-MINIMUM_COMPOSE_VERSION="2.7.0"
+MINIMUM_COMPOSE_VERSION="2.32.2"
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -112,7 +112,7 @@ check_docker_environment() {
         log_error "Install Docker Compose ${MINIMUM_COMPOSE_VERSION} or later for the 'docker compose' command."
         return 1
     fi
-    if version_is_at_least "${COMPOSE_VERSION}" 2 7 0; then
+    if version_is_at_least "${COMPOSE_VERSION}" 2 32 2; then
         :
     else
         local version_status=$?

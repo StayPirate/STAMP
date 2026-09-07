@@ -66,7 +66,7 @@ For architectural decisions and design constraints, see
 | Component | Minimum Version | Purpose |
 |-----------|----------------|---------|
 | Docker Engine or Docker Desktop | No independent floor | Repository-managed local development and test container runtime; must support the required Compose plugin |
-| Docker Compose CLI plugin | 2.7.0+ | Repository-managed development and test orchestration |
+| Docker Compose CLI plugin | 2.32.2+ | Repository-managed development and test orchestration |
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
@@ -79,9 +79,9 @@ For architectural decisions and design constraints, see
 | [gitleaks](https://github.com/gitleaks/gitleaks) | any recent release | Optional, development only — scans staged changes for secrets via the pre-commit hook. Local-only; no CI job performs secret scanning. See `docs/features/platform/testing-strategy.md` (Pre-Commit Hooks) |
 
 Repository tooling uses one Docker Compose minimum rather than maintaining
-different local toolchains. The image-smoke harness determines the 2.7.0 floor
-because it relies on `up --wait` and `service_completed_successfully`; simpler
-development-stack commands use that same supported baseline. See
+different local toolchains. The image-smoke harness determines the 2.32.2 floor
+because it requires `--pull never` for both `up` and one-shot `run` operations.
+Simpler development-stack commands use that same supported baseline. See
 `docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing)
 for the full justification.
 

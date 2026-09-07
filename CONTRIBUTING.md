@@ -38,7 +38,7 @@ Please report unacceptable behavior to security@suse.com.
 ### Prerequisites
 
 - **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
-- **Docker Engine or Docker Desktop with Docker Compose 2.7.0+** (for local
+- **Docker Engine or Docker Desktop with Docker Compose 2.32.2+** (for local
   PostgreSQL and Redis, automatic test provisioning, and the image-smoke suite)
 
 ### Quick Start
@@ -172,7 +172,7 @@ uv run pytest tests/api/v1/test_health.py
 uv run pytest -k "test_create_user"
 
 # Run the built-image smoke suite (from the repository root; requires
-# Docker Engine or Docker Desktop with Docker Compose 2.7.0+)
+# Docker Engine or Docker Desktop with Docker Compose 2.32.2+)
 cd .. && make smoke
 ```
 

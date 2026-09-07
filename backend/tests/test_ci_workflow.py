@@ -167,6 +167,13 @@ def test_drift_check_accepts_well_formed_minor_only_version(tmp_path: Path) -> N
 @pytest.mark.unit
 def test_pull_request_image_job_generates_validated_sbom_candidate() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    image_job = workflow.split("  image-smoke:", 1)[1]
+    smoke_step = image_job.split("- name: Image smoke test", 1)[1].split(
+        "- name: Generate and validate", 1
+    )[0]
+    sbom_step = image_job.split("- name: Generate and validate", 1)[1].split(
+        "- name: Upload release SBOM", 1
+    )[0]
 
     assert "if: github.event_name == 'pull_request'" in workflow
     assert "name: Generate and validate release SBOM candidate" in workflow
@@ -176,8 +183,14 @@ def test_pull_request_image_job_generates_validated_sbom_candidate() -> None:
     assert "retention-days: 7" in workflow
     assert "actions/attest@" not in workflow
     assert "gh release upload" not in workflow
-    assert workflow.index("name: Image smoke test (blocking gate)") < workflow.index(
-        "name: Generate and validate release SBOM candidate"
+    assert "id: image-smoke" in smoke_step
+    assert "TESTED_IMAGE: ${{ steps.image-smoke.outputs.image_id }}" in sbom_step
+    assert '"${TESTED_IMAGE}"' in sbom_step
+    assert '"${SMOKE_IMAGE}"' not in sbom_step
+    assert (
+        workflow.index("name: Build backend image (load only, no push)")
+        < workflow.index("name: Image smoke test (blocking gate)")
+        < workflow.index("name: Generate and validate release SBOM candidate")
     )
 
 

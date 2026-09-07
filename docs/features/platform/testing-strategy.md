@@ -1123,14 +1123,16 @@ scripts/image-smoke.sh -> Docker Compose -> pytest on the host
 
 The same runner is used locally and in CI. The supported harness environment
 is Docker Engine or Docker Desktop with the Docker Compose CLI plugin
-(`docker compose`) version 2.7.0 or later. The runner validates the CLI,
+(`docker compose`) version 2.32.2 or later. The runner validates the CLI,
 server identity, daemon reachability, and Compose version before build or stack
 operations. Podman compatibility endpoints, `podman-compose`, standalone
 `docker-compose`, and command-selection overrides are not supported.
 
 Compose version acceptance compares numeric major, minor, and patch components
-against 2.7.0. An optional leading `v` and vendor or build suffix do not alter
-the comparison; an unparseable version fails preflight.
+against 2.32.2. This floor ensures `--pull never` is available for both `up`
+and one-shot `run` operations, so every candidate-consuming path can reject
+image substitution explicitly. An optional leading `v` and vendor or build
+suffix do not alter the comparison; an unparseable version fails preflight.
 
 Host pytest reaches the API through a daemon-allocated port bound explicitly
 to the pytest host's loopback interface. A remote Docker context that cannot
@@ -1258,8 +1260,9 @@ so CI and release workflows cannot acquire separate implementations. Pinned
 tool versions live in one CI-consumed configuration file read by that script.
 The gate MUST:
 
-1. generate CycloneDX 1.7 JSON from `SMOKE_IMAGE` with the same pinned Syft
-   version used by the release workflow;
+1. generate CycloneDX 1.7 JSON from the immutable candidate image ID produced
+   by the successful smoke gate, using the same pinned Syft version as the
+   release workflow;
 2. validate it with the same pinned official CycloneDX validator image used by
    the release workflow;
 3. run Sentinel's semantic validator, which checks the required CycloneDX

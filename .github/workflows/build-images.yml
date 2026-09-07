@@ -37,7 +37,7 @@ jobs:
       (github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 75
     outputs:
       image-name: ${{ steps.push.outputs.image_name }}
       image-digest: ${{ steps.push.outputs.digest }}
@@ -98,6 +98,7 @@ jobs:
       # here fails the job (fail-fast, no continue-on-error) and prevents
       # any push below.
       - name: Image smoke test (blocking gate)
+        id: image-smoke
         env:
           SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}
         run: ./scripts/image-smoke.sh --no-build
@@ -113,9 +114,10 @@ jobs:
         env:
           SBOM_FILE_PATH: ${{ steps.sbom-metadata.outputs.file_path }}
           SBOM_VERSION: ${{ steps.sbom-metadata.outputs.version }}
+          TESTED_IMAGE: ${{ steps.image-smoke.outputs.image_id }}
         run: >-
           ./scripts/sbom-gate.sh
-          "${SMOKE_IMAGE}"
+          "${TESTED_IMAGE}"
           "${SBOM_FILE_PATH}"
           "${REGISTRY}/${IMAGE_NAME,,}"
           "${SBOM_VERSION}"
@@ -144,6 +146,7 @@ jobs:
         id: push
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          SMOKE_IMAGE: ${{ steps.image-smoke.outputs.image_id }}
         run: ./scripts/publish-image.sh
 
   publish-release-metadata:
