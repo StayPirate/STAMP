@@ -24,6 +24,7 @@ def test_renovate_validation_workflow_is_read_only_and_advisory() -> None:
     assert "--platform=local" in workflow
     assert "--onboarding=false" in workflow
     assert "--enabled=true" in workflow
+    assert "--require-config=required" in workflow
     assert '-v "${GITHUB_WORKSPACE}:/workspace:ro"' in workflow
     assert "-e RENOVATE_GITHUB_COM_TOKEN" in workflow
     assert "RENOVATE_GITHUB_COM_TOKEN: ${{ github.token }}" in workflow

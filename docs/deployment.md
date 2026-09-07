@@ -345,8 +345,8 @@ they feed in [Environments](#environments).
 
 **Blocking** means a failure prevents the merge, release, or publication
 that the workflow gates. Non-blocking workflows never fail a merge and
-never touch the publish path: `image-scan.yml` and
-`image-scan.yml`, `python-forward-compat.yml`, and
+never touch the publish path: `image-scan.yml`,
+`python-forward-compat.yml`, and
 `renovate-validation.yml` are early-warning mechanisms,
 `cleanup-images.yml` is scheduled registry maintenance, and
 `scorecard.yml` is an external security-posture scan that never fails
