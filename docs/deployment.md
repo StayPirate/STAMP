@@ -339,13 +339,15 @@ they feed in [Environments](#environments).
 | `deploy-api-docs.yml` | Push of a `v*` tag | Publishes the OpenAPI contract and API documentation site to GitHub Pages | Yes (release path) |
 | `image-scan.yml` | Weekly schedule, manual | Scans the published image for OS-level vulnerabilities and opens or updates a tracking issue | No |
 | `python-forward-compat.yml` | Weekly schedule, manual | Runs the test suite on the next Python minor version and reports the result through its Actions status and logs | No |
+| `renovate-validation.yml` | Pull request opened, synchronized, or reopened; manual | Validates `renovate.jsonc` and performs a read-only Renovate dependency lookup in a pinned container | No |
 | `cleanup-images.yml` | Weekly schedule, manual | Bounds the pool of untagged image versions in the registry | No |
 | `scorecard.yml` | Push to `master`, weekly schedule, manual | Runs the official OpenSSF Scorecard action and publishes results to Code Scanning and the public Scorecard dataset | No |
 
 **Blocking** means a failure prevents the merge, release, or publication
 that the workflow gates. Non-blocking workflows never fail a merge and
-never touch the publish path: `image-scan.yml` and
-`python-forward-compat.yml` are early-warning mechanisms,
+never touch the publish path: `image-scan.yml`,
+`python-forward-compat.yml`, and
+`renovate-validation.yml` are early-warning mechanisms,
 `cleanup-images.yml` is scheduled registry maintenance, and
 `scorecard.yml` is an external security-posture scan that never fails
 the run because of scan findings.
@@ -379,11 +381,20 @@ SHA-pinned actions and opens a PR bumping both the SHA and the
 trailing version comment when a new release is published. It also
 tracks `with:` version inputs of commonly used community-maintained
 actions (e.g. `astral-sh/setup-uv`'s `version:` input) — no additional
-configuration is required for either pinning style. Renovate runs as
-the hosted Mend Renovate GitHub App reading `renovate.jsonc` from the
-repository root — there is no corresponding `.github/workflows/*.yml`
-file, since the app itself (not a workflow trigger) schedules and
-executes the scan.
+configuration is required for either pinning style. Dependency updates
+are managed by the hosted Mend Renovate GitHub App reading `renovate.jsonc`
+from the repository root; no workflow in this repository runs the hosted bot
+or creates its dependency-update PRs. The separate advisory validation
+workflow is described below.
+
+`renovate-validation.yml` is a separate, advisory repository check. It runs
+on every pull request rather than maintaining a whitelist of Renovate-managed
+paths, validates `renovate.jsonc` in strict mode, and performs a read-only
+lookup with the official Renovate container pinned by version and digest. The
+workflow has read-only repository permissions, cannot create branches or pull
+requests, and is not a required merge check. A failure is intentionally
+visible as a red Actions status while remaining non-blocking; the Mend-hosted
+Renovate App remains the only component that creates dependency-update PRs.
 
 **Testcontainers image references.** The `testcontainers`-provisioned
 PostgreSQL and Redis images used by `backend/tests/conftest.py` (see
