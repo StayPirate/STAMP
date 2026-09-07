@@ -146,7 +146,7 @@ markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
-    "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
+    "image: Black-box container smoke tests (require Docker Engine and Docker Compose; excluded from default run)",
     "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 filterwarnings = [

@@ -47,7 +47,7 @@ dev-logs: ## Follow local dev infrastructure logs
 dev-status: ## Show local dev infrastructure status
 	./scripts/dev-env.sh status
 
-smoke: ## Run the black-box image smoke test suite
+smoke: ## Run the Docker Compose image smoke test suite
 	./scripts/image-smoke.sh
 
 check: lint fmt-check typecheck test ## Run the full pre-submission checklist (lint, format, typecheck, test)

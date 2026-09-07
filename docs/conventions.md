@@ -1258,8 +1258,8 @@ These rules apply to:
 - **Quoting**: quote all variable expansions (`"${var}"`). The only
   accepted exception is an intentional word-split of an assembled command
   string, which MUST carry a narrowly-scoped, justified
-  `# shellcheck disable=SC2086` directive (see `scripts/dev-env.sh` and
-  `scripts/image-smoke.sh` for the canonical pattern)
+  `# shellcheck disable=SC2086` directive (see `scripts/dev-env.sh` for the
+  canonical pattern)
 - **Diagnostics and exit codes**: write error and warning messages to
   stderr; reserve stdout for results. Return a non-zero exit code on
   failure and propagate the exit code of the meaningful inner command

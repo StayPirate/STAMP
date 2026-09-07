@@ -66,6 +66,7 @@ For architectural decisions and design constraints, see
 | Component | Minimum Version | Purpose |
 |-----------|----------------|---------|
 | Docker or Podman | Docker 24+ / Podman 4+ | Container runtime |
+| Docker Compose CLI plugin | 2.7.0+ | Development and CI image-smoke harness only; requires Docker Engine or Docker Desktop |
 | PostgreSQL | 18+ | Primary database |
 | Redis | 8+ | Session cache, Celery broker, rate limiting |
 | Git | 2.25+ | Git-based CVE fetcher operations (git worker container only) |
@@ -461,10 +462,11 @@ suite in-process MUST obtain PostgreSQL and Redis from GitHub Actions
 service containers declared with health-check options, never from
 externally hosted or shared instances. This keeps every run isolated and
 reproducible. Black-box suites that exercise the built image are the
-exception: they supply their own stack through `docker-compose.smoke.yml`
-so that the container under test reaches its dependencies exactly as it
-would at runtime — see `docs/features/platform/testing-strategy.md`
-(Image / Container Smoke Testing).
+exception: the Docker Engine and Docker Compose-based image-smoke harness
+supplies its own stack through `docker-compose.smoke.yml` so that the container
+under test reaches its dependencies exactly as it would at runtime — see
+`docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing).
+This harness choice does not change the deployment-agnostic OCI image contract.
 
 **Shell inside workflows.** Shell embedded in `run:` steps follows the
 Shell Scripting rules in `docs/conventions.md` — including `actionlint`

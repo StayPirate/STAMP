@@ -182,6 +182,25 @@ def test_pull_request_image_job_generates_validated_sbom_candidate() -> None:
 
 
 @pytest.mark.unit
+def test_pull_request_image_job_smokes_loaded_image_without_override() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    image_job = workflow.split("  image-smoke:", 1)[1]
+    build_step = image_job.split("- name: Build backend image", 1)[1].split(
+        "- name: Image smoke test", 1
+    )[0]
+    smoke_step = image_job.split("- name: Image smoke test", 1)[1].split(
+        "- name: Generate and validate", 1
+    )[0]
+
+    assert image_job.count("uses: docker/build-push-action") == 1
+    assert "push: false" in build_step
+    assert "load: true" in build_step
+    assert "SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}" in smoke_step
+    assert "./scripts/image-smoke.sh --no-build" in smoke_step
+    assert "COMPOSE_CMD" not in image_job
+
+
+@pytest.mark.unit
 def test_ci_and_release_workflows_share_sbom_gate() -> None:
     release_workflow = (
         Path(__file__).resolve().parents[2]

@@ -253,11 +253,6 @@ jobs:
       - name: Image smoke test (blocking gate)
         env:
           SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}
-          # Force Docker: the image is loaded into the Docker daemon
-          # (buildx --load) and the podman socket is not running on the
-          # runner, so the script's auto-detection (podman first) would
-          # fail. See scripts/image-smoke.sh (COMPOSE_CMD).
-          COMPOSE_CMD: "docker compose"
         run: ./scripts/image-smoke.sh --no-build
       - name: Generate and validate release SBOM candidate
         env:

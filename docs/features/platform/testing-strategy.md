@@ -100,7 +100,7 @@ markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
-    "image: Black-box container smoke tests (require Docker/Podman; excluded from default run)",
+    "image: Black-box container smoke tests (require Docker Engine and Docker Compose; excluded from default run)",
     "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 ```
@@ -1056,13 +1056,27 @@ separately-built artifact, not against the instrumented local venv.
 
 The suite runs **exclusively** via `scripts/image-smoke.sh`, used
 identically in local development and in CI (single source of truth for
-"how to smoke-test the image"). The script is runtime-agnostic (Docker
-or Podman, auto-detected with the same pattern as `scripts/dev-env.sh`).
-Auto-detection can be overridden by exporting `COMPOSE_CMD` (e.g.
-`docker compose`): the CI gate sets it to `docker compose` because the
-image is loaded into the Docker daemon (`buildx --load`) and the podman
-socket is not running on the runner, so the default podman-first
-detection would otherwise pick an unusable runtime. The script:
+"how to smoke-test the image"). The supported harness environment is Docker
+Engine with the Docker Compose CLI plugin (`docker compose`) version 2.7.0 or
+later. Version 2.7.0 is the minimum because the stack uses `compose up --wait`
+with the one-shot `migrate` service and
+`condition: service_completed_successfully`; earlier versions do not reliably
+apply that dependency condition while waiting. The runner obtains the Compose
+version from `docker compose version --short`, extracts its numeric
+major/minor/patch core, and compares those components numerically; an optional
+leading `v` and vendor/build suffix do not affect the comparison.
+
+The script fails before any build or stack operation when the Docker CLI is
+missing, the daemon is unreachable, the Compose plugin is missing, or its
+version is unparseable or earlier than 2.7.0. It also inspects the product
+identity reported by the server through `docker version`, rather than trusting
+the CLI binary name or context label, and accepts only an identity that reports
+Docker Engine or Docker Desktop. A Podman API endpoint reached through the
+Docker CLI or a `podman-docker` compatibility wrapper is unsupported and fails
+this check. The script does not auto-detect Podman, `podman-compose`, or the
+standalone `docker-compose` command. `COMPOSE_CMD` and equivalent command
+overrides are not supported; every runner and fixture operation uses the
+validated `docker compose` invocation. The script:
 
 1. Builds the image once from `backend/Dockerfile` (skippable with
    `--no-build` when a pre-built image is supplied via `SENTINEL_IMAGE`).
@@ -1072,7 +1086,22 @@ detection would otherwise pick an unusable runtime. The script:
    that have no healthcheck, exits cleanly).
 3. Runs `uv run pytest -m image tests/image/` against the running stack.
 4. Tears the stack down (`down -v`) unconditionally and exits with the
-   pytest exit code.
+   pytest exit code when pytest ran, or the earlier failing command's exit
+   code when it did not.
+
+If build or initial stack bring-up fails before pytest starts, the failing
+Compose command's output remains the diagnostic record and the script exits
+non-zero after teardown; the pytest failure-phase diagnostic hook does not run.
+Once pytest starts, the bounded state-and-log capture below applies to failed
+test phases.
+
+This Docker-only requirement applies to the repository's image-smoke harness,
+not to the published OCI artifact. The deployment-agnostic packaging contract
+in `docs/architecture.md` remains unchanged: Docker, Podman, and Kubernetes
+consume the same image, with no runtime-specific application code or image
+variant. `scripts/dev-env.sh` and testcontainers provisioning retain their
+separate local-runtime contracts; they are not alternate ways to execute the
+image-smoke suite.
 
 Tests that restart a primary-stack service use the shared
 `compose_restart` fixture. By default, the fixture returns successfully only
