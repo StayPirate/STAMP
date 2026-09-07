@@ -38,7 +38,7 @@
       "description": "Syft image used by both release-SBOM workflow paths",
       "managerFilePatterns": ["/.github/sbom-tools\\.env$/"],
       "matchStrings": [
-        "SYFT_IMAGE=anchore/syft:v(?<currentValue>[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
+        "SYFT_IMAGE=anchore/syft:(?<currentValue>v[^@\\s]+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ],
       "datasourceTemplate": "docker",
       "depNameTemplate": "anchore/syft"

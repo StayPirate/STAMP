@@ -1,0 +1,2 @@
+{"name":"renovate","level":20,"repository":"local","msg":"Renovate version","v":0}
+{"name":"renovate","level":20,"repository":"local","baseBranch":"","config":{"github-actions":[{"deps":[{"depName":"actions/checkout","currentValue":"v7.0.1","datasource":"github-tags","packageName":"actions/checkout"}],"packageFile":".github/workflows/ci.yml"}],"regex":[{"deps":[{"depName":"anchore/syft","currentValue":"v1.51.1","datasource":"docker","packageName":"anchore/syft","warnings":[]}],"packageFile":".github/sbom-tools.env"}]},"msg":"packageFiles with updates","v":0}
