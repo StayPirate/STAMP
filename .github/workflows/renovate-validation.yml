@@ -42,14 +42,19 @@ jobs:
       - name: Run read-only Renovate lookup
         env:
           RENOVATE_GITHUB_COM_TOKEN: ${{ github.token }}
-        run: >-
-          docker run --rm --pull=never
-          -v "${GITHUB_WORKSPACE}:/workspace:ro"
-          -w /workspace
-          -e RENOVATE_GITHUB_COM_TOKEN
-          "${RENOVATE_IMAGE}"
-          --platform=local
-          --dry-run=lookup
-          --require-config=required
-          --onboarding=false
-          --enabled=true
+        run: |
+          set -euo pipefail
+          log_file="${RUNNER_TEMP}/renovate.ndjson"
+          docker run --rm --pull=never \
+            -v "${GITHUB_WORKSPACE}:/workspace:ro" \
+            -w /workspace \
+            -e LOG_FORMAT=json \
+            -e LOG_LEVEL=debug \
+            -e RENOVATE_GITHUB_COM_TOKEN \
+            "${RENOVATE_IMAGE}" \
+            --platform=local \
+            --dry-run=lookup \
+            --require-config=required \
+            --onboarding=false \
+            --enabled=true 2>&1 | tee "${log_file}"
+          python3 scripts/validate_renovate_log.py "${log_file}"
