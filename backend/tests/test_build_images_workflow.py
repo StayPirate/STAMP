@@ -274,6 +274,18 @@ def test_smoke_test_step_precedes_push_step() -> None:
 
 
 @pytest.mark.unit
+def test_smoke_step_uses_loaded_image_without_compose_override() -> None:
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    smoke_step = workflow.split("- name: Image smoke test (blocking gate)", 1)[1].split(
+        "- name: Select SBOM metadata", 1
+    )[0]
+
+    assert "SENTINEL_IMAGE: ${{ env.SMOKE_IMAGE }}" in smoke_step
+    assert "./scripts/image-smoke.sh --no-build" in smoke_step
+    assert "COMPOSE_CMD" not in workflow
+
+
+@pytest.mark.unit
 def test_sbom_gate_precedes_push_and_release_metadata_depends_on_build() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 

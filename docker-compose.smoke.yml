@@ -7,7 +7,7 @@
 #
 #   docker compose -f docker-compose.smoke.yml up -d --wait
 #
-# or, runtime-agnostic, via scripts/image-smoke.sh.
+# The canonical Docker Compose runner is scripts/image-smoke.sh.
 #
 # Why self-contained: postgres/redis here publish NO host ports — the
 # services reach each other over the compose network only. This lets the

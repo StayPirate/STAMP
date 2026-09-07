@@ -1440,6 +1440,7 @@ def test_set_password_length_boundaries_exit_one(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_set_password_success_active_user(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1476,6 +1477,7 @@ def test_set_password_success_active_user(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_set_password_inactive_user_succeeds_and_stays_inactive(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1503,6 +1505,7 @@ def test_set_password_inactive_user_succeeds_and_stays_inactive(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_set_password_invalidates_only_active_sessions(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1555,6 +1558,7 @@ def test_set_password_invalidates_only_active_sessions(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_set_password_creates_exact_audit_event(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1664,6 +1668,7 @@ def test_set_password_interrupted_before_commit_rolls_back(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_set_password_commits_exactly_once_on_success(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1794,6 +1799,7 @@ def test_unlock_user_not_found_exits_one(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_normalizes_username_before_lookup(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1810,6 +1816,7 @@ def test_unlock_normalizes_username_before_lookup(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_active_local_user_no_warnings(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1827,6 +1834,7 @@ def test_unlock_active_local_user_no_warnings(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_inactive_user_warns_and_continues(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1849,6 +1857,7 @@ def test_unlock_inactive_user_warns_and_continues(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_external_user_warns_and_continues(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1873,6 +1882,7 @@ def test_unlock_external_user_warns_and_continues(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_inactive_external_user_both_warnings(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -1982,6 +1992,7 @@ def test_unlock_redis_failure_still_exits_zero(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_creates_no_audit_event(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],
@@ -2008,6 +2019,7 @@ def test_unlock_creates_no_audit_event(
 
 
 @pytest.mark.integration
+@pytest.mark.usefixtures("redis_client")
 def test_unlock_issues_no_database_commit(
     monkeypatch: pytest.MonkeyPatch,
     cli_session_factory: async_sessionmaker[AsyncSession],

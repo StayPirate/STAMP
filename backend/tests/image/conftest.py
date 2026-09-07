@@ -14,7 +14,6 @@ Testing).
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import time
 import uuid
@@ -34,16 +33,15 @@ import pytest
 # explicit `timeout=` override.
 _DEFAULT_EXEC_TIMEOUT = 30.0
 _DIAGNOSTIC_TIMEOUT = 15.0
+_COMPOSE_CMD = ("docker", "compose")
 
 
-def _resolve_compose_invocation() -> tuple[list[str], list[str], str]:
-    """Resolve the shared ``(compose_cmd, file_args, project)`` triple
-    from the env vars scripts/image-smoke.sh exports (see the
-    ``compose_exec``/``compose_run`` fixture docstrings below for the
-    meaning of each variable). Shared by both fixtures so the
-    resolution logic lives in exactly one place.
+def _resolve_compose_invocation() -> tuple[list[str], str]:
+    """Resolve the shared ``(file_args, project)`` pair from the env vars
+    scripts/image-smoke.sh exports (see the ``compose_exec``/``compose_run``
+    fixture docstrings below for the meaning of each variable). Shared by the
+    fixtures so the resolution logic lives in exactly one place.
     """
-    compose_cmd = shlex.split(os.environ.get("COMPOSE_CMD", "docker compose"))
     compose_files = os.environ.get("COMPOSE_FILES", "docker-compose.smoke.yml").split(
         ":"
     )
@@ -51,7 +49,7 @@ def _resolve_compose_invocation() -> tuple[list[str], list[str], str]:
     file_args: list[str] = []
     for compose_file in compose_files:
         file_args.extend(["-f", compose_file])
-    return compose_cmd, file_args, project
+    return file_args, project
 
 
 def _run_compose_bounded(
@@ -83,14 +81,13 @@ def _run_compose_bounded(
 def _restart_compose_service(
     service: str,
     *,
-    compose_cmd: list[str],
     file_args: list[str],
     project: str,
     wait_for_ready: bool = True,
     timeout: float = 60.0,
 ) -> subprocess.CompletedProcess[str]:
     """Stop and start one compose service, optionally waiting for readiness."""
-    common_args = [*compose_cmd, "-p", project, *file_args]
+    common_args = [*_COMPOSE_CMD, "-p", project, *file_args]
     stop_result = _run_compose_bounded(
         [*common_args, "stop", service],
         timeout,
@@ -107,8 +104,8 @@ def _restart_compose_service(
 
 def _capture_compose_diagnostics(phase: str) -> list[tuple[str, str]]:
     """Capture bounded primary-stack state and logs for one failed phase."""
-    compose_cmd, file_args, project = _resolve_compose_invocation()
-    common_args = [*compose_cmd, "-p", project, *file_args]
+    file_args, project = _resolve_compose_invocation()
+    common_args = [*_COMPOSE_CMD, "-p", project, *file_args]
     commands = [
         (
             "compose ps --all",
@@ -228,8 +225,6 @@ def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
     command inside the container). The compose invocation is read from
     env vars exported by scripts/image-smoke.sh:
 
-    - ``COMPOSE_CMD`` — the compose binary (defaults to ``docker compose``
-      for direct/manual use).
     - ``COMPOSE_FILES`` — colon-separated compose file paths (defaults to
       ``docker-compose.smoke.yml``).
     - ``COMPOSE_PROJECT`` — the compose project name (defaults to
@@ -253,7 +248,7 @@ def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
     instead of hanging the whole suite (and, in CI, the job) until the
     external runner-level timeout intervenes.
     """
-    compose_cmd, file_args, project = _resolve_compose_invocation()
+    file_args, project = _resolve_compose_invocation()
 
     def _exec(
         service: str,
@@ -265,7 +260,7 @@ def compose_exec() -> Callable[..., subprocess.CompletedProcess[str]]:
         for key, value in (env or {}).items():
             env_args.extend(["-e", f"{key}={value}"])
         cmd = [
-            *compose_cmd,
+            *_COMPOSE_CMD,
             "-p",
             project,
             *file_args,
@@ -302,7 +297,7 @@ def compose_run() -> Callable[..., subprocess.CompletedProcess[str]]:
     Same env var resolution, return type, and bounded-timeout contract
     as ``compose_exec`` (see above).
     """
-    compose_cmd, file_args, project = _resolve_compose_invocation()
+    file_args, project = _resolve_compose_invocation()
 
     def _run(
         service: str,
@@ -314,7 +309,7 @@ def compose_run() -> Callable[..., subprocess.CompletedProcess[str]]:
         for key, value in (env or {}).items():
             env_args.extend(["-e", f"{key}={value}"])
         cmd = [
-            *compose_cmd,
+            *_COMPOSE_CMD,
             "-p",
             project,
             *file_args,
@@ -344,14 +339,13 @@ def compose_restart() -> Callable[..., subprocess.CompletedProcess[str]]:
 
     A failed ``stop`` is returned immediately without attempting ``up``.
     """
-    compose_cmd, file_args, project = _resolve_compose_invocation()
+    file_args, project = _resolve_compose_invocation()
 
     def _restart(
         service: str, *, wait_for_ready: bool = True, timeout: float = 60.0
     ) -> subprocess.CompletedProcess[str]:
         return _restart_compose_service(
             service,
-            compose_cmd=compose_cmd,
             file_args=file_args,
             project=project,
             wait_for_ready=wait_for_ready,
@@ -420,12 +414,10 @@ class IsolatedComposeStack:
     def __init__(
         self,
         project: str,
-        compose_cmd: list[str],
         file_args: list[str],
         override_path: Path,
     ) -> None:
         self.project = project
-        self._compose_cmd = compose_cmd
         self._file_args = file_args
         self._override_path = override_path
         self._brought_up = False
@@ -466,7 +458,7 @@ class IsolatedComposeStack:
         """
         self._override_path.write_text(override_yaml, encoding="utf-8")
         cmd = [
-            *self._compose_cmd,
+            *_COMPOSE_CMD,
             "-p",
             self.project,
             *self._file_args,
@@ -486,11 +478,10 @@ class IsolatedComposeStack:
         is actually running: `exec` fails immediately (non-zero exit,
         no such service/container) if it was never created or already
         exited, which is a more robust signal than parsing `ps` output
-        that may differ between the Docker and Podman Compose
-        implementations.
+        without depending on the shape of `compose ps` output.
         """
         cmd = [
-            *self._compose_cmd,
+            *_COMPOSE_CMD,
             "-p",
             self.project,
             *self._file_args,
@@ -505,8 +496,8 @@ class IsolatedComposeStack:
         self, service: str, *, timeout: float = 45.0, poll_interval: float = 1.0
     ) -> None:
         """Poll until ``service``'s container is no longer reachable via
-        ``exec_check`` (see above for why that is the portable "is it
-        running" signal across Docker and Podman Compose).
+        ``exec_check`` (see above for why that is the selected "is it
+        running" signal).
 
         Used to deterministically confirm that a deliberately-broken
         service's process has actually exited, instead of trusting
@@ -534,7 +525,7 @@ class IsolatedComposeStack:
         until the project is torn down.
         """
         cmd = [
-            *self._compose_cmd,
+            *_COMPOSE_CMD,
             "-p",
             self.project,
             *self._file_args,
@@ -548,7 +539,7 @@ class IsolatedComposeStack:
     def teardown(self) -> None:
         if self._brought_up:
             cmd = [
-                *self._compose_cmd,
+                *_COMPOSE_CMD,
                 "-p",
                 self.project,
                 *self._file_args,
@@ -564,10 +555,9 @@ def isolated_compose_stack(tmp_path: Path) -> Iterator[IsolatedComposeStack]:
     """Provide one `IsolatedComposeStack` per test, torn down
     unconditionally on exit (even if `up()` was never called or
     failed)."""
-    compose_cmd, file_args, _ = _resolve_compose_invocation()
+    file_args, _ = _resolve_compose_invocation()
     stack = IsolatedComposeStack(
         project=f"sentinel-smoke-isolated-{uuid.uuid4().hex[:8]}",
-        compose_cmd=compose_cmd,
         file_args=file_args,
         override_path=tmp_path / "override.yml",
     )

@@ -59,7 +59,6 @@ def test_restart_compose_service_waits_for_service_readiness(
 
     result = image_conftest._restart_compose_service(
         "worker",
-        compose_cmd=["docker", "compose"],
         file_args=["-f", "docker-compose.smoke.yml"],
         project="sentinel-smoke",
         timeout=60.0,
@@ -111,7 +110,6 @@ def test_restart_compose_service_can_skip_readiness_wait(
 
     result = image_conftest._restart_compose_service(
         "api",
-        compose_cmd=["podman", "compose"],
         file_args=["-f", "docker-compose.smoke.yml"],
         project="sentinel-smoke",
         wait_for_ready=False,
@@ -121,7 +119,7 @@ def test_restart_compose_service_can_skip_readiness_wait(
     assert result.returncode == 0
     assert calls[-1] == (
         [
-            "podman",
+            "docker",
             "compose",
             "-p",
             "sentinel-smoke",
@@ -148,7 +146,6 @@ def test_restart_compose_service_propagates_readiness_failure(
 
     result = image_conftest._restart_compose_service(
         "api",
-        compose_cmd=["docker", "compose"],
         file_args=[],
         project="sentinel-smoke",
     )
@@ -170,7 +167,6 @@ def test_restart_compose_service_returns_stop_failure_without_starting(
 
     result = image_conftest._restart_compose_service(
         "beat",
-        compose_cmd=["docker", "compose"],
         file_args=[],
         project="sentinel-smoke",
     )
@@ -201,7 +197,8 @@ def test_capture_compose_diagnostics_collects_state_and_bounded_logs(
         return results.pop(0)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    monkeypatch.setenv("COMPOSE_CMD", "docker compose")
+    # The removed legacy override must not change the fixed Docker invocation.
+    monkeypatch.setenv("COMPOSE_CMD", "podman compose")
     monkeypatch.setenv("COMPOSE_FILES", "docker-compose.smoke.yml")
     monkeypatch.setenv("COMPOSE_PROJECT", "sentinel-smoke")
 

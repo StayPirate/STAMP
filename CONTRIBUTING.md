@@ -38,7 +38,8 @@ Please report unacceptable behavior to security@suse.com.
 ### Prerequisites
 
 - **Python 3.14** (managed via [uv](https://docs.astral.sh/uv/))
-- **Podman** or **Docker** (for local PostgreSQL and Redis)
+- **Docker Engine or Docker Desktop with Docker Compose 2.7.0+** (for local
+  PostgreSQL and Redis, automatic test provisioning, and the image-smoke suite)
 
 ### Quick Start
 
@@ -169,7 +170,16 @@ uv run pytest tests/api/v1/test_health.py
 
 # Run tests matching a pattern
 uv run pytest -k "test_create_user"
+
+# Run the built-image smoke suite (from the repository root; requires
+# Docker Engine or Docker Desktop with Docker Compose 2.7.0+)
+cd .. && make smoke
 ```
+
+Repository-managed development and test tooling supports Docker Compose only.
+This does not make the published OCI image Docker-specific: consumers may
+deploy the same image with Podman, Kubernetes, or another compatible runtime at
+their discretion.
 
 ### Test Requirements
 
