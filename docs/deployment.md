@@ -473,7 +473,7 @@ downstream `workflow_run` never fires.
 suite in-process MUST obtain PostgreSQL and Redis from GitHub Actions
 service containers declared with health-check options, never from
 externally hosted or shared instances. This keeps every run isolated and
-reproducible. Black-box suites that exercise the built image are the
+reproducible. Artifact suites that exercise the built image are the
 exception: the Docker Engine and Docker Compose-based image-smoke harness
 supplies its own stack through `docker-compose.smoke.yml` so that the container
 under test reaches its dependencies exactly as it would at runtime — see
@@ -1070,8 +1070,9 @@ The self-contained image-smoke stack MUST enforce the migration prerequisite
 directly: its API service depends on the one-shot `migrate` service reaching
 successful completion, in addition to infrastructure health. An unsuccessful
 migration therefore prevents the API container from starting; simple
-concurrent startup of `api` and `migrate` is not conformant. The work item that
-introduces system-setting persistence adds this dependency.
+concurrent startup of `api` and `migrate` is not conformant. The artifact gate
+verifies both directions of this ordering; see
+`docs/features/platform/testing-strategy.md` (Image / Container Smoke Testing).
 
 ### Git Worker Volume
 
