@@ -72,9 +72,31 @@ def test_runtime_manifest_is_complete_non_root_and_excludes_test_code(
     )
     assert "RUNTIME-MANIFEST-OK" in result.stdout
 
-    cli = compose_exec("api", "sentinel", "--version")
-    assert cli.returncode == 0, (
-        f"installed CLI version failed (rc={cli.returncode}): "
-        f"stdout={cli.stdout!r} stderr={cli.stderr!r}"
+    metadata = compose_exec(
+        "api",
+        "python",
+        "-c",
+        "from importlib.metadata import version; print(version('sentinel'))",
     )
-    assert cli.stdout.strip(), "installed CLI returned an empty version"
+    assert metadata.returncode == 0, (
+        f"installed package metadata lookup failed (rc={metadata.returncode}): "
+        f"stdout={metadata.stdout!r} stderr={metadata.stderr!r}"
+    )
+    installed_version = metadata.stdout.strip()
+    assert installed_version, "installed package metadata returned an empty version"
+
+    commands = (
+        ("sentinel", "--version"),
+        ("python", "-m", "app.cli", "--version"),
+    )
+    for command in commands:
+        cli = compose_exec("api", *command)
+        invocation = " ".join(command)
+        assert cli.returncode == 0, (
+            f"{invocation} failed (rc={cli.returncode}): "
+            f"stdout={cli.stdout!r} stderr={cli.stderr!r}"
+        )
+        assert cli.stdout.strip() == installed_version, (
+            f"{invocation} returned {cli.stdout.strip()!r}, expected installed "
+            f"package version {installed_version!r}"
+        )

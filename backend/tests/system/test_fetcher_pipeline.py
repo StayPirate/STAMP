@@ -25,12 +25,30 @@ from collections.abc import AsyncIterator
 import pytest
 from celery.schedules import crontab
 from httpx import ASGITransport, AsyncClient
+from redbeat import RedBeatSchedulerEntry
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.api.v1.fetchers as fetchers_module
 from app.database import get_db
 from app.main import app
 from tests.system.conftest import SYSTEM_FETCHER_NAME, FetcherPipelineHarness
+
+_WORKER_OWNERSHIP_ENTRY_NAME = "worker_startup_ownership_probe"
+
+
+def _redbeat_entry_snapshot(entry: RedBeatSchedulerEntry) -> tuple[object, ...]:
+    """Capture every persisted schedule and execution field exposed by RedBeat."""
+    return (
+        entry.name,
+        entry.task,
+        entry.schedule,
+        entry.args,
+        entry.kwargs,
+        entry.options,
+        entry.enabled,
+        entry.last_run_at,
+        entry.total_run_count,
+    )
 
 
 @pytest.mark.system
@@ -47,10 +65,40 @@ async def test_scheduled_fetcher_pipeline_end_to_end(
     # test database happens to hold.
     domain_snapshot_before = await harness.snapshot_domain_tables()
 
-    # 1. A real worker starts, becomes reachable, and has the generic
-    # `run_fetcher` task registered.
+    # 1. Seed a RedBeat entry before worker startup. A real worker must
+    # become reachable and register `run_fetcher` without creating,
+    # updating, or deleting schedule state; only Beat and the API own
+    # RedBeat writes (fetcher-infrastructure.md, Who Writes Where).
+    ownership_entry = RedBeatSchedulerEntry(
+        name=_WORKER_OWNERSHIP_ENTRY_NAME,
+        task="run_fetcher",
+        schedule=crontab.from_string("17 4 * * 2"),
+        args=["fictional-probe"],
+        kwargs={
+            "fetcher_name": _WORKER_OWNERSHIP_ENTRY_NAME,
+            "triggered_by": "schedule",
+        },
+        options={"queue": "never-dispatched"},
+        app=harness.celery_app,
+    ).save()
+    ownership_key = ownership_entry.key
+    ownership_before = _redbeat_entry_snapshot(
+        RedBeatSchedulerEntry.from_key(ownership_key, app=harness.celery_app)
+    )
+
     harness.start_worker()
     await harness.wait_worker_ready()
+
+    ownership_after = _redbeat_entry_snapshot(
+        RedBeatSchedulerEntry.from_key(ownership_key, app=harness.celery_app)
+    )
+    assert ownership_after == ownership_before
+
+    # Remove the probe before Beat starts so the existing pipeline assertion
+    # observes only state created by normal Beat reconciliation.
+    ownership_entry.delete()
+    with pytest.raises(KeyError):
+        RedBeatSchedulerEntry.from_key(ownership_key, app=harness.celery_app)
 
     # 2. A real Beat starts, bootstraps the test fetcher's
     # `FetcherConfig`, and reconciles a RedBeat entry for it.
