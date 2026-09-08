@@ -1,7 +1,7 @@
 # Packages
 
-Package affectedness, release detection, product catalog, and submission
-tracking.
+Package affectedness, release and delivery reconciliation, product catalog,
+and maintainership.
 
 ## Specs
 
@@ -15,7 +15,7 @@ package-model.md                      Status, eligibility, delivery, exclusion, 
 
 package-service.md                       package_service module contract (mutations, orchestration, queries)
 product-catalog.md                       Product/ProductRepository, SMELT/AIMAAS sync, lifecycle phases
-ibs-submission-tracking.md               SR/RR tracking via RabbitMQ + periodic sync
+ibs-submission-tracking.md               IBS request-action evidence and authoritative track delivery reconciliation
 package-maintainership.md                Package-wide maintainer acquisition and associations
 maintainer.md                            Maintainer operations (pending fixes, in-progress, completed)
 ```
@@ -34,8 +34,10 @@ maintainer.md                            Maintainer operations (pending fixes, i
   (track status, delivery, product eligibility, soft-delete/restore),
   orchestration (`add_package_to_ticket`), and query operations.
   Depends on `ticket_mutations.reconcile_ticket_status()`.
-- `ibs-submission-tracking.md` is independent but shares the
-  `TicketPackageTrack` model and `IBSEventConsumer` infrastructure.
+- `ibs-submission-tracking.md` owns IBS request/action persistence and track
+  delivery reconciliation. Its daily fetcher is the correctness owner;
+  package-add and reactivation catch-up, manual runs, and RabbitMQ request
+  events accelerate the same reconciliation.
 - `package-maintainership.md` owns SMELT-backed acquisition and the additive
   `TicketPackageMaintainer` relation used by confidential visibility and the
   maintainer workbench.

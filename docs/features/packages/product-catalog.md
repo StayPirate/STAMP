@@ -403,12 +403,14 @@ completely no-op pair creates no `package_added` event. Existing tracks retain
 their affectedness and delivery states. Backfill may add missing Products
 beneath existing tracks and may create a previously omitted track; a new track
 starts in `ANALYSIS`/`PENDING`, and normal status reconciliation may regress
-an `Analyzed` Ticket to `Analysis`. The normal `add_package_to_ticket()`
-post-commit effects apply only when the backfill creates at least one IBS
-track. Adding Products below existing tracks, adding only Git tracks,
-maintainer-only mutation, or a package-tree no-op performs no post-commit
-effects. Maintainer association is a transactional database mutation, not a
-post-commit effect.
+an `Analyzed` Ticket to `Analysis`. When the backfill creates at least one IBS
+track, the normal `add_package_to_ticket()` package-add acceleration registers
+one best-effort post-commit `run_catch_up("sync_ibs_requests", ticket_id)`
+invocation. Adding Products below existing tracks, adding only Git tracks,
+maintainer-only mutation, or a package-tree no-op registers no request catch-up.
+This uses the generic fetcher catch-up mechanism; it does not publish a
+dedicated submission discovery or correlation task. Maintainer association is
+a transactional database mutation, not a post-commit effect.
 
 Backfill completes only package trees represented by an existing active
 `TicketPackage`. A package addition that previously failed with

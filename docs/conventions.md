@@ -162,7 +162,8 @@ affected:
   as a boolean attribute (identity domain)
 - Assignee state: "inactive assignee" = user whose `active` field is
   `false` (ticket-mutations domain)
-- IBS request states: "open", "accepted", "declined" (IBS domain)
+- IBS request states: `new`, `review`, `accepted`, `declined`, `revoked`,
+  `superseded`, and `deleted` (IBS domain)
 - IBS incident lifecycle: "incident closed" (IBS domain)
 - Status transition verbs: "Reopen" (action, not state category)
 

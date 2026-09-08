@@ -77,8 +77,9 @@ flowchart TB
 
     subgraph ibs["IBS Integration"]
         TrackReleaseCheckpoint
-        SubmissionRequest
-        ReleaseRequest
+        IBSRequest
+        IBSRequestAction
+        IBSRequestActionTrack
     end
 
     CVE --> CVEExternalIdentifier
@@ -104,7 +105,9 @@ flowchart TB
     User --> Session
     User --> ApiKey
     FetcherConfig -->|"FK fetcher_name"| FetcherRun
-    SubmissionRequest -.->|"incident_number"| ReleaseRequest
+    IBSRequest --> IBSRequestAction
+    IBSRequestAction --> IBSRequestActionTrack
+    IBSRequestActionTrack --> TicketPackageTrack
 ```
 
 ### CVE & Ticket Core
@@ -419,27 +422,27 @@ erDiagram
 
 ```mermaid
 erDiagram
-    SubmissionRequest {
+    IBSRequest {
         UUID id PK
-        INTEGER request_number UK "NOT NULL"
-        VARCHAR_255 package_name "NOT NULL"
-        VARCHAR_255 codestream_name "NOT NULL"
-        VARCHAR_20 state "DEFAULT open"
-        INTEGER incident_number "nullable"
-        INTEGER superseded_by "nullable"
+        INTEGER request_number UK "positive, NOT NULL"
+        VARCHAR_20 state "NOT NULL, CHECK"
+        INTEGER superseded_by_request_number "nullable, positive"
+        TIMESTAMPTZ upstream_created_at "NOT NULL"
+        TIMESTAMPTZ upstream_updated_at "NOT NULL"
     }
-    SubmissionRequestTrack {
+    IBSRequestAction {
         UUID id PK
-        UUID submission_request_id FK "NOT NULL"
-        UUID ticket_package_track_id FK "NOT NULL"
-    }
-    ReleaseRequest {
-        UUID id PK
-        INTEGER request_number UK "NOT NULL"
-        VARCHAR_255 package_name "NOT NULL"
+        UUID ibs_request_id FK "RESTRICT, NOT NULL"
+        VARCHAR_32 action_type "NOT NULL"
+        VARCHAR_255 logical_package "NOT NULL"
         VARCHAR_255 codestream_name "NOT NULL"
-        VARCHAR_20 state "DEFAULT open"
-        INTEGER incident_number "NOT NULL"
+        INTEGER incident_number "nullable, positive"
+    }
+    IBSRequestActionTrack {
+        UUID id PK
+        UUID ibs_request_action_id FK "RESTRICT, NOT NULL"
+        UUID ticket_package_track_id FK "RESTRICT, NOT NULL"
+        TIMESTAMPTZ created_at "NOT NULL"
     }
     TrackReleaseCheckpoint {
         UUID id PK
@@ -451,10 +454,10 @@ erDiagram
         UUID id PK
     }
 
-    SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
-    SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
+    IBSRequest ||--o{ IBSRequestAction : "has actions"
+    IBSRequestAction ||--o{ IBSRequestActionTrack : "has track links"
+    IBSRequestActionTrack }o--|| TicketPackageTrack : "correlates"
     TrackReleaseCheckpoint |o--|| TicketPackageTrack : "belongs to"
-    SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
 ```
 
 ## Tables
@@ -1091,7 +1094,8 @@ never updated or removed by normal application workflows.
 Records the affectedness and delivery status of a source package in a
 specific maintenance track within the context of a ticket. The VA sets
 the affectedness status at this level. The delivery status is maintained
-by the system based on IBS SR/RR tracking data. See
+by the system based on the authoritative IBS request-action and provenance
+rules in `docs/features/packages/ibs-submission-tracking.md`. See
 `docs/features/packages/package-model.md` for the three orthogonal
 dimensions (affectedness, eligibility, delivery).
 
@@ -1665,84 +1669,155 @@ soft-delete-only track lifecycle and prevents accidental loss of operational
 progress through a hard delete. The application does not delete checkpoint
 rows independently.
 
-#### SubmissionRequest
+#### IBSRequest
 
-Tracks an IBS submission request (type `maintenance_incident`) relevant
-to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
+One normalized IBS request parent relevant to Sentinel. A request can contain
+multiple relevant submission or release actions. Current request detail is the
+state authority; RabbitMQ events are wake-ups and do not supply persisted state.
+See `docs/features/packages/ibs-submission-tracking.md`.
 
-| Column             | Type         | Constraints              | Description                              |
-|--------------------|--------------|--------------------------|------------------------------------------|
-| id                 | UUID         | PK                       | Internal identifier                      |
-| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
-| package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
-| codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | SubmissionRequestState: `open`, `accepted`, `declined`, `revoked`, `superseded` |
-| author             | VARCHAR(64)  | nullable                 | IBS username who created the request     |
-| incident_number    | INTEGER      | nullable                 | Populated when state becomes `accepted`  |
-| superseded_by      | INTEGER      | nullable                 | Request number of the superseding request |
-| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
-| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| request_number | INTEGER | UNIQUE, NOT NULL | Positive public stable IBS request number |
+| state | VARCHAR(20) | NOT NULL | Exact `IBSRequestState` value |
+| superseded_by_request_number | INTEGER | nullable | Positive successor request number when and only when state is `superseded`; not an FK because the successor need not be retained yet |
+| upstream_created_at | TIMESTAMPTZ | NOT NULL | IBS request creation time, normalized to UTC; offset-less IBS values are interpreted as UTC |
+| upstream_updated_at | TIMESTAMPTZ | NOT NULL | Time of the authoritative current IBS state, normalized to UTC |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Local Sentinel row creation time |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Local Sentinel row update time |
 
-#### SubmissionRequestState Enum
+**CHECK constraints**:
 
-IBS submission request lifecycle state. Category A — state-machine
-(VARCHAR + CHECK constraint `chk_submission_request_state_valid`).
-Adding a value requires an Alembic migration.
+- `chk_ibs_request_request_number_positive`: `request_number > 0`.
+- `chk_ibs_request_state_valid`: `state IN ('new', 'review', 'accepted',
+  'declined', 'revoked', 'superseded', 'deleted')`.
+- `chk_ibs_request_supersession_coherence`: when `state = 'superseded'`,
+  `superseded_by_request_number` is non-null, positive, and different from
+  `request_number`; for every other state it is null.
 
-| Value | Description |
-|-------|-------------|
-| `open` | Request is pending (maps to IBS states `new` and `review`) |
-| `accepted` | Request was accepted |
-| `declined` | Request was declined. Non-final — can revert to `open` on reopen |
-| `revoked` | Request was revoked |
-| `superseded` | Request was superseded by a newer request |
+The model stores no request author, actor, comment, description, event payload,
+or raw response. An explicit upstream `deleted` state updates this retained row;
+a detail 404 does not establish deletion.
 
-#### SubmissionRequestTrack
+#### IBSRequestState Enum
 
-Links a `SubmissionRequest` to the specific `TicketPackageTrack`
-records whose CVEs are mentioned in the request's diff.
-
-| Column                   | Type      | Constraints                                | Description                        |
-|--------------------------|-----------|--------------------------------------------|------------------------------------|
-| id                       | UUID      | PK                                         | Internal identifier                |
-| submission_request_id    | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
-| ticket_package_track_id  | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
-| created_at               | TIMESTAMPTZ | NOT NULL, DEFAULT                          | Record creation timestamp          |
-
-**Unique constraint**: (submission_request_id, ticket_package_track_id)
-
-#### ReleaseRequest
-
-Tracks an IBS release request (type `maintenance_release`) relevant
-to Sentinel. See `docs/features/packages/ibs-submission-tracking.md`.
-
-| Column             | Type         | Constraints              | Description                              |
-|--------------------|--------------|--------------------------|------------------------------------------|
-| id                 | UUID         | PK                       | Internal identifier                      |
-| request_number     | INTEGER      | UNIQUE, NOT NULL         | IBS request number                       |
-| package_name       | VARCHAR(255) | NOT NULL                 | Target package                           |
-| codestream_name    | VARCHAR(255) | NOT NULL                 | Target codestream                        |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open   | ReleaseRequestState: `open`, `accepted`, `declined`, `revoked` |
-| incident_number    | INTEGER      | NOT NULL                 | Maintenance incident number              |
-| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record creation timestamp                |
-| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT        | Record update timestamp                  |
-
-**Implicit link**: `SubmissionRequest.incident_number =
-ReleaseRequest.incident_number` — the maintenance incident is not a
-separate entity but an implicit linking concept.
-
-#### ReleaseRequestState Enum
-
-IBS release request lifecycle state. Category A — state-machine
-(VARCHAR + CHECK constraint `chk_release_request_state_valid`). Adding
-a value requires an Alembic migration.
+Exact current IBS request lifecycle state. Category A — state-machine
+(`VARCHAR` + CHECK constraint `chk_ibs_request_state_valid`). Adding a value
+requires an Alembic migration.
 
 | Value | Description |
-|-------|-------------|
-| `open` | Request is pending (maps to IBS states `new` and `review`) |
-| `accepted` | Request was accepted |
-| `declined` | Request was declined. Non-final — can revert to `open` on reopen |
-| `revoked` | Request was revoked |
+|---|---|
+| `new` | Newly created request that may progress |
+| `review` | Request under review that may progress |
+| `accepted` | Request accepted and executed by IBS |
+| `declined` | Request declined; current detail may later report `new` or `review` |
+| `revoked` | Request withdrawn |
+| `superseded` | Request replaced by the required successor request number |
+| `deleted` | IBS explicitly reports the request as deleted; the local row remains retained |
+
+#### IBSRequestAction
+
+One normalized relevant action belonging to one `IBSRequest`. Both submission
+(`maintenance_incident`) and release (`maintenance_release`) actions use this
+table; RabbitMQ action IDs and array positions are not durable identities.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 action identifier |
+| ibs_request_id | UUID | FK(ibs_request.id) ON DELETE RESTRICT, NOT NULL | Parent request |
+| action_type | VARCHAR(32) | NOT NULL | `IBSRequestActionType`: `maintenance_incident` or `maintenance_release` |
+| source_project | VARCHAR(255) | nullable | Exact normalized action source project |
+| source_package | VARCHAR(255) | nullable | Exact normalized physical source package |
+| target_project | VARCHAR(255) | nullable | Exact normalized target project; for an accepted submission action this may be the incident project |
+| target_package | VARCHAR(255) | nullable | Exact normalized physical target package |
+| target_release_project | VARCHAR(255) | nullable | Exact submission action target release project |
+| logical_package | VARCHAR(255) | NOT NULL | Validated Sentinel logical package name |
+| codestream_name | VARCHAR(255) | NOT NULL | Exact IBS track reference represented by this action |
+| incident_number | INTEGER | nullable | Positive maintenance incident number; required for a retained release action |
+| source_revision | VARCHAR(255) | nullable | Action source revision when supplied |
+| accepted_revision | VARCHAR(255) | nullable | Action acceptinfo target revision |
+| accepted_srcmd5 | VARCHAR(32) | nullable | Accepted target source checksum, lowercase hexadecimal |
+| accepted_xsrcmd5 | VARCHAR(32) | nullable | Accepted expanded source checksum, lowercase hexadecimal |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Local Sentinel row creation time |
+| updated_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Local Sentinel row update time |
+
+**CHECK constraints**:
+
+- `chk_ibs_request_action_incident_number_positive`: `incident_number IS NULL
+  OR incident_number > 0`.
+- `chk_ibs_request_action_type_coherence`: a `maintenance_incident` action has
+  non-null `source_project`, `source_package`, and `target_release_project`,
+  with `codestream_name = target_release_project`; a `maintenance_release`
+  action has non-null `source_project`, `source_package`, `target_project`,
+  `target_package`, and `incident_number`, with
+  `codestream_name = target_project`.
+- `chk_ibs_request_action_accepted_srcmd5_hex` and
+  `chk_ibs_request_action_accepted_xsrcmd5_hex`: each corresponding nullable
+  checksum is exactly 32 lowercase hexadecimal characters when present.
+
+**Indexes**:
+
+- `uq_ibs_request_action_maintenance_incident_identity`: unique partial index
+  on `(ibs_request_id, source_project, source_package,
+  target_release_project)` WHERE
+  `action_type = 'maintenance_incident'`.
+- `uq_ibs_request_action_maintenance_release_identity`: unique partial index
+  on `(ibs_request_id, target_project, target_package)` WHERE
+  `action_type = 'maintenance_release'`.
+
+These indexes encode the request-scoped, type-specific durable semantic
+identities. The partial-index predicate fixes the action type, so that redundant
+column is omitted from each key. Submission action target project and package
+fields are deliberately outside its identity
+because acceptance can add or change them. A different semantic identity is a
+distinct retained action, not an in-place identity rewrite. Later complete
+observations can fill omitted nullable provenance, but omission never clears
+retained provenance.
+
+#### IBSRequestActionType Enum
+
+Relevant IBS request action discriminator. The owning feature requires both a
+`VARCHAR(32)` column and a Category B Python `StrEnum`. The type-specific
+structural CHECK has one branch for each value, so an unknown value cannot
+satisfy row coherence even though there is no separate single-column enum CHECK.
+Adding a value requires a code change and corresponding structural-coherence and
+identity migration.
+
+| Value | Description |
+|---|---|
+| `maintenance_incident` | Submission action that creates or updates maintenance incident contents |
+| `maintenance_release` | Release action that delivers incident contents toward a codestream |
+
+#### IBSRequestActionTrack
+
+Correlates one exact request action to one exact `TicketPackageTrack`. It is
+used for both submission and release actions.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| id | UUID | PK | Internal UUIDv7 identifier |
+| ibs_request_action_id | UUID | FK(ibs_request_action.id) ON DELETE RESTRICT, NOT NULL | Relevant normalized action |
+| ticket_package_track_id | UUID | FK(ticket_package_track.id) ON DELETE RESTRICT, NOT NULL | Exact Ticket/CVE/package/codestream occurrence |
+| created_at | TIMESTAMPTZ | NOT NULL, DEFAULT | Local time Sentinel first recognized the correlation |
+
+**Unique constraint**: `(ticket_package_track_id, ibs_request_action_id)`.
+The track-leading order supports the dominant ticket-scoped and reconciliation
+lookup while preserving the same pair uniqueness.
+
+One action can correlate to multiple tracks, and multiple actions can correlate
+to one track. The request-to-action and action-to-track relationships are
+explicit bidirectional ORM relationships using `back_populates`.
+
+#### IBS Request Evidence Retention
+
+Recognized requests, actions, and action-track correlations are factual domain
+evidence retained indefinitely. Upstream `deleted` state and package-tree soft
+deletion do not remove them. All foreign keys from action to request and from
+the join to action and track use `ON DELETE RESTRICT`; no routine physical
+deletion workflow exists. Retained evidence alone is not current-state
+authority: delivery is derived from a complete current observation plus the
+retained provenance.
 
 ## Notes
 
@@ -1755,7 +1830,7 @@ a value requires an Alembic migration.
   `TicketAuditEvent`, `IdentityAuditEvent`, `SettingAuditEvent`,
   `UserRole`,
   `TicketPackageMaintainer`, `FetcherRun`, `FetcherAuditEvent`,
-  `SubmissionRequestTrack`, `RoleMapping`, `ApiKey`,
+  `IBSRequestActionTrack`, `RoleMapping`, `ApiKey`,
   and `CVEAffectedVersion`
   only have `created_at`; most are immutable write-once records or are
   replaced rather than updated in place. `TicketAccessGrant` uses
@@ -1776,9 +1851,11 @@ a value requires an Alembic migration.
   not when the record was created))
 - Sentinel does not use PostgreSQL ENUM types. All enumerated columns
   use VARCHAR. State-machine enums (TicketStatus, PackageStatus,
-  DeliveryStatus, CveState, Role, FetcherRunStatus,
-  SubmissionRequestState, ReleaseRequestState) are protected by CHECK
-  constraints — see `docs/conventions.md` (Enum Storage Strategy) for
+  DeliveryStatus, CveState, Role, FetcherRunStatus, IBSRequestState) are
+  protected by CHECK constraints. `IBSRequestActionType` is a Category B
+  classification; its type-specific structural CHECK also rejects unknown
+  values as a consequence of field coherence. See `docs/conventions.md` (Enum
+  Storage Strategy) for
   the classification criterion, naming convention, and implementation
   patterns. Classification enums (audit event types, source types,
   informational labels) are validated exclusively by Python StrEnum in

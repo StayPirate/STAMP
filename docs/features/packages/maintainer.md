@@ -49,32 +49,56 @@ Codestreams where:
 2. The `TicketPackageTrack.status` is `AFFECTED`
 3. The parent ticket status is `Analyzed` (the VA has confirmed that
    fixes are needed)
-4. There is no `SubmissionRequest` correlated to this
-   `TicketPackageTrack` record (via `SubmissionRequestTrack`
-   join table), OR all correlated SRs are in a final negative state
-   (`revoked`, `superseded`, `declined` with no reopen)
+4. `TicketPackageTrack.delivery_status` is `PENDING`
 
-These represent actionable work: the maintainer needs to submit a fix.
+These represent actionable work for which Sentinel has not established current
+delivery progress. `PENDING` is not proof that no SR exists or that the latest
+synchronization completed; synchronization health remains separate from the
+maintainer projection.
 
 ### In Progress
 
 Codestreams where:
 
 1. The user is associated as a maintainer of the parent package occurrence
-2. There is at least one active `SubmissionRequest` correlated to this
-   `TicketPackageTrack` (via `SubmissionRequestTrack`) in a
-   non-final or progressing state
+2. `TicketPackageTrack.delivery_status` is `IN_PROGRESS`
+3. The displayed chain is projected through exact `IBSRequestActionTrack`
+   joins from authoritative request actions: a relevant SR in exact state
+   `new` or `review`, or the effective accepted SR/incident chain, with any
+   directly correlated RR action shown in its exact current state. An accepted
+   RR is not treated as completed unless the source/target provenance proof
+   established `RELEASED`
 
 ### Completed
 
 Codestreams where:
 
 1. The user is associated as a maintainer of the parent package occurrence
-2. The `TicketPackageTrack.status` is `FIXED`, OR
-3. There is a `ReleaseRequest` in `accepted` state correlated to this
-   track
+2. `TicketPackageTrack.delivery_status` is `RELEASED`
+3. The displayed chain contains the effective SR and the directly correlated
+   accepted `maintenance_release` action whose exact source/target provenance
+   proved release to this track
 
-These represent finished work.
+These represent proven completed delivery work. A track with
+`TicketPackageTrack.status = FIXED` alone does not appear here because
+affectedness and delivery are orthogonal dimensions; an accepted RR without the
+required provenance proof is likewise insufficient.
+
+For both chain-bearing sections, the projection uses the same effective-SR and
+accepted-RR provenance rules that produced the track's delivery status. It
+joins actions to the exact track through `IBSRequestActionTrack`; request-level
+incident equality is never a substitute for that join. Where an effective
+accepted SR/incident exists, the chain uses that effective SR. Otherwise, an
+in-progress chain uses the most recent relevant `new` or `review` SR by
+`IBSRequest.upstream_created_at`, with `IBSRequestAction.id` as the deterministic
+descending tiebreaker. An RR is shown only when its action is directly
+correlated to the track and belongs to the selected SR/incident chain. A
+completed chain uses the exact accepted RR that satisfied release provenance;
+an in-progress chain uses the most recent such RR by
+`IBSRequest.upstream_created_at` and the same action-ID tiebreaker. Every
+displayed request state is the exact current `new`, `review`, `accepted`,
+`declined`, `revoked`, `superseded`, or `deleted` value from its parent
+`IBSRequest`.
 
 ## Per-Ticket View
 
@@ -181,7 +205,7 @@ details, using the standard `{"data": [...], "meta": {"total", "page", "per_page
   "submission_chain": {
     "sr": {"number": 12345, "state": "accepted"},
     "incident": {"number": 67890},
-    "rr": {"number": 11111, "state": "open"}
+    "rr": {"number": 11111, "state": "review"}
   },
   "first_sr_created_at": "2026-04-20T08:00:00Z"
 }
@@ -194,11 +218,11 @@ details, using the standard `{"data": [...], "meta": {"total", "page", "per_page
 | ticket_sequence_id | integer | Ticket sequence number |
 | cve_id | string \| null | CVE identifier |
 | reference | string | Target codestream name |
-| submission_chain | object | Most advanced submission chain for this codestream |
-| submission_chain.sr | object | Submission request: `number` (int), `state` (string) |
+| submission_chain | object | Authoritative in-progress action chain for this codestream, projected through exact action-track joins |
+| submission_chain.sr | object | Relevant or effective maintenance-incident request: `number` (int), exact current `state` (string) |
 | submission_chain.incident | object \| null | Maintenance incident: `number` (int) |
-| submission_chain.rr | object \| null | Release request: `number` (int), `state` (string) |
-| first_sr_created_at | datetime | When the first SR was created (consumers compute "Since") |
+| submission_chain.rr | object \| null | Directly correlated maintenance-release request, if present: `number` (int), exact current `state` (string). Acceptance alone does not imply proven release |
+| first_sr_created_at | datetime | Earliest `upstream_created_at` among maintenance-incident actions directly correlated to the track (consumers compute "Since") |
 
 ### Completed Packages
 
@@ -243,8 +267,10 @@ and release date, using the standard `{"data": [...], "meta": {"total", "page", 
 | ticket_sequence_id | integer | Ticket sequence number |
 | cve_id | string \| null | CVE identifier |
 | reference | string | Target codestream name |
-| submission_chain | object | Full submission chain (all elements in accepted/final state) |
-| released_at | datetime | When the fix was released |
+| submission_chain | object | Proven chain containing the effective SR and accepted RR action correlated directly to this track |
+| released_at | datetime | Proven accepted RR's `upstream_updated_at`, representing when IBS entered the accepted state; this is not `TicketPackageProduct.released_at` |
+
+The `days` filter and `released` sorting use this projected `released_at`.
 
 ### Package Details for Ticket
 
@@ -354,9 +380,8 @@ The "Pending Fixes" query involves a multi-table join:
 ```
 User.id
   → TicketPackageMaintainer → TicketPackage
-    → TicketPackageTrack (status = AFFECTED)
+    → TicketPackageTrack (status = AFFECTED, delivery_status = PENDING)
       → Ticket (status = Analyzed)
-        → LEFT JOIN SubmissionRequestTrack (absence of active SR)
 ```
 
 For users who maintain many packages (e.g., kernel team), this could
@@ -381,8 +406,9 @@ return a significant number of rows. Mitigation strategies:
   association acquisition and visibility
 - `docs/features/packages/package-model.md` — TicketPackageTrack status
   and delivery status model
-- `docs/features/packages/ibs-submission-tracking.md` — SubmissionRequest
-  and ReleaseRequest records for in-progress/completed views
+- `docs/features/packages/ibs-submission-tracking.md` — normalized IBS request
+  actions, exact states, action-track joins, and delivery provenance for
+  pending/in-progress/completed views
 - `docs/features/tickets/tickets.md` — ticket status lifecycle and
   confidentiality model
 

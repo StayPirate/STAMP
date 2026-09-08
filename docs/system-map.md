@@ -43,7 +43,7 @@ flowchart TB
 
     subgraph datastores["Data Stores"]
         PG[("PostgreSQL")]
-        RD[("Redis<br/>(broker + cache)")]
+        RD[("Redis<br/>(broker + cache +<br/>ephemeral status)")]
     end
 
     CONSUMER["IBS RabbitMQ<br/>Consumer"]
@@ -66,7 +66,7 @@ flowchart TB
     GITWORKER --> PG
     GITWORKER <--> RD
     BEAT <--> RD
-    CONSUMER --> PG
+    CONSUMER -->|"inline domain writes"| PG
 
     API -->|"OIDC/SSO"| IDP
 
@@ -80,8 +80,8 @@ flowchart TB
     GITWORKER -->|"Git (clone/fetch)"| KERNEL
 
     CONSUMER -->|"AMQP"| RABBIT
-    CONSUMER -->|"REST API"| IBS
-    CONSUMER <--> RD
+    CONSUMER -->|"current request/source state"| IBS
+    CONSUMER -->|"best-effort heartbeat"| RD
 
     style backend fill:#fef3c7,stroke:#d97706
     style taskqueue fill:#fce7f3,stroke:#db2777
@@ -96,6 +96,8 @@ flowchart TB
 Entity-relationship diagram showing all database tables and their
 connections. Only primary keys and foreign keys are shown for readability.
 See [data-model.md](data-model.md) for full column details.
+
+The diagram contains 34 physical tables across the groups summarized below.
 
 ```mermaid
 erDiagram
@@ -307,28 +309,28 @@ erDiagram
         TIMESTAMPTZ last_seen_at
     }
 
-    SubmissionRequest {
+    IBSRequest {
         UUID id PK
         INTEGER request_number UK
-        VARCHAR package_name
-        VARCHAR codestream_name
         VARCHAR state
+        INTEGER superseded_by_request_number "nullable"
+        TIMESTAMPTZ upstream_created_at
+        TIMESTAMPTZ upstream_updated_at
+    }
+
+    IBSRequestAction {
+        UUID id PK
+        UUID ibs_request_id FK
+        VARCHAR action_type
+        VARCHAR logical_package
+        VARCHAR codestream_name
         INTEGER incident_number "nullable"
     }
 
-    SubmissionRequestTrack {
+    IBSRequestActionTrack {
         UUID id PK
-        UUID submission_request_id FK
+        UUID ibs_request_action_id FK
         UUID ticket_package_track_id FK
-    }
-
-    ReleaseRequest {
-        UUID id PK
-        INTEGER request_number UK
-        VARCHAR package_name
-        VARCHAR codestream_name
-        VARCHAR state
-        INTEGER incident_number
     }
 
     FetcherConfig {
@@ -388,9 +390,9 @@ erDiagram
     IdentityAuditEvent }o--o| User : "performed by"
     IdentityAuditEvent }o--o| User : "targets"
 
-    SubmissionRequest ||--o{ SubmissionRequestTrack : "has track links"
-    SubmissionRequestTrack }o--|| TicketPackageTrack : "references"
-    SubmissionRequest }o..o{ ReleaseRequest : "linked via incident_number"
+    IBSRequest ||--o{ IBSRequestAction : "has actions"
+    IBSRequestAction ||--o{ IBSRequestActionTrack : "has track links"
+    IBSRequestActionTrack }o--|| TicketPackageTrack : "correlates"
 
     FetcherConfig ||--o{ FetcherRun : "has runs"
     FetcherConfig ||--o{ FetcherAuditEvent : "has audit events"
@@ -409,7 +411,7 @@ erDiagram
 | **Ticket Domain** | Ticket, TicketAuditEvent, TicketAccessGrant, TicketReference, TicketPackage, TicketPackageMaintainer, TicketPackageTrack, TicketPackageProduct | Security workflow, audit trail, and access control |
 | **Product Domain** | Product, ProductRepository | SUSE distribution products and update repositories |
 | **Identity Domain** | User, UserRole, RoleMapping, Session, ApiKey, IdentityAuditEvent | Users, roles, sessions, API keys, and identity audit trail |
-| **IBS Integration** | SubmissionRequest, SubmissionRequestTrack, ReleaseRequest | IBS submission and release request tracking |
+| **IBS Integration** | IBSRequest, IBSRequestAction, IBSRequestActionTrack | Current IBS request parents, normalized submission/release actions, and exact track correlations |
 | **Platform** | FetcherConfig, FetcherRun, FetcherAuditEvent, SystemSetting, SettingAuditEvent | Background task monitoring and system configuration |
 | **Operational** | TrackReleaseCheckpoint | Per-track expanded IBS source state last successfully examined |
 
@@ -478,8 +480,9 @@ flowchart LR
 How packages are resolved, tracked across codestreams and products, and how
 releases are detected. See
 [features/packages/package-model.md](features/packages/package-model.md),
-[features/integrations/ibs-integration.md](features/integrations/ibs-integration.md), and
-[features/integrations/ibs-rabbitmq-integration.md](features/integrations/ibs-rabbitmq-integration.md).
+[features/integrations/ibs-integration.md](features/integrations/ibs-integration.md),
+[features/integrations/ibs-rabbitmq-integration.md](features/integrations/ibs-rabbitmq-integration.md),
+and [features/packages/ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md).
 
 ```mermaid
 flowchart LR
@@ -531,10 +534,32 @@ flowchart LR
         PROD_PERIODIC --> REPOS --> UINFO --> MATCH --> PKG_SVC --> PR_REL
     end
 
+    subgraph request_delivery["IBS Request and Delivery Reconciliation"]
+        direction TB
+        REQ_EVENT["IBS RabbitMQ consumer:<br/>inline request-number wake-up"]
+        REQ_PERIODIC["sync_ibs_requests<br/>(daily 02:30 UTC)"]
+        REQ_CATCHUP["Package-add / reactivation<br/>catch-up"]
+        CURRENT["Point-fetch current request detail<br/>+ action diffs and source history"]
+        SHARED["Shared authoritative<br/>track-scope reconciliation"]
+        subgraph request_tx["One atomic track-scope PostgreSQL transaction"]
+            REQUEST_PARENT["Upsert IBSRequest<br/>(current parent state)"]
+            REQUEST_ACTION["Upsert IBSRequestAction<br/>(submission / release action)"]
+            ACTION_TRACK["Upsert IBSRequestActionTrack<br/>(exact action / track join)"]
+            DELIVERY["Derive TicketPackageTrack<br/>delivery_status"]
+        end
+
+        REQ_EVENT --> CURRENT
+        REQ_PERIODIC --> CURRENT
+        REQ_CATCHUP --> CURRENT
+        CURRENT --> SHARED
+        SHARED --> REQUEST_PARENT --> REQUEST_ACTION --> ACTION_TRACK --> DELIVERY
+    end
+
     VA_ADD --> SMELT_Q
     CPE_MATCH --> SMELT_Q
     SMELT_Q --> CREATE_CS --> CREATE_PR
     SMELT_Q --> SMELT_M --> CREATE_PM
+    CREATE_CS -.->|"post-commit acceleration"| REQ_CATCHUP
 
     VA_SET --> ELIG
     ELIG_OVR -.->|manual| ELIG
@@ -544,6 +569,7 @@ flowchart LR
     style status fill:#d1fae5,stroke:#059669
     style release fill:#fce7f3,stroke:#db2777
     style prod_release fill:#f3e8ff,stroke:#7c3aed
+    style request_delivery fill:#ede9fe,stroke:#7c3aed
 ```
 
 ### Ticket Lifecycle
@@ -692,7 +718,7 @@ promote to the correct status in a single transaction.
 
 ## Feature Specification Map
 
-How the 31 feature specifications relate to each other. Arrows indicate
+How the feature specifications relate to each other. Arrows indicate
 dependencies (A → B means A depends on or references B). Specs are
 grouped by domain. See individual specs in [features/](features/).
 
@@ -714,6 +740,7 @@ flowchart TD
     subgraph integration["External Integration"]
         OBS["ibs-integration"]
         RABBIT["ibs-rabbitmq-integration"]
+        SUBMISSION["ibs-submission-tracking"]
         TRACK_RELEASE["ibs-track-release-detection"]
         PRODUCT_RELEASE["ibs-product-release-detection"]
         MAINTAINERSHIP["package-maintainership"]
@@ -751,6 +778,9 @@ flowchart TD
     OBS --> PKG
     RABBIT --> PKG
     RABBIT --> OBS
+    RABBIT --> SUBMISSION
+    SUBMISSION --> OBS
+    SUBMISSION --> PKG
     TRACK_RELEASE --> OBS
     RABBIT --> TRACK_RELEASE
     TRACK_RELEASE --> PKG
@@ -805,6 +835,7 @@ other feature:
 | [cpe-package-mapping](features/packages/cpe-package-mapping.md) | Ingestion | CPE-to-package resolution via static mapping file |
 | [ibs-integration](features/integrations/ibs-integration.md) | Integration | IBS API client for source info, diffs, and requests |
 | [ibs-rabbitmq-integration](features/integrations/ibs-rabbitmq-integration.md) | Integration | Real-time release detection via IBS RabbitMQ |
+| [ibs-submission-tracking](features/packages/ibs-submission-tracking.md) | Integration | Current IBS request actions, exact track correlation, and delivery reconciliation |
 | [ibs-track-release-detection](features/packages/ibs-track-release-detection.md) | Integration | Existing-track reconciliation via expanded IBS source state and per-track checkpoints |
 | [ibs-product-release-detection](features/packages/ibs-product-release-detection.md) | Integration | Product release reconciliation via validated stable security advisories and exact source-package matches |
 | [package-maintainership](features/packages/package-maintainership.md) | Integration | SMELT package maintainer acquisition and durable package associations |

@@ -152,7 +152,11 @@ timeouts:
   the orchestrator should be aware of. The check discovers Redis instances
   dynamically from the configured URLs (`REDIS_URL`, `CELERY_BROKER_URL`)
   so that split deployments are automatically covered without spec or code
-  changes.
+  changes. The `CELERY_BROKER_URL` instance remains an API readiness
+  dependency because the API publishes Celery work. This is independent of
+  the standalone IBS RabbitMQ consumer, which neither imports Celery nor
+  uses `CELERY_BROKER_URL`; consumer liveness is reported by its separate
+  status endpoint.
 
 - **SUSE CA certificate NOT included**: the CA is a dependency of Celery
   workers and the IBS RabbitMQ consumer, not of the API server process.

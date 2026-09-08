@@ -30,14 +30,17 @@ Leading to inconsistency, missed re-evaluations, and bugs.
 
 ### Async pattern
 
-The service is implemented as async functions. The API (FastAPI) is the
-primary consumer and calls the service directly with `await`. Entry
-points that operate in a synchronous context (Celery tasks, IBS
-RabbitMQ consumer) call the service via `asyncio.run()`.
+The service is implemented as async functions. Async entry points, including
+FastAPI and the IBS RabbitMQ consumer, call the service directly with `await`.
+Synchronous Celery task wrappers establish one outer `asyncio.run()` boundary
+for their complete async workflow; they do not create a bridge for each service
+call.
 
 | Entry point               | Invocation pattern                                              |
 |---------------------------|-----------------------------------------------------------------|
 | API endpoint              | `await ticket_mutations.set_severity_manual(session, ...)`    |
+| Celery workflow           | `await ticket_mutations.reconcile_ticket_status(session, ...)` inside its one async workflow |
+| IBS RabbitMQ consumer workflow | `await ticket_mutations.reconcile_ticket_status(session, ...)` inside the package-service call chain |
 
 ### Transaction ownership
 

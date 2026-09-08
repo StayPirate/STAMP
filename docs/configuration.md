@@ -26,11 +26,12 @@ explicitly in staging/production.
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
 | `DATABASE_URL` | string | `postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel` | PostgreSQL async connection string | — |
-| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for session cache and rate limiting | — |
+| `REDIS_URL` | string | `redis://localhost:6379/0` | Redis URL for application-owned ephemeral state, including session cache, rate limiting, locks, and the best-effort IBS consumer heartbeat | — |
 | `CELERY_BROKER_URL` | string | `redis://localhost:6379/1` | Celery task broker URL | — |
 
 All application-level Redis operations (session caching, login lockout,
-deduplication, distributed locking) use `REDIS_URL`. The Celery broker
+deduplication, distributed locking, and the IBS consumer heartbeat) use
+`REDIS_URL`. The Celery broker
 is configured separately and managed by the Celery framework —
 application code never accesses this database directly. Sentinel does
 not configure a Celery result backend (see Celery Worker Configuration
@@ -119,9 +120,11 @@ to start if either is overridden — see
 `docs/features/platform/fetcher-infrastructure.md` (Startup Validation)
 for the exact validation logic.
 
-Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
-imports the app object, this validation covers all processes
-automatically — no per-process signal handlers are needed.
+Every Celery-based process (worker and Beat) imports the app object, so this
+validation covers those processes automatically. The standalone IBS RabbitMQ
+consumer does not import the Celery application and does not perform Celery
+timezone validation; its process and container timezone still follow the
+cross-cutting UTC requirement in `docs/deployment.md`.
 
 ### Result Handling
 
@@ -193,11 +196,18 @@ Configuration).
 
 | Env Var | Type | Default | Description | Defined in |
 |---------|------|---------|-------------|------------|
-| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL (default credentials are well-known infrastructure defaults, not sensitive) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer process | `docs/features/integrations/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys | `docs/features/integrations/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
-| `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay (seconds) | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | Credential-bearing RabbitMQ connection URL. May embed credentials; excluded from settings representations and never logged | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enables the standalone consumer process and controls the status API's synthesized `disabled` state | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_INITIAL` | positive int | `5` | Initial transient reconnect delay in seconds | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+| `IBS_RABBITMQ_RECONNECT_MAX` | positive int | `300` | Transient reconnect delay cap in seconds; must be greater than or equal to `IBS_RABBITMQ_RECONNECT_INITIAL` | `docs/features/integrations/ibs-rabbitmq-integration.md` |
+
+The exchange, queue properties, bindings, AMQP heartbeat, QoS, and shutdown
+deadline are fixed integration constants. The consumer binds exactly
+`suse.obs.package.commit`, `suse.obs.request.create`, and
+`suse.obs.request.state_change`; there is no routing-key environment variable.
+It requires `DATABASE_URL` for authoritative domain work, uses `REDIS_URL` only
+for best-effort heartbeat publication, and does not read or depend on
+`CELERY_BROKER_URL`.
 
 ## TLS / Security
 

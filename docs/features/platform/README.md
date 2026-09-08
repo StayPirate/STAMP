@@ -23,7 +23,9 @@ testing-strategy.md             Testing methodology, fixtures, coverage policy
 ## Relationships
 
 - `fetcher-infrastructure.md` defines the base class contract that all
-  background data-fetching tasks inherit from.
+  scheduled data-fetching tasks inherit from. Continuous event consumers such
+  as the IBS RabbitMQ consumer are separate integration processes rather than
+  fetchers.
 - `cve-fetcher-infrastructure.md` extends `fetcher-infrastructure.md` with
   the `BaseCVEFetcher` contract for CVE-specific fetchers.
 - `git-fetcher-infrastructure.md` extends `cve-fetcher-infrastructure.md`

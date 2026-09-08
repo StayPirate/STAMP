@@ -2,669 +2,696 @@
 
 ## Purpose
 
-Complement the existing polling-based codestream release detection
-(`DetectIbsTrackReleases`, documented in
-`docs/features/packages/ibs-track-release-detection.md`) with a real-time event consumer that
-listens to IBS commit events via the RabbitMQ message bus at
-`rabbit.suse.de`. This reduces codestream-level detection latency from up
-to 24 hours (polling interval) to seconds, while maintaining the periodic
-fetcher as a catch-up mechanism for events missed during downtime.
+The IBS RabbitMQ consumer reduces the latency of two polling-owned workflows:
+
+- package-commit events accelerate IBS track-level release reconciliation; and
+- request events accelerate IBS submission and release-request reconciliation.
+
+RabbitMQ is a wake-up transport, not a source of durable or ordered domain
+state. The consumer obtains current authoritative state from the IBS REST API
+and PostgreSQL before applying an outcome. The periodic fetchers remain the
+correctness and recovery owners for messages lost while the transient queue is
+absent, deliveries that fail processing, request reopens, and other missed
+observations.
+
+The consumer is a continuous event-driven integration, not a `BaseFetcher` and
+not a Celery worker.
 
 ### Goals
 
-- Near-real-time codestream-level release detection for active tickets
-- Targeted reconciliation for an exactly represented project/package pair
-  instead of waiting for the next complete scheduled run
-- No conflicting outcomes: the RabbitMQ consumer and periodic fetcher use the
-  same per-track reconciliation and `TrackReleaseCheckpoint` contract
+- Reconcile represented IBS package tracks within seconds of a package commit.
+- Reconcile relevant IBS requests within seconds of request creation or a
+  conclusive state change.
+- Preserve the same idempotency, transaction, and authority boundaries used by
+  polling.
+- Keep delivery failure bounded and observable without an unbounded AMQP
+  redelivery loop.
+- Expose process liveness and activity through an ephemeral Redis heartbeat and
+  a public status endpoint.
 
 ### Non-Goals
 
-- Product-level detection: remains polling-based (see
-  `docs/features/packages/ibs-product-release-detection.md`).
-  The `suse.obs.repo.published` event was evaluated and rejected — its
-  payload lacks the package name, triggering full `updateinfo.xml`
-  download, snapshot-consistency validation, decompression, and parse for every
-  dependent unresolved occurrence. Per-invocation repository reuse already
-  bounds duplicate work; adding event fan-out or cross-run validator state does
-  not justify the complexity.
-- Monitoring codestreams without active tickets (see
-  [Known Limitations](#known-limitations))
+- Discovering CVEs, Tickets, packages, tracks, or Products from events.
+- Treating event payload order, revision fields, action arrays, or AMQP
+  metadata as authoritative domain state.
+- Product-level release detection. Product repository reconciliation remains
+  polling-only under
+  `docs/features/packages/ibs-product-release-detection.md`.
+- Replacing either periodic recovery fetcher.
+- Durable message storage, replay, dead-lettering, or an event inbox.
+- Publishing Celery tasks or messages.
 
-## IBS RabbitMQ Event Bus
+## Ownership Boundaries
 
-### Connection
+The package-commit path selects existing represented tracks and delegates to
+the reconciliation contract in
+`docs/features/packages/ibs-track-release-detection.md`. It does not alter
+delivery status or Product state.
 
-- **Broker URL**: `amqps://suse:suse@rabbit.suse.de`
-- **Exchange**: `pubsub` (type: topic, durable)
-- **Exchange declaration**: `passive=True`, `durable=True` — the exchange
-  is managed by IBS; consumers cannot create it
-- **Queue**: exclusive, auto-delete — declared by the consumer at
-  connection time. Exclusive queues are transient: messages published while
-  the consumer is disconnected are lost
-- **TLS**: the AMQPS connection to `rabbit.suse.de:5671` validates TLS
-  against the SUSE Trust Root CA via `SUSE_CA_CERT_PATH` (see
-  `networking.md`, TLS Trust Store Configuration)
+The request paths point-fetch the request and delegate to the shared
+authoritative request reconciliation in
+`docs/features/packages/ibs-submission-tracking.md`. They do not infer request
+state or action identity from the RabbitMQ event.
 
-### Consumed Events
+The periodic `detect_ibs_track_releases` and `sync_ibs_requests` fetchers use
+the same respective reconciliation boundaries. Successful event processing is
+therefore an idempotent no-op when polling has already accepted the current
+state, and the next complete polling run can recover a missed or failed event
+while sufficient upstream evidence remains available.
 
-Three event types are consumed:
+## AMQP Contract
 
-**`suse.obs.package.commit`** — emitted when a source package is committed
-to any IBS project.
+### Connection and Topology
 
-The track-release boundary consumes only these fields:
+The consumer connects to the URL in `IBS_RABBITMQ_URL` over AMQPS. It uses the
+combined trust store from `build_tls_context()` as specified in
+`docs/features/platform/networking.md` and requests an AMQP heartbeat interval
+of **60 seconds**.
 
-| Payload field | Required type | Description |
-|---|---|---|
-| `project` | non-empty string | IBS project identity used to select exact existing track references |
-| `package` | non-empty string | IBS package identity used to select exact existing logical package names |
+After each connection, the consumer establishes exactly this topology:
 
-Public OBS source inspection shows standard commit events can also contain
-`sender`, `comment`, `user`, `files`, `rev`, and `requestid`, but exposes no
-`srcmd5`. Those fields are not consumed by track release detection. Upstream
-fixtures have represented `rev` with inconsistent JSON types, so it is neither
-validated nor used as source-state authority.
-
-A sanitized deployed IBS `suse.obs.package.commit` payload has not yet been
-captured. Before implementation, live verification must confirm the event
-envelope, routing metadata, `project` and `package` types/nullability, the
-actual `rev` shape, and any IBS-specific extensions. A contradiction in either
-consumed identity field blocks parser implementation; it does not permit
-falling back to event revision data.
-
-**`suse.obs.request.create`** — emitted when a new request is created in
-IBS. Used for submission requests (type `maintenance_incident`) and
-release requests (type `maintenance_release`).
-
-**`suse.obs.request.state_change`** — emitted when a request transitions
-to a conclusive state (accepted, declined, revoked, superseded).
-Non-conclusive transitions (e.g., `declined -> new` on reopen) do NOT
-emit this event.
-
-Both request events share the same payload structure:
-
-| Payload field | Type   | Description                               |
-|---------------|--------|-------------------------------------------|
-| `number`      | int    | IBS request number                         |
-| `author`      | string | Original request creator                   |
-| `actions`     | array  | List of actions (filter by `type` field)   |
-| `state`       | string | Current state (for `state_change`: new state) |
-| `oldstate`    | string | Previous state (only in `state_change`)    |
-| `who`         | string | User who performed the state change        |
-
-For full payload details and processing logic, see
-`docs/features/packages/ibs-submission-tracking.md`, sections "Data Sources" and
-"Processing Pipelines".
-
-The routing keys for binding are `suse.obs.package.commit`,
-`suse.obs.request.create`, and `suse.obs.request.state_change`. The
-`suse` prefix is the IBS scope; the public OBS instance uses `opensuse`.
-
-### Events Evaluated and Rejected
-
-| Event | Reason for rejection |
+| Resource | Required declaration |
 |---|---|
-| `suse.obs.package.build_success` | Not useful for Sentinel — release detection needs source-level CVE reference analysis, not build status |
-| `suse.obs.package.build_fail` | Same as above |
-| `suse.obs.repo.published` | Payload contains `project`, `repo`, `buildid` but no package name. Would trigger expensive `updateinfo.xml` re-download/parse without knowing what changed. Measured cost: ~600-800 ms per repository. Also fires for all update types (recommended, feature), not just security |
-| `suse.obs.package.version_change` | Redundant — `package.commit` already provides the information needed to trigger diff analysis |
-
-## Consumer Architecture
-
-### Component: `IBSEventConsumer`
-
-A long-running service that maintains a persistent connection to the IBS
-RabbitMQ broker and processes commit events in real-time.
-
-**Location**: `backend/app/services/ibs_event_consumer.py`
-
-#### Lifecycle
-
-1. **Startup**: connect to `rabbit.suse.de`, declare an exclusive queue,
-   bind it to the `pubsub` exchange with routing keys
-   `suse.obs.package.commit`, `suse.obs.request.create`, and
-   `suse.obs.request.state_change`
-2. **Consume loop**: for each incoming message, execute the processing
-   pipeline (see [Processing Pipeline](#processing-pipeline))
-3. **Reconnection**: on connection loss, reconnect with exponential backoff
-   (initial: 5s, max: 300s). Log each reconnection attempt at WARNING
-   level. The AMQPS SSL context is rebuilt on each reconnection attempt,
-   ensuring that a rotated CA certificate is picked up automatically
-   without process restart
-4. **Shutdown**: on SIGTERM/SIGINT, close the connection and drain
-   in-progress messages gracefully
-
-#### Deployment
-
-The consumer runs as a **standalone process** — a dedicated long-running
-service with its own entrypoint, separate from Celery workers and Celery
-Beat. It is NOT a Celery worker: it does not consume tasks from any
-Celery queue.
-
-The consumer imports the **Celery app module**
-(`backend/app/celery_app.py`) at startup. This provides:
-
-- Access to the configured Celery application for submission-related task
-  enqueueing defined by `ibs-submission-tracking.md`
-- Automatic timezone validation (UTC check) inherited from the app
-  factory
-- Automatic lock sentinel validation inherited from the app factory
-  (innocuous — the consumer does not use redbeat)
-- `FETCHER_REGISTRY` population via `fetcher_discovery` import
-  (side-effect of the Celery app module; the consumer does not use the
-  registry)
-
-The consumer does **NOT** execute `bootstrap_fetcher_configs()` at
-startup. It does not read or write `FetcherConfig` records — that
-responsibility belongs to the API server, Celery workers, and Beat.
-
-Configuration:
-- `IBS_RABBITMQ_URL`: broker URL (default: `amqps://suse:suse@rabbit.suse.de` — well-known infrastructure defaults, not sensitive credentials)
-- `IBS_RABBITMQ_ENABLED`: boolean to enable/disable the consumer
-  (default: `true`). See [Process Startup](#process-startup) for the
-  process-level behavior when disabled.
-- `IBS_RABBITMQ_ROUTING_KEYS`: comma-separated routing keys (default:
-  `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change`)
-
-### Process Startup
-
-#### Complete Startup Sequence
-
-```
-1. Celery app module imported (backend/app/celery_app.py)
-   -> Celery app factory runs
-   -> Timezone validation (RuntimeError if CELERY_TIMEZONE != UTC)
-   -> Lock sentinel validation (RuntimeError if redbeat lock disabled)
-   -> import app.services.fetcher_discovery (populates FETCHER_REGISTRY — unused by consumer)
-
-2. Read IBS_RABBITMQ_ENABLED from configuration
-   -> If false: log INFO, exit with code 0 (see "Disabled Mode" below)
-
-3. Infrastructure connectivity check (fail-fast)
-   -> PostgreSQL: execute SELECT 1 with 5-second timeout
-      - If unreachable: log CRITICAL, exit with code 1
-   -> Redis: execute PING with 5-second timeout
-      - If unreachable: log CRITICAL, exit with code 1
-
-4. Build monitored codestream set (initial load from PostgreSQL)
-   -> Query TicketPackageTrack records with workflow_type = ibs for active
-      tickets
-   -> Cache result in memory (subsequent refreshes every 5 minutes)
-   -> If the query fails (database error): log CRITICAL, exit with code 1
-      (no previous set to fall back to — same fail-fast as step 3)
-   -> An empty result (no active tickets) is normal — proceed with empty set
-
-5. Connect to RabbitMQ broker
-   -> If unreachable: log ERROR, retry with exponential backoff
-      (existing reconnection behavior — see Lifecycle above)
-
-6. Declare exclusive queue, bind routing keys
-
-7. Begin consume loop
-```
-
-#### Disabled Mode (`IBS_RABBITMQ_ENABLED=false`)
-
-When the `IBS_RABBITMQ_ENABLED` configuration setting is `false`, the
-consumer process performs only steps 1-2 of the startup sequence:
-
-1. Import the Celery app module (validates timezone and lock sentinel
-   configuration — ensures a misconfigured Celery app is detected even
-   when the consumer is disabled)
-2. Read the `IBS_RABBITMQ_ENABLED` setting and detect `false`
-3. Log at INFO level: `"IBS RabbitMQ consumer disabled
-   (IBS_RABBITMQ_ENABLED=false). Exiting."`
-4. Exit with code 0
-
-The process does NOT check PostgreSQL or Redis connectivity when
-disabled — infrastructure checks are skipped because the consumer will
-not operate.
-
-**Orchestrator interaction**: with `restart: on-failure` (Docker Compose)
-or the equivalent Kubernetes restart policy, exit code 0 is not treated
-as a failure — the container is not restarted. This allows operators to
-disable the consumer via environment variable without removing it from
-the deployment manifest.
-
-#### Startup Failure: PostgreSQL Unreachable
-
-If PostgreSQL is unreachable during the startup connectivity check
-(step 3):
-
-- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
-  startup failed — cannot connect to PostgreSQL: {error}. The monitored
-  codestream set cannot be built. Consumer will not start."`
-- Exit with code 1
-- The orchestrator (Docker/Kubernetes) restarts the container according
-  to its restart policy. On the next attempt, if PostgreSQL is
-  reachable, the consumer proceeds normally.
-
-**Rationale**: without the monitored codestream set, the consumer cannot
-determine which events are relevant. Processing all events
-indiscriminately would cause unnecessary IBS API calls (diff requests)
-for unmonitored codestreams. Failing fast is safer than operating
-blindly.
-
-#### Startup Failure: Redis Unreachable
-
-If Redis is unreachable during the startup connectivity check (step 3,
-after PostgreSQL succeeded):
-
-- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
-  startup failed — cannot connect to Redis: {error}. Cannot enqueue
-  tasks or write heartbeat. Consumer will not start."`
-- Exit with code 1
-- The orchestrator restarts the container. On the next attempt, if Redis
-  is reachable, the consumer proceeds normally.
-
-**Rationale**: without Redis, the consumer cannot perform submission-related
-task publication or write its heartbeat. Whether that requires startup
-failure, and the relationship between functional processing and heartbeat-only
-degradation, remain part of the complete consumer lifecycle contract. Track
-release reconciliation itself performs inline PostgreSQL/IBS work and does not
-enqueue a Ticket-creation task.
-
-**Contrast with runtime Redis unavailability**: the heartbeat section
-(Redis Heartbeat above) specifies that runtime Redis failures for
-heartbeat writes are non-fatal (log WARNING, continue operating). This
-is different from startup: at runtime, the consumer is already
-processing events and the inability to write heartbeat is a monitoring
-gap, not a functional failure. Task enqueue failures at runtime are
-handled per-event (the event's downstream processing fails, but the
-consumer itself continues receiving other events). At startup, however,
-total Redis unavailability means the consumer cannot perform ANY of its
-downstream responsibilities.
-
-#### Startup Failure: Codestream Set Build Fails
-
-If the initial codestream set query (step 4) fails with a database error
-after the connectivity check (step 3) succeeded:
-
-- The consumer logs at CRITICAL level: `"CRITICAL: IBS RabbitMQ consumer
-  startup failed — cannot build monitored codestream set: {error}.
-  Consumer will not start."`
-- Exit with code 1
-- The orchestrator restarts the container.
-
-**Distinction from empty result**: an empty result set (zero active
-tickets) is normal — especially on fresh installations. The consumer
-proceeds with an empty set and relies on the periodic 5-minute refresh
-to detect newly created tickets.
-
-**Distinction from runtime refresh failure**: during steady-state
-operation, a failed refresh logs WARNING and continues with the previous
-(stale) set as fallback. At initial startup, no previous set exists —
-the consumer cannot determine which events are relevant, so fail-fast
-applies.
-
-### Processing Pipeline
-
-The consumer dispatches messages based on routing key. The
-`suse.obs.package.commit` pipeline is described below. The
-`suse.obs.request.create` and `suse.obs.request.state_change` pipelines
-are specified in `docs/features/packages/ibs-submission-tracking.md`.
-
-All event types share the same monitored codestream set (a
-`Dict[codestream_name, has_non_final_tracks: bool]` — see step 2 below
-for construction). The filtering differs by event type:
-
-- **`package.commit`**: check `project in set AND
-  set[project].has_non_final_tracks == true`
-- **`request.create` / `request.state_change`**: check only
-  `project in set` (no additional filter — SR/RR events are processed
-  for all tracked codestreams regardless of track affectedness status)
-
-Membership always requires at least one parent `TicketPackageTrack` with
-`workflow_type = ibs` under an active Ticket. A Git track never contributes
-its `reference` to this set and is never mutated by an IBS event.
-
-For each `suse.obs.package.commit` event:
-
-1. **Parse wake-up identity**: validate and extract only non-empty string
-   `project` and `package` values. The event is not authoritative for a source
-   revision or checksum. Do not consume `srcmd5` or use `rev` as a checkpoint.
-
-2. **Filter by monitored codestream**: check if `project` is in the
-   monitored codestream set **and** `has_non_final_tracks` is `true`.
-   The monitored codestream set is a `Dict[codestream_name,
-   has_non_final_tracks: bool]` built from the distinct
-   `reference` values of `TicketPackageTrack` records with
-   `workflow_type = ibs` belonging to active tickets (ticket status in New,
-   Analysis, Analyzed). The `has_non_final_tracks` flag is `true` if
-   the codestream has at least one track in `ANALYSIS` or `AFFECTED`.
-   VA-excluded and lifecycle-non-actionable tracks are included because
-   release detection records factual state regardless of operational
-   actionability (see Exclusion and Actionability in
-   `docs/features/packages/package-model.md`).
-   The set is cached in memory and refreshed periodically (every 5
-   minutes) or on cache miss. A single DB query builds the entire dict
-   atomically.
-   If the project is not in the set, or `has_non_final_tracks` is
-   `false` → **acknowledge and discard** the message. No further
-   processing.
-
-3. **Select exact represented tracks**: apply the eligibility scope in
-   `ibs-track-release-detection.md` (Scope), narrowed to tracks whose project
-   and logical package exactly equal the event's `project` and `package`. If no
-   exact pair exists, acknowledge and discard without IBS HTTP work.
-
-4. **Invoke authoritative reconciliation**: pass the selected track IDs to the
-   same `reconcile_ibs_track_releases()` boundary used by polling and catch-up. The
-   detector retrieves targeted current source info with
-   `view=info&nofilename=1`, compares each `TrackReleaseCheckpoint`, requests
-   any required expanded diff, validates canonical CVE labels, and commits each
-   status/audit/checkpoint outcome independently. See
-   `docs/features/packages/ibs-track-release-detection.md`.
-
-5. **Handle linked targets**: no reverse-link fan-out is performed. The exact
-   unrepresented-package behavior and polling latency are owned by
-   `ibs-track-release-detection.md` (RabbitMQ Package-Commit Acceleration).
-
-6. **Acknowledge message**: acknowledge successful RabbitMQ processing only
-   after every selected per-track local outcome has committed or become an
-   idempotent already-completed no-op.
-   Retry-versus-immediate-ack behavior for failed events remains owned by this
-   RabbitMQ specification. Whatever policy it chooses must not block the
-   consumer indefinitely, advance a failed track's checkpoint, or hide the
-   failure from operational monitoring.
-
-### Filtering: Application-side Only
-
-RabbitMQ topic exchanges allow wildcard filtering on routing key segments,
-but the IBS routing keys encode the event type, not the project or package
-name — those are in the JSON payload. Therefore:
-
-- **No broker-level filtering** by project or package is possible
-- The consumer receives **all** events matching the bound routing keys
-- Filtering by active codestream and tracked package is performed in the
-  consumer process using in-memory set lookups — this is very fast
-  (sub-microsecond per event)
-
-The expected volume is manageable: most commits on IBS are to development
-projects (`Devel:*`, `SUSE:Factory`), not to `SUSE:SLE-*:Update`
-codestreams. The ratio of relevant to irrelevant events is low.
-
-## Interaction with Periodic Fetcher
-
-### Shared Per-Track Reconciliation
-
-The `IBSEventConsumer` and periodic `DetectIbsTrackReleases` fetcher use the same
-`TrackReleaseCheckpoint` row and reconciliation rules for each track:
-
-- a source state completed through the consumer is an unchanged-checkpoint
-  no-op in the next periodic run;
-- a source state completed through polling is likewise a no-op when a delayed
-  or duplicate event arrives; and
-- one failed track retains its predecessor even when sibling tracks sharing the
-  source response complete.
-
-Conditional checkpoint advancement prevents an older event handler from
-overwriting state accepted by a newer polling or catch-up invocation.
-
-### Schedule Change
-
-With the RabbitMQ consumer handling real-time detection, the periodic
-fetcher schedule is reduced from every 8 hours to **every 24 hours at
-02:00 UTC**. The fetcher serves as a catch-up mechanism only, covering:
-
-- Events lost during consumer downtime or reconnection (RabbitMQ queues
-  are exclusive and transient — messages sent while disconnected are lost)
-- Edge cases where event delivery fails silently
-
-### Operational Independence
-
-The two mechanisms are fully independent:
-
-- If the RabbitMQ consumer is down, the periodic fetcher continues to
-  operate normally (with 24-hour latency)
-- If the periodic fetcher is disabled, the RabbitMQ consumer continues
-  to detect releases in real-time (with no catch-up safety net)
-- Both can be enabled/disabled independently via configuration
+| Exchange | Name `pubsub`, type `topic`, `passive=True`, `durable=True` |
+| Queue | Server-named (`name=""`), `exclusive=True`, `durable=False`, `auto_delete=True` |
+| QoS | Per-consumer `prefetch_count=1` |
+
+The exchange is IBS-managed. Sentinel must not create, modify, or publish to
+it. The server-named queue exists only for the current AMQP connection. It is
+deleted when that connection ends, so messages published while the queue is
+absent are not recoverable from RabbitMQ.
+
+The consumer creates exactly three bindings, with no wildcards:
+
+1. `suse.obs.package.commit`
+2. `suse.obs.request.create`
+3. `suse.obs.request.state_change`
+
+The bindings are fixed production constants. They are not configurable. This
+prevents accidental intake of unrelated, high-volume, personal-data-bearing,
+or non-JSON event families.
+
+`prefetch_count=1` and a single handler provide sequential processing. While a
+handler performs IBS or PostgreSQL I/O, later deliveries remain queued by the
+broker as long as the AMQP session and exclusive queue remain alive. No second
+delivery is processed concurrently in the same consumer process.
+
+### Message Encoding
+
+All three routing keys use AMQP content type `application/octet-stream`; the
+body is UTF-8 encoded JSON. The consumer:
+
+1. verifies the routing key is one of the three fixed bindings;
+2. requires content type `application/octet-stream`;
+3. decodes the complete body as strict UTF-8;
+4. parses one complete JSON value; and
+5. requires the root value to be a JSON object.
+
+An unsupported routing key, different content type, invalid UTF-8, malformed
+JSON, or non-object root is a malformed delivery. Raw message bytes and parsed
+payloads are never logged or persisted.
+
+AMQP `message_id`, `correlation_id`, and timestamp are not required and are not
+used. Delivery tags and `redelivered` are transport metadata only. They are not
+deduplication keys, domain identifiers, checkpoints, or evidence of event
+ordering.
+
+## Consumed Events
+
+### Package Commit
+
+Routing key: `suse.obs.package.commit`.
+
+The consumer validates and consumes only these payload fields:
+
+| Field | Required value |
+|---|---|
+| `project` | Non-empty JSON string |
+| `package` | Non-empty JSON string |
+
+Whitespace-only values are invalid. Every other payload field is ignored
+without validation. In particular, `rev`, `requestid`, `srcmd5`, sender, user,
+comment, and file data are neither consumed nor persisted.
+
+`project` and `package` form a wake-up identity only. They do not prove a
+source revision or release. For a valid event, the handler:
+
+1. selects existing tracks that satisfy the scope in
+   `ibs-track-release-detection.md` and whose IBS project and logical package
+   exactly equal `project` and `package`;
+2. treats an empty selection as irrelevant and performs no IBS HTTP request;
+3. passes the selected track IDs to `reconcile_ibs_track_releases()`; and
+4. considers the delivery successful only when every selected track has an
+   `updated` or `no_op` outcome.
+
+A `failed` track outcome makes the delivery a terminal application failure,
+even if sibling tracks committed successfully. Successfully committed sibling
+outcomes are retained. The failed track keeps its prior checkpoint and is
+recoverable through a later event or the polling owner.
+
+The handler performs no reverse-link fan-out. An event for an unrepresented
+linked target, snapshot package, or related package is irrelevant. The
+periodic track detector remains responsible for observing changed expanded
+source state for represented logical packages.
+
+### Request Create and State Change
+
+Routing keys:
+
+- `suse.obs.request.create`
+- `suse.obs.request.state_change`
+
+Both handlers validate and consume only `number`, which must be a positive JSON
+integer. Boolean values, strings, zero, negative values, and fractional numbers
+are invalid. All other event fields are ignored without validation, including
+state, timestamps, actor fields, action arrays, action order, and event-only
+action IDs.
+
+For a valid request number, the handler performs one inline application-level
+reconciliation attempt:
+
+1. point-fetch the current request detail from the IBS REST API by `number`;
+2. validate the complete current REST representation under
+   `docs/features/integrations/ibs-integration.md`; and
+3. invoke the shared authoritative request reconciliation from
+   `ibs-submission-tracking.md` for that request number.
+
+The shared HTTP transport applies its bounded timeout and retry policy before
+an HTTP failure reaches this handler. The consumer does not add an outer retry,
+an in-memory retry, or a Celery retry. Current REST and PostgreSQL state make a
+duplicate or out-of-order request event an idempotent no-op. A request that has
+no relevant represented active-Ticket IBS track is irrelevant.
+
+Request-event handling is inline. It does not publish a correlation or
+discovery task and does not depend on a Celery broker.
+
+One request can select multiple track scopes. Any failed selected scope makes
+the delivery a terminal application failure even when sibling scope
+transactions committed successfully; committed siblings remain committed.
+
+## Per-Delivery Processing
+
+### Correlation Scope
+
+At the start of every delivered message, the consumer generates a new UUIDv7
+and binds it to logging context as `ibs_event_id`. The ID is local diagnostic
+metadata only. It is never persisted, returned by an API, sent upstream, or
+used for deduplication.
+
+The handler resets `ibs_event_id` in `finally` using the context-variable token
+from the bind operation. Reset occurs after every outcome, including malformed
+input, irrelevance, success, exception, cancellation, and shutdown. A delivery
+can therefore never leak its correlation ID into the next delivery or into
+connection-lifecycle logs.
+
+Application log records produced while handling a delivery include
+`ibs_event_id` in addition to the standard logging fields. Logs may contain a
+validated request number, sanitized project/package identity, internal track
+UUID, routing key, and bounded reason category. They must not contain raw
+payloads, credentials, actor fields, comments, descriptions, file lists,
+upstream exception text that can contain response data, or another personal
+identifier.
+
+### One-Attempt Rule
+
+Each delivery receives exactly one application-level attempt. Individual HTTP
+operations inside that attempt retain the shared transport's bounded retries;
+the AMQP handler adds no further attempt after those retries are exhausted.
+
+Database work follows the owning reconciliation transaction contract. An
+exception rolls back the incomplete local transaction. Independently committed
+per-track outcomes remain committed. No IBS, Redis, or AMQP operation occurs
+while a pessimistic PostgreSQL row lock is held.
+
+### Settlement Policy
+
+The consumer deliberately uses ACK-only terminal settlement. It never
+intentionally issues `basic.nack`, `basic.reject`, or a requeue request.
+
+When the channel remains live, the handler ACKs exactly once after any of these
+terminal outcomes:
+
+| Outcome | Counter effect | Settlement |
+|---|---|---|
+| Relevant processing succeeds | Increment `events_relevant` and `events_processed` | ACK |
+| Relevant processing is an idempotent no-op | Increment `events_relevant` and `events_processed` | ACK |
+| Event is valid but irrelevant | No relevant/processed/failed increment | ACK |
+| Routing key or payload is malformed/unsupported | Log sanitized warning; no relevant/processed/failed increment | ACK |
+| Application processing fails after the one attempt | Increment `events_relevant` and `processing_failed`, set `last_error`, log sanitized error | ACK |
+
+`events_received` increments once when handling begins, before decoding. A
+request is counted as relevant only when authoritative reconciliation selects
+at least one represented track scope. A package event is relevant only when its
+exact project/package identity selects at least one eligible represented track.
+
+ACK of a failed delivery means only that this transient delivery will not be
+retried by RabbitMQ. It does not mark failed domain work complete. The owning
+periodic fetcher supplies recovery. If that fetcher is disabled, lost and
+terminally failed events, and request reopens, have no automatic recovery until
+it is re-enabled.
+
+This policy avoids an unbounded poison-message or infrastructure-failure loop.
+No durable message ID, verified dead-letter exchange, inbox, or durable attempt
+counter exists from which bounded redelivery could be implemented safely.
+
+### Connection Loss and Consumer Cancellation
+
+Connection loss, channel loss, heartbeat timeout, or broker-side consumer
+cancellation invalidates the delivery channel. The consumer must:
+
+1. stop accepting deliveries from that channel;
+2. cancel the one in-flight handler and await its cleanup;
+3. roll back any incomplete local transaction and close handler-owned
+   resources;
+4. reset `ibs_event_id` in the handler's `finally` block;
+5. make no ACK, NACK, reject, or requeue call on the dead channel;
+6. close remaining channel/connection resources best-effort; and
+7. enter the reconnect loop and establish a new exclusive queue and bindings.
+
+Any already committed PostgreSQL transaction remains authoritative. An
+unsettled delivery and other messages held by the old exclusive queue may be
+lost when that queue is deleted. Polling owns recovery; AMQP redelivery is not
+assumed. If local work committed before the channel died, the process-scoped
+counters retain that successful outcome even though no ACK can be sent.
+
+## Process Lifecycle
+
+### Runtime Independence
+
+The consumer, implemented as `IBSEventConsumer`, runs as a standalone
+long-lived process from the same Sentinel image as the other process roles. Its
+entrypoint imports only the configuration,
+logging, database, Redis-heartbeat, AMQP, IBS-client, and owning service
+boundaries it needs.
+
+The process must not import the Celery application, fetcher discovery for its
+side effects, or any Celery task module. It does not consume or publish Celery
+messages and has no runtime dependency on `CELERY_BROKER_URL`, a Celery result
+backend, Redbeat, the fetcher registry, or broker publication. Celery timezone
+and Redbeat lock-sentinel validation are not consumer startup steps.
+
+PostgreSQL is required for authoritative selection and domain reconciliation.
+Redis is not authoritative and is used only for best-effort process heartbeat
+publication through `REDIS_URL`.
+
+### Startup
+
+The process performs these steps in order:
+
+1. Load and validate consumer, TLS, database, Redis, and logging configuration.
+2. If `IBS_RABBITMQ_ENABLED=false`, log an INFO lifecycle event and exit with
+   code 0. Do not connect to PostgreSQL, Redis, IBS, or RabbitMQ.
+3. Configure logging and initialize process-scoped heartbeat state and counters.
+4. Verify PostgreSQL connectivity with a bounded `SELECT 1`. Failure is
+   CRITICAL and terminates with a non-zero exit; the consumer cannot perform
+   domain reconciliation without PostgreSQL.
+5. Start the best-effort heartbeat loop. Initial RabbitMQ connection attempts
+   are represented as `reconnecting`, so an unavailable broker is
+   distinguishable from a dead consumer process.
+6. Build a fresh TLS context and connect to RabbitMQ with the 60-second
+   heartbeat.
+7. Passively declare `pubsub`, declare the server-named queue, apply QoS, create
+   the three exact bindings, and begin sequential consumption.
+
+Startup does not require a successful Redis `PING`. A Redis connection or write
+failure logs a WARNING and leaves event processing enabled.
+
+### Reconnection
+
+Transient RabbitMQ failures use exponential backoff beginning at 5 seconds and
+capped at 300 seconds. Once capped, attempts continue every 300 seconds until
+shutdown or successful connection. Each attempt builds a fresh TLS context so
+a rotated CA file can be picked up without process restart.
+
+SIGTERM or SIGINT interrupts an in-progress reconnect backoff wait immediately;
+shutdown never waits for the remaining delay.
+
+The consumer writes `disconnected` immediately after an established connection
+is lost. It writes `reconnecting` when reconnection begins and while waiting or
+attempting. A successful connection, topology setup, and consumer start changes
+the status to `connected` and resets the delay to 5 seconds. Process counters,
+including `reconnect_attempts`, do not reset.
+
+`reconnect_attempts` increments whenever a reconnect attempt starts after the
+initial connection attempt has failed or an established connection has been
+lost. The initial connection attempt itself is not a reconnect attempt.
+
+### Fatal and Transient Failures
+
+Failure classification is explicit:
+
+| Condition | Classification and behavior |
+|---|---|
+| Corrupt/unparseable local CA file or another local TLS-context configuration error | Fatal; log CRITICAL and exit non-zero |
+| TLS certificate or hostname verification failure | Fatal; never disable verification or reconnect indefinitely |
+| RabbitMQ authentication or authorization rejection | Fatal; log CRITICAL without credentials and exit non-zero |
+| Passive `pubsub` declaration reports a missing exchange | Fatal topology error; exit non-zero |
+| Exchange type/durability mismatch, queue/QoS/binding precondition failure, or incompatible topology | Fatal topology error; exit non-zero |
+| DNS, TCP, timeout, broker-unavailable, heartbeat-timeout, connection-reset, channel-loss, or broker cancellation without a permanent protocol rejection | Transient; clean up and reconnect with backoff |
+| PostgreSQL unavailable during startup | Fatal startup failure; exit non-zero |
+| PostgreSQL, IBS REST, validation, or local reconciliation failure for one live-channel delivery | Terminal application failure for that delivery; roll back incomplete work, ACK, and continue |
+| Redis heartbeat write failure | Monitoring degradation; log WARNING and continue without pausing consumption |
+
+A missing `SUSE_CA_CERT_PATH` retains the shared networking behavior: build a
+system-only context and warn. A resulting certificate-verification failure is
+fatal. Fatal errors rely on the deployment orchestrator to restart after an
+operator or infrastructure correction; they do not enter the internal
+reconnect loop.
+
+### Graceful Shutdown
+
+On SIGTERM or SIGINT, the consumer:
+
+1. stops requesting or accepting new deliveries;
+2. cancels the broker consumer while keeping the live channel available for the
+   current handler;
+3. gives the single in-flight handler at most **30 seconds** to complete its
+   normal transaction and settlement;
+4. if the deadline expires, cancels the handler, rolls back incomplete local
+   work, resets its correlation context, and makes no deliberate NACK/requeue;
+5. stops the heartbeat loop; and
+6. closes the queue channel and AMQP connection best-effort.
+
+If the in-flight handler finishes within the deadline, it applies the ordinary
+ACK policy. If the channel dies during shutdown, the dead-channel rule applies:
+no settlement is attempted. Shutdown does not wait for queued deliveries in the
+exclusive queue and must complete after the fixed handler deadline plus
+best-effort resource closure.
 
 ## Configuration
 
-| Variable | Type | Default | Description |
+| Variable | Type | Default | Contract |
 |---|---|---|---|
-| `IBS_RABBITMQ_URL` | string | `amqps://suse:suse@rabbit.suse.de` | AMQP broker URL (default credentials are well-known infrastructure defaults, not sensitive) |
-| `IBS_RABBITMQ_ENABLED` | bool | `true` | Enable/disable the RabbitMQ consumer |
-| `IBS_RABBITMQ_ROUTING_KEYS` | string | `suse.obs.package.commit,suse.obs.request.create,suse.obs.request.state_change` | Comma-separated routing keys for binding |
-| `IBS_RABBITMQ_RECONNECT_INITIAL` | int | `5` | Initial reconnect delay in seconds |
-| `IBS_RABBITMQ_RECONNECT_MAX` | int | `300` | Maximum reconnect delay in seconds |
+| `IBS_RABBITMQ_URL` | credential-bearing URL | `amqps://suse:suse@rabbit.suse.de` | RabbitMQ connection URL; excluded from settings representations and never logged |
+| `IBS_RABBITMQ_ENABLED` | boolean | `true` | Enables the standalone consumer process and controls the API-synthesized `disabled` status |
+| `IBS_RABBITMQ_RECONNECT_INITIAL` | positive integer seconds | `5` | Initial transient reconnect delay |
+| `IBS_RABBITMQ_RECONNECT_MAX` | positive integer seconds | `300` | Reconnect delay cap; must be greater than or equal to the initial delay |
 
-## Error Handling
+`DATABASE_URL`, `REDIS_URL`, and `SUSE_CA_CERT_PATH` retain their cross-cutting
+contracts. `REDIS_URL` is the only Redis URL used by the heartbeat. The
+consumer does not read `CELERY_BROKER_URL`.
 
-| Condition | Behavior |
-|---|---|
-| SSL context creation failure (`TLSConfigurationError` from `build_tls_context()`) | Log ERROR with file path and error detail. Terminate process with non-zero exit code. Do NOT enter the reconnection loop — a corrupt CA file is a configuration error, not a transient network condition. Operator must fix the file and restart the process |
-| RabbitMQ broker unreachable at startup | Log ERROR, retry with exponential backoff |
-| Connection lost during consumption | Log WARNING, reconnect with exponential backoff. Events during disconnection are lost (caught by periodic fetcher) |
-| Invalid/unparseable message payload | Log WARNING with routing key and sanitized parsing detail; do not log the raw payload because request and commit messages can contain personal identifiers. Acknowledge and discard |
-| IBS source-info/diff request or response validation fails | Log ERROR with sanitized project/package and bounded cause; do not advance affected per-track checkpoints. The periodic fetcher retries eligible tracks |
-| A selected per-track local outcome fails after successful IBS I/O | Roll back that track's status/audit/checkpoint transaction and leave its predecessor unchanged; successful siblings remain committed |
-| Active codestream set refresh fails | Log WARNING, continue using stale set. Retry refresh on next interval |
-| PostgreSQL unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot build the monitored codestream set without PostgreSQL |
-| Redis unreachable at startup | Log CRITICAL, exit with code 1. Orchestrator restarts the container. Consumer cannot enqueue tasks or write heartbeat without Redis |
-| Initial codestream set query fails (step 4) | Log CRITICAL, exit with code 1. Orchestrator restarts the container. No previous set to fall back to (distinct from runtime refresh failure, which uses stale set) |
+The exchange name, exchange type, queue properties, three routing keys,
+60-second AMQP heartbeat, prefetch count, and 30-second shutdown deadline are
+fixed integration constants, not environment variables.
 
 ## Monitoring and Observability
 
-The `IBSEventConsumer` is NOT a `BaseFetcher` subclass. It is a
-long-running consumer, not a periodic fetcher with discrete runs. It
-does not have a Celery Beat schedule, and the `FetcherRun` model (which
-tracks individual runs with start/end timestamps and item counts) does
-not fit its continuous execution model.
+### Heartbeat Storage
 
-Instead, the consumer reports its state via a **Redis heartbeat** and is
-surfaced via the `GET /api/v1/ibs-consumer/status` endpoint (see
-Operations API Integration below).
+The consumer writes the application-owned Redis key
+`sentinel:ibs_consumer_status` through `REDIS_URL`.
 
-### Redis Heartbeat
+Each heartbeat is one atomic Redis `SET` of the complete JSON document with an
+expiry of **60 seconds**. The consumer refreshes it every **30 seconds** and
+also writes immediately after every consumer status change. It never updates
+individual fields or extends the TTL separately from writing the complete
+value.
 
-The consumer writes its current state to a Redis key every **30 seconds**
-with a **TTL of 60 seconds**:
+The JSON value has this exact schema:
 
-- **Key**: `sentinel:ibs_consumer_status`
-- **Value**: JSON object with the following fields:
+| Field | Type | Contract |
+|---|---|---|
+| `status` | string | One of `connected`, `disconnected`, `reconnecting` |
+| `heartbeat_at` | UTC datetime | Time this complete value was written |
+| `process_started_at` | UTC datetime | Consumer process start time; constant for the process |
+| `status_since` | UTC datetime | Time the current `status` began |
+| `events_received` | non-negative integer | Deliveries whose handlers started |
+| `events_relevant` | non-negative integer | Deliveries selecting at least one authoritative represented track scope |
+| `events_processed` | non-negative integer | Relevant deliveries completed successfully, including idempotent no-ops |
+| `processing_failed` | non-negative integer | Relevant deliveries with a terminal application failure |
+| `reconnect_attempts` | non-negative integer | Reconnect attempts started after the initial connection attempt |
+| `next_retry_seconds` | non-negative integer or null | Current scheduled reconnect delay; null when connected or no retry wait is scheduled |
+| `last_error` | string or null | Most recent bounded error category from the table below |
+| `last_error_at` | UTC datetime or null | Time `last_error` was recorded; null exactly when `last_error` is null |
+
+Allowed `last_error` categories are:
+
+- `rabbitmq_connection_failed`
+- `rabbitmq_connection_lost`
+- `package_reconciliation_failed`
+- `request_reconciliation_failed`
+
+The category and timestamp retain the latest process-lifetime failure until a
+later failure replaces them or the process restarts. They are not cleared by a
+successful message or reconnect. Raw exception text is never stored in Redis.
+PostgreSQL failures during delivery processing use the package or request
+reconciliation category for the path that failed; the heartbeat does not expose
+a second overlapping database-specific category.
+Fatal startup failures may terminate before a heartbeat can report them and
+remain observable through process exit and CRITICAL logs.
+
+All counters start at zero once per process start and are monotonically
+non-decreasing for that process. They do not reset on reconnect. They are
+ephemeral diagnostics, not durable domain metrics, and disappear with the
+heartbeat after process death or prolonged Redis unavailability.
+
+Example connected heartbeat:
 
 ```json
 {
   "status": "connected",
-  "status_since": "2026-04-20T02:08:00Z",
+  "heartbeat_at": "2026-09-08T15:42:30Z",
+  "process_started_at": "2026-09-08T14:00:00Z",
+  "status_since": "2026-09-08T15:40:12Z",
   "events_received": 12847,
   "events_relevant": 342,
   "events_processed": 338,
   "processing_failed": 4,
-  "last_error": null,
-  "reconnect_attempts": 0,
-  "next_retry_seconds": null
+  "reconnect_attempts": 2,
+  "next_retry_seconds": null,
+  "last_error": "request_reconciliation_failed",
+  "last_error_at": "2026-09-08T15:31:04Z"
 }
 ```
 
-- **TTL behavior**: if the consumer process dies (crash, OOM kill, etc.),
-  it stops writing to Redis. After 60 seconds the key expires and is
-  automatically deleted. The API interprets a missing key as consumer
-  status `unreachable`.
-- **Counter reset**: all counters (`events_received`, `events_relevant`,
-  `events_processed`, `processing_failed`) are reset to zero on each new
-  connection. They represent activity since the current connection was
-  established, not cumulative totals.
-- **Reconnection state**: when the consumer is in reconnecting state,
-  it continues writing the heartbeat (the process is alive, only the
-  broker connection is down). The `reconnect_attempts` and
-  `next_retry_seconds` fields are populated.
-- **Redis unavailability**: if Redis is unreachable (any `RedisError` —
-  including connection failures and OOM rejections) when the consumer
-  attempts to write the heartbeat, the consumer logs a WARNING and
-  continues operating normally. Event consumption and processing are
-  unaffected — the heartbeat is a status reporting mechanism, not a
-  prerequisite for operation. The API will report the consumer as
-  `unreachable` (missing key) until Redis becomes available and the
-  next heartbeat write succeeds.
+Every Redis operation catches `RedisError`. A failed write logs one bounded
+WARNING and leaves the in-memory status and counters available for the next
+scheduled write. Redis unavailability never changes domain processing or AMQP
+settlement.
 
 ### Consumer States
 
-| Status | Meaning | Heartbeat |
+| Status | Producer | Meaning |
 |---|---|---|
-| `connected` | Consumer is connected to RabbitMQ and processing events | Written every 30s |
-| `disconnected` | Connection was just lost; set immediately on connection loss, before the first reconnection attempt begins | Written every 30s |
-| `reconnecting` | First reconnection attempt has started; consumer is actively retrying with exponential backoff (5s → 10s → ... → 300s, then every 300s indefinitely) | Written every 30s |
-| `unreachable` | The API cannot confirm consumer liveness: the key is absent, the API cannot read Redis, or the stored heartbeat is invalid | Key absent, unreadable, or invalid |
+| `connected` | Consumer | Connection, topology, and broker consumer are active |
+| `disconnected` | Consumer | An established connection was just lost and cleanup precedes reconnect |
+| `reconnecting` | Consumer | Initial connection recovery or a reconnect attempt/wait is active |
+| `disabled` | Status API | `IBS_RABBITMQ_ENABLED=false`; no consumer is expected to run |
+| `unreachable` | Status API | Consumer liveness cannot be established from a valid fresh heartbeat |
 
-### Metrics
+`disabled` and `unreachable` are never written by the consumer.
 
-The following counters are tracked in the heartbeat (reset on each new
-connection):
+## Status API
 
-- **Events received**: total events received from the broker (includes
-  `package.commit`, `request.create`, and `request.state_change`)
-- **Events relevant**: `package.commit` events that selected at least one exact
-  represented track after the active-codestream filter (steps 2-3)
-- **Events processed**: `package.commit` events for which every selected track
-  reached a successful or already-completed reconciliation outcome (steps 4-6)
-- **Processing failed**: `package.commit` events with at least one selected
-  track whose source-info, diff, or local reconciliation failed
-- **Requests processed**: `request.create` and `request.state_change`
-  events successfully processed by the submission tracking pipeline
+### Get IBS Consumer Status
 
-### Operations API Integration
+**`GET /api/v1/ibs-consumer/status`**
 
-The consumer state is exposed via the `GET /api/v1/ibs-consumer/status`
-endpoint, accessible without authentication. This endpoint is owned by
-this specification and will be implemented when the IBS RabbitMQ consumer
-integration is enabled. See the Endpoint Permission Map in
-`docs/features/identity/rbac.md` for the cross-reference.
+**`Access: Public`**
 
-## Known Limitations
+**`Authentication: Optional`**
 
-### Unmonitored codestreams
+The endpoint has no query parameters. It returns the standard single-resource
+envelope and HTTP 200 for every operational status.
 
-If a maintainer commits a CVE fix to a codestream that has no active
-tickets (no `TicketPackageTrack` records belonging to tickets in New,
-Analysis, or Analyzed status), the event is
-discarded by the codestream filter. This applies equally to the RabbitMQ
-consumer and the periodic fetcher — neither monitors codestreams without
-active tickets.
+#### Behavior
 
-Sentinel does not maintain an independent table of all active codestreams.
-Codestream names exist only as strings in `TicketPackageTrack`
-records, populated when packages are resolved via SMELT. Monitoring all
-codestreams would require a new data source (e.g., deriving codestreams
-from `ProductRepository` names), which is not pursued at this time
-because the scenario is rare in practice: if a codestream has active
-tickets, it is monitored; if it has no active tickets, all its packages
-are in a final status.
+1. If `IBS_RABBITMQ_ENABLED=false`, return `disabled` without reading Redis.
+   This rule ignores any stale key left by a previously enabled process.
+2. Otherwise, read `sentinel:ibs_consumer_status` through `REDIS_URL`.
+3. Return `unreachable` when Redis raises any `RedisError`, the key is absent,
+   the value is not a JSON object matching the complete heartbeat schema, a
+   timestamp is invalid or in the future, timestamp ordering is invalid, or
+   `heartbeat_at` is more than 60 seconds old.
+4. For a valid fresh heartbeat, return its consumer-written status and fields.
 
-### Transient queues
+Valid timestamp ordering requires
+`process_started_at <= status_since <= heartbeat_at`. Counters must satisfy the
+non-negative integer types above. `events_processed` and `processing_failed`
+must each be no greater than `events_relevant`, and `events_relevant` must be no
+greater than `events_received`. Unknown status or error-category values make
+the heartbeat invalid. Additional JSON fields are ignored; missing required
+fields are invalid.
 
-RabbitMQ exclusive queues are transient — messages published while the
-consumer is disconnected are permanently lost. The periodic catch-up
-fetcher (every 24 hours at 02:00 UTC) mitigates this, but events lost
-during downtime may not be detected for up to 24 hours.
+The endpoint does not return `REDIS_UNAVAILABLE`: inability to read Redis is a
+successful observation that consumer liveness cannot be confirmed, as allowed
+by the status-reporting exception in `docs/api-spec.md`.
 
-Disabling the corresponding periodic fetcher is an explicit operational choice
-that removes this recovery guarantee. The RabbitMQ consumer continues to
-operate, but missed or permanently failed events then have no polling safety
-net.
+#### Response Schema
 
-### No broker-level filtering
+| Field | Type | `disabled` / `unreachable` | Consumer-written states |
+|---|---|---|---|
+| `status` | string | Required | Required |
+| `heartbeat_at` | datetime or null | `null` | Heartbeat value |
+| `process_started_at` | datetime or null | `null` | Heartbeat value |
+| `status_since` | datetime or null | `null` | Heartbeat value |
+| `events_received` | integer or null | `null` | Heartbeat value |
+| `events_relevant` | integer or null | `null` | Heartbeat value |
+| `events_processed` | integer or null | `null` | Heartbeat value |
+| `processing_failed` | integer or null | `null` | Heartbeat value |
+| `reconnect_attempts` | integer or null | `null` | Heartbeat value |
+| `next_retry_seconds` | integer or null | `null` | Heartbeat value or `null` |
+| `last_error` | string or null | `null` | Heartbeat value or `null` |
+| `last_error_at` | datetime or null | `null` | Heartbeat value or `null` |
 
-The consumer receives all `suse.obs.package.commit` events from IBS,
-not just those for monitored codestreams. Filtering is performed
-application-side. While the per-event filtering cost is negligible
-(in-memory set lookup), the consumer must maintain a persistent
-connection and process the full event stream.
+The API never returns stale or partially valid heartbeat fields alongside
+`unreachable`. This prevents clients from mistaking expired process counters
+for current observations.
 
-## Open Points
+Connected response example:
 
-- **Per-message correlation ID.** Define a per-message correlation ID
-  for the consumer (e.g., `ibs_event_id`), bound at the start of
-  processing each AMQP message and reset at the end, so that log lines
-  produced while handling a given `package.commit` / `request.create`
-  / `request.state_change` event are correlatable to that specific
-  event. See `docs/features/platform/logging.md` (Correlation IDs) for
-  the general per-execution-unit correlation model this would follow.
+```json
+{
+  "data": {
+    "status": "connected",
+    "heartbeat_at": "2026-09-08T15:42:30Z",
+    "process_started_at": "2026-09-08T14:00:00Z",
+    "status_since": "2026-09-08T15:40:12Z",
+    "events_received": 12847,
+    "events_relevant": 342,
+    "events_processed": 338,
+    "processing_failed": 4,
+    "reconnect_attempts": 2,
+    "next_retry_seconds": null,
+    "last_error": "request_reconciliation_failed",
+    "last_error_at": "2026-09-08T15:31:04Z"
+  }
+}
+```
 
-- **Heartbeat during initial RabbitMQ connection (step 5).** If
-  RabbitMQ is unreachable at first startup (step 5 retries with
-  exponential backoff), it is unspecified when the heartbeat loop
-  begins. If the heartbeat starts only after the first successful
-  connection, a consumer stuck in step 5 for hours is indistinguishable
-  from a crashed process via the `/api/v1/ibs-consumer/status` endpoint.
-  Decide whether: (a) the heartbeat loop starts immediately after step 4
-  (reporting `reconnecting` state while retrying), or (b) it starts only
-  after the first successful connection, accepting the observability gap.
+Disabled response example:
 
-- **Per-event database query failure during steady-state.** The Error
-  Handling table specifies the per-track rollback and polling-recovery
-  boundary, but does not select the message policy when the exact-track query
-  or a checkpoint transaction fails because PostgreSQL is unavailable. Decide
-  whether the message is: (a) acknowledged and discarded (event lost),
-  (b) NACKed/requeued (risks infinite retry loop if PG is down), or
-  (c) acknowledged with the event skipped and logged for operator
-  alerting. The chosen policy must satisfy the shared non-blocking,
-  checkpoint-safety, and observability boundary above; this foundation does
-  not require per-message retries.
+```json
+{
+  "data": {
+    "status": "disabled",
+    "heartbeat_at": null,
+    "process_started_at": null,
+    "status_since": null,
+    "events_received": null,
+    "events_relevant": null,
+    "events_processed": null,
+    "processing_failed": null,
+    "reconnect_attempts": null,
+    "next_retry_seconds": null,
+    "last_error": null,
+    "last_error_at": null
+  }
+}
+```
 
-- **Exchange declaration failure at step 6.** If the consumer connects
-  to RabbitMQ successfully (step 5) but the `pubsub` exchange does not
-  exist when declaring the queue with `passive=True` (step 6), the
-  broker returns a channel error (404 NOT_FOUND). This is not a
-  transient network issue — retrying will not help. Decide whether this
-  is treated as: (a) a fatal configuration error (exit with code 1), or
-  (b) a transient error that enters the reconnection loop (in case IBS
-  ops are performing maintenance and the exchange will reappear).
+The `unreachable` response has the same null field values as `disabled`, with
+`"status": "unreachable"`.
+
+## Error and Recovery Summary
+
+| Condition | Immediate outcome | Recovery owner |
+|---|---|---|
+| Malformed or unsupported delivery | Sanitized warning and ACK | None required; poison input is discarded |
+| Valid irrelevant delivery | ACK | None required |
+| Duplicate or out-of-order delivery | Current-state no-op and ACK | None required |
+| IBS HTTP failure after shared retries | Roll back incomplete work, count failure, ACK | Corresponding periodic fetcher or later event |
+| PostgreSQL failure during delivery | Roll back, count failure, ACK | Corresponding periodic fetcher or later event |
+| Partial per-track package reconciliation | Keep committed siblings, count delivery failure, ACK | Track fetcher or later event for failed tracks |
+| Partial per-track request reconciliation | Keep committed siblings, count delivery failure, ACK | Request fetcher or later event for failed tracks |
+| Connection loss or broker cancellation | Cancel handler, no dead-channel settlement, reconnect with a new queue | Corresponding periodic fetcher for lost messages |
+| Redis unavailable | Continue consumption; heartbeat/status degrades | Next heartbeat write after Redis recovers |
+| Fatal TLS, authentication, exchange, or topology condition | Exit non-zero | Operator correction and orchestrator restart |
+| Consumer or corresponding fetcher disabled | No event acceleration or polling recovery from that component | Operator re-enables the component |
 
 ## Security
 
-- RabbitMQ credentials for `rabbit.suse.de` are embedded in the
-  connection URL (public credentials: `suse:suse`). These are read-only
-  consumer credentials shared across all SUSE-internal consumers
-- The consumer only reads from the exchange — it cannot publish messages
-  or modify the exchange/queue configuration
-- IBS API credentials for diff requests use the same `IBS_USERNAME` /
-  `IBS_PASSWORD` environment variables as the periodic fetcher (see
-  `docs/features/integrations/ibs-integration.md`)
+- TLS verification is always enabled and uses the shared combined trust store.
+- `IBS_RABBITMQ_URL` can contain credentials and is never emitted in logs,
+  heartbeat data, API responses, or settings representations.
+- Sentinel has consume-only behavior: it never publishes to `pubsub` or any
+  other AMQP exchange.
+- Fixed exact bindings minimize intake of unrelated payloads and personal data.
+- Only the minimal event identity fields are parsed. Current domain state is
+  obtained through authenticated IBS REST operations under their owning
+  contract.
+- Raw payloads, actor identities, comments, descriptions, file lists, and raw
+  upstream errors are neither persisted nor logged.
+- The public status endpoint exposes only process state, timestamps, bounded
+  categories, and aggregate process-scoped counters. It exposes no broker URL,
+  credential, payload identity, request content, project, or package.
 
-## Contract Verification Tooling
+## Testing Requirements
 
-`scripts/capture-ibs-rabbitmq.py` is a standalone developer utility that
-captures raw IBS RabbitMQ events for external contract verification per
-`docs/conventions.md` (External Integration Contract Verification). It
-connects to `rabbit.suse.de`, declares an exclusive transient queue, and
-writes unmodified event payloads and AMQP delivery metadata to an
-append-only JSONL file outside the repository worktree.
+Implementation tests must cover:
 
-Typical verification captures:
+- passive durable topic-exchange declaration, server-named exclusive
+  non-durable auto-delete queue, exact bindings, heartbeat 60, and prefetch 1;
+- rejection and ACK of unsupported routing keys, wrong content type, invalid
+  UTF-8, malformed JSON, non-object JSON, and invalid required field types;
+- package parsing that consumes only non-empty `project` and `package` and
+  ignores all other fields;
+- request parsing that consumes only a positive integer `number`, point-fetches
+  current REST truth, and never trusts event state or actions;
+- sequential handling and absence of a second in-flight delivery;
+- one application attempt after shared HTTP retries, with no NACK, reject,
+  requeue, in-memory retry, Celery task, or broker publication;
+- ACK behavior for success, idempotent no-op, irrelevance, malformed input, and
+  terminal application failure;
+- per-delivery UUIDv7 `ibs_event_id` binding and reset for every terminal and
+  cancellation path;
+- rollback of incomplete work and retention of independently committed sibling
+  outcomes;
+- cancellation cleanup and no settlement after channel or connection death;
+- transient reconnect delay, cap, fresh queue creation, and process-scoped
+  counter retention across reconnects;
+- fatal TLS/authentication/exchange/topology classification versus transient
+  broker/network classification;
+- graceful completion within the 30-second shutdown deadline and forced
+  cancellation after it;
+- PostgreSQL startup requirement and Redis-independent event processing;
+- atomic heartbeat writes through `REDIS_URL`, 30-second refresh, 60-second
+  TTL, immediate state writes, process-start counter reset, and `RedisError`
+  degradation;
+- status API `connected`, `disconnected`, `reconnecting`, `disabled`, and
+  `unreachable` responses, including HTTP 200 for absent, malformed, stale, or
+  unreadable heartbeat state;
+- heartbeat invariant validation and omission of stale fields from an
+  `unreachable` response;
+- no Celery app, task, broker, result backend, Redbeat, or fetcher-registry
+  dependency; and
+- sanitized logs, heartbeat values, and API responses with no raw message,
+  credential, or personal identifier.
 
-- **`suse.obs.request.#`** (multi-day): captures `request.create`,
-  `request.state_change`, `request.review_changed`,
-  `request.review_wanted`, `request.reviews_done`, and
-  `request.comment` events (routing keys per OBS source at
-  `src/api/app/models/event/` — verified at IBS-deployed revision
-  `fb99b659ff`) for SR/RR payload structure, action cardinality,
-  field types/nullability, and state transitions.
-- **`suse.obs.#`** with `--max-samples` (short): inventories all
-  routing keys published on IBS, with volume and sample payloads.
-- **`suse.obs.package.commit`** (multi-day): verifies commit event
-  envelope, `project`/`package` types, `rev` shape, and any
-  IBS-specific extensions.
+## Known Limitations
 
-Output files contain real IBS data and must not be committed. Only
-sanitized, minimized fixtures derived from captured evidence belong in
-`backend/tests/fixtures/`. See the script's `--help` and
-`CONTRIBUTING.md` (Developer Utilities) for usage.
+- The exclusive queue is intentionally transient. Deliveries queued during a
+  connection failure can be lost when the queue disappears.
+- A slow IBS or PostgreSQL operation can build a broker-side backlog because
+  processing is sequential. Bounded HTTP timeouts and retries prevent an HTTP
+  operation from waiting indefinitely; the design intentionally avoids
+  concurrent handlers.
+- RabbitMQ does not emit a complete request transition history, including
+  request reopens. Request polling remains mandatory for automatic convergence.
+- Recovery is available only while the corresponding polling owner is enabled
+  and sufficient authoritative IBS evidence remains discoverable.
+- The consumer cannot reconcile a package, track, or Product that Sentinel has
+  not already represented. Package-tree recovery remains outside this
+  integration.
 
-## Dependencies
+## Cross-References
 
-- `docs/features/packages/package-model.md`: defines IBS workflow scope,
-  active-Ticket observation, and per-track checkpoint safety
-- `docs/features/packages/ibs-track-release-detection.md`: defines the shared
-  track reconciliation and `TrackReleaseCheckpoint` contract
-- `docs/features/integrations/ibs-integration.md`: defines the `IBSClient` service
-   used for diff requests
-- `docs/features/platform/fetcher-infrastructure.md`: defines `BaseFetcher`
-  infrastructure (referenced for contrast — the consumer is NOT a
-  `BaseFetcher`)
-- `docs/data-sources.md`: documents the IBS RabbitMQ event bus
-  connection details, exchange configuration, and event topics
+- `docs/architecture.md` — continuous event-driven integration and process
+  boundaries
+- `docs/api-spec.md` — public optional authentication, response envelopes, and
+  status-reporting behavior
+- `docs/conventions.md` — transaction hygiene, Redis keys/errors, external
+  contract verification, and specification rules
+- `docs/data-sources.md` — IBS RabbitMQ and IBS REST source catalog
+- `docs/features/integrations/ibs-integration.md` — authoritative IBS REST
+  request and source contracts
+- `docs/features/packages/ibs-submission-tracking.md` — request reconciliation,
+  delivery state, persistence, and polling recovery
+- `docs/features/packages/ibs-track-release-detection.md` — package-commit
+  selection and shared track reconciliation
+- `docs/features/packages/ibs-product-release-detection.md` — independent
+  polling-only Product release detection
+- `docs/features/platform/logging.md` — structured logs and correlation context
+- `docs/features/platform/networking.md` — shared HTTP retries, timeouts, and
+  TLS trust store

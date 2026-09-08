@@ -1,1297 +1,882 @@
-# Submission Tracking
+# IBS Submission Tracking
 
 ## Purpose
 
-Track IBS submission requests (SR) and release requests (RR) as entities
-parallel to the package affectedness status, giving Vulnerability Analysts
-visibility into the progression of fixes without altering the existing
-`PackageStatus` model.
+Track the current IBS maintenance-request lifecycle and its relationship to
+Ticket package tracks. The feature gives consumers action-level visibility into
+submission requests (SRs) and release requests (RRs), and derives the
+`TicketPackageTrack.delivery_status` dimension from authoritative IBS evidence.
 
-Today the track affectedness status stays `AFFECTED` with no visibility
-into what happens between fix submission and delivery. A maintainer may
-have already submitted a fix days ago, but the VA has no way to know
-the progression. This feature fills that gap by tracking both SRs and RRs
-and showing them alongside the track affectedness status, while also
-managing the `delivery_status` axis independently (transitioning to
-`RELEASED` when the RR is accepted).
+Submission tracking does not change package affectedness or Product release
+confirmation:
 
-## Domain Concepts
+- `TicketPackageTrack.status` remains owned by analysis and track release
+  detection.
+- `TicketPackageTrack.delivery_status` is derived here from the SR/incident/RR
+  lifecycle.
+- `TicketPackageProduct.eligible` remains independently derived from Product
+  lifecycle and CVSS inputs.
+- `TicketPackageProduct.released_at` remains owned by Product release detection.
 
-SUSE has two processes for producing security updates:
+These dimensions meet only at the observation points defined in
+`package-model.md`. An IBS request observation never changes affectedness,
+eligibility, Product release state, or a package-tree exclusion marker.
 
-1. **Maintenance Update (MU)** — the traditional process where source code
-   resides on IBS (build.suse.de) and the entire update lifecycle happens
-   within IBS. Used for most products (SLE 15 SPx, SLES-LTSS, etc.).
+## Scope
 
-2. **Git-based workflow** — a newer process for recent products (SLE 16+)
-   where source code resides on gitea.suse.de. IBS is used only for
-   building packages and releasing updates to product repositories.
+This specification covers the IBS maintenance-update workflow represented by
+`TicketPackageTrack.workflow_type = ibs`. It does not cover Git/SLFO submission
+or delivery mechanisms.
 
-**This specification covers only the MU process.** The git-based workflow
-will require a separate tracking mechanism (Gitea API/webhooks) in the
-future.
+All recurring IBS request work is rooted in tracks belonging to active Tickets
+(`New`, `Analysis`, or `Analyzed`). Within an active Ticket, direct or inherited
+VA exclusion, Product lifecycle, actionability, affectedness status, and Product
+eligibility do not narrow factual request or delivery reconciliation. Inactive
+Tickets retain previously recognized evidence but do not contribute recurring
+work. Reactivation invokes the targeted catch-up defined below.
 
-Every pipeline in this specification applies only to
-`TicketPackageTrack.workflow_type = ibs`. The persisted workflow discriminator
-is authoritative; a Git track's `reference` is never sent to an IBS request or
-diff endpoint. Product actionability, VA exclusion, and affectedness status do
-not narrow factual SR/RR tracking within an active Ticket. See
-`package-model.md` (IBS Workflow Applicability and Convergence) for the shared
-scope and recovery boundary.
+The persisted workflow discriminator is authoritative. A Git track's
+`reference` is never sent to an IBS request, source-history, or diff operation
+and never receives an IBS request-action correlation or delivery mutation.
 
-### MU Lifecycle
+## Domain Model
 
-```
-1. Maintainer creates a submission request (SR)
-   └── Contains fix for a single package on a single codestream
-       (SUSE convention for security updates, enforced by bot)
-       │
-       ▼
-2. Update Manager (UM) reviews and accepts the SR
-   └── IBS creates a maintenance incident project: SUSE:Maintenance:XXXXX
-   └── The SR content populates the incident
-   └── Sources are rebuilt within the incident
-       │
-       ▼
-3. UM creates a release request (RR) from the incident
-       │
-       ▼
-4. QA team tests the RR
-       │
-       ▼
-5. UM accepts the RR (mostly a formality after QA approval)
-   └── Sources land in the target codestream project
-   └── Binaries are copied to eligible product repositories
-```
+An IBS request is a parent containing one or more actions. Neither action array
+position nor the RabbitMQ-only numeric `action_id` is a durable identity.
+Requests can contain multiple relevant actions, and event action arrays can be
+truncated. Sentinel therefore normalizes the parent and each relevant action.
 
-### Key Constraints
+The maintenance incident remains an implicit upstream concept. Sentinel stores
+its positive number on actions when it can be established, but does not create a
+`MaintenanceIncident` entity.
 
-- **One SR = one package + one codestream**: for security updates, SUSE
-  convention requires that a submission request contains exactly one
-  package targeting one codestream. SRs violating this are declined by
-  a bot before the UM sees them. Multi-codestream SRs are technically
-  possible in IBS but not used for security updates.
+### Maintenance Lifecycle
 
-- **One incident = one package + one codestream**: a maintenance incident
-  project (SUSE:Maintenance:XXXXX) contains exactly one package for one
-  codestream.
+1. A maintainer creates a `maintenance_incident` action in an SR.
+2. Acceptance creates or updates an incident such as
+   `SUSE:Maintenance:12345`. A later accepted SR can replace the incident's
+   effective source contents.
+3. A `maintenance_release` action in an RR releases incident contents toward a
+   codestream.
+4. Acceptance of the RR is delivery evidence only when source and target
+   provenance proves that the RR released the effective SR contents.
 
-- **Multiple SRs per incident**: more than one SR can be accepted into the
-  same incident. Each accepted SR overwrites the package sources in the
-  incident (e.g., a maintainer submits a fix, then submits an improved
-  version). The last accepted SR determines the incident content.
+IBS permits multiple actions in each request, multiple SRs for one incident,
+and multiple historical RRs for an incident. Sentinel never assumes one request
+equals one package, one codestream, or one action.
 
-- **One active RR per incident**: IBS enforces that only one RR can be
-  active (in `new` or `review` state) for a given incident at any time.
-  To create a new RR, all previous RRs must be revoked first.
+## Request States
 
-- **The incident is an implicit concept**: in Sentinel's data model, the
-  incident is not a separate entity. It is the linking key
-  (`incident_number`) shared between accepted SRs and RRs.
+Sentinel persists the exact current IBS state without a collapsed local state.
 
-### IBS Request States
+| State | Meaning for reconciliation |
+|---|---|
+| `new` | Current request is newly created and may progress. |
+| `review` | Current request is under review and may progress. |
+| `accepted` | IBS accepted and executed the request. Provenance still determines the delivery meaning of an accepted action. |
+| `declined` | IBS declined the request. The request can later return to `new` or `review`. |
+| `revoked` | IBS withdrew the request. It does not establish current delivery progress. |
+| `superseded` | IBS replaced the request. `superseded_by_request_number` identifies the successor that must be traversed. |
+| `deleted` | IBS explicitly reports the request as deleted. The retained local record is not physically deleted. |
 
-| State       | Final? | Description                                    |
-|-------------|--------|------------------------------------------------|
-| `new`       | No     | Just created                                   |
-| `review`    | No     | Under review                                   |
-| `accepted`  | Yes    | Accepted and executed                          |
-| `declined`  | **No** | Rejected, but can be reopened                  |
-| `revoked`   | Yes    | Withdrawn, irreversible                        |
-| `superseded`| Yes    | Replaced by another request                    |
+Current request detail is the state authority. Request events are wake-ups and
+their state is never applied directly. Consequently, a delayed or out-of-order
+event cannot regress local state. An authoritative detail response may replace
+any previously persisted known state with its current known state, including a
+`declined` request returning to `new` or `review`.
 
-**Important**: `declined` is NOT a final state in IBS. A declined SR or RR
-can always be reopened (state transitions back to `new` or `review`).
-Sentinel must handle this by transitioning the record back to `open` state.
+Sentinel does not impose a narrower local transition allowlist. Any of the seven
+known persisted states may be replaced by any different known current state
+returned by authoritative detail, because Sentinel may have missed intermediate
+upstream transitions. Repeated observation of the same state and normalized
+content is an idempotent no-op.
 
-## Design Principle: Parallel Tracking
+For `superseded`, a positive successor request number is required. The field is
+forbidden for every other state. An unknown state, a superseded response without
+a valid successor, or conflicting state data makes the observation incomplete;
+it does not modify retained state. A detail 404 does not prove `deleted`, because
+absence cannot distinguish deletion, retention, visibility, or a request that
+never existed. Sentinel persists `deleted` only when an authoritative response
+explicitly supplies that state.
 
-SRs and RRs are tracked as **separate entities** with their own lifecycle,
-not as modifications to `PackageStatus`. The track's `delivery_status` is
-managed exclusively by the submission tracking mechanism (SR/RR lifecycle),
-while the track's affectedness `status` is managed independently by track
-release detection (canonical CVE evidence in an expanded source diff) or
-manual VA action. The two axes are fully
-decoupled — neither triggers changes on the other.
-
-**Why not a new PackageStatus value?** Adding an intermediate status (e.g.,
-`FIX_IN_PROGRESS`) between `AFFECTED` and `FIXED` was considered and
-rejected because:
-
-- It would impact the ticket gate logic (is the new status final?
-  non-final? does it block progression?)
-- It would require handling regression (submission declined -> revert to
-  `AFFECTED`)
-- Submissions only exist at the track level
-
-**Why SR + RR instead of SR + MaintenanceIncident?** The VA's mental model
-is centered on requests: "is there an SR? what state is it in? is there a
-RR? what state is it in?". The incident is important as a linking concept
-but not as the primary entity the VA interacts with. Modeling SR and RR as
-first-class entities directly reflects the VA's perspective and avoids
-introducing a derived "phase" enum that would need to be kept in sync with
-the underlying request states.
+IBS timestamps without an offset are interpreted as UTC. The request's
+upstream `created` value becomes `upstream_created_at`; the current state
+`when` value becomes `upstream_updated_at`. Local `created_at` and `updated_at`
+remain Sentinel row chronology and are never substituted for upstream time.
 
 ## Data Model
 
-Three new tables. No modifications to existing tables.
+This feature introduces exactly three entities: `IBSRequest`,
+`IBSRequestAction`, and `IBSRequestActionTrack`. It introduces no incident,
+correlation-status, attempt, event-inbox, failure, cursor, or progress entity.
 
-**Retention**: records are kept indefinitely. The data volume is small
-(a few records per ticket) and the full history provides value for
-auditing and analysis.
+All UUID primary keys are UUIDv7. Enumerated state/action columns use `VARCHAR`
+and the constraints below; PostgreSQL enum types are not used.
 
-### SubmissionRequest
+### IBSRequest
 
-Tracks an IBS submission request (type `maintenance_incident`) relevant
-to Sentinel.
+One normalized IBS request parent.
 
-| Column             | Type         | Constraints          | Description                              |
-|--------------------|--------------|----------------------|------------------------------------------|
-| id                 | UUID         | PK                   | Internal identifier                      |
-| request_number     | INTEGER      | UNIQUE, NOT NULL     | IBS request number (from payload `number`) |
-| package_name       | VARCHAR(255) | NOT NULL             | Target package (from payload `actions[0].targetpackage`) |
-| codestream_name    | VARCHAR(255) | NOT NULL             | Target codestream (from payload `actions[0].target_releaseproject`) |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open | See SubmissionRequestState below        |
-| author             | VARCHAR(64)  |                      | IBS username who created the request (from payload `author`) |
-| incident_number    | INTEGER      | nullable             | Populated when state becomes `accepted` (extracted from `actions[0].targetproject` which becomes `SUSE:Maintenance:XXXXX` after acceptance) |
-| superseded_by      | INTEGER      | nullable             | Request number of the superseding request (from payload `superseded_by`) |
-| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp                |
-| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp                  |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Local identifier. |
+| `request_number` | INTEGER | UNIQUE, NOT NULL, positive | Public stable IBS request number. |
+| `state` | VARCHAR(20) | NOT NULL, CHECK | Exact state: `new`, `review`, `accepted`, `declined`, `revoked`, `superseded`, or `deleted`. |
+| `superseded_by_request_number` | INTEGER | nullable, positive | Successor request number; present if and only if `state = superseded`, different from `request_number`. It is not an FK because the successor need not yet be retained. |
+| `upstream_created_at` | TIMESTAMPTZ | NOT NULL | IBS request creation time, normalized to UTC. |
+| `upstream_updated_at` | TIMESTAMPTZ | NOT NULL | Time of the current IBS state, normalized to UTC. |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Local row creation time. |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Local row update time. |
 
-**Notes**:
+`state` is a state-machine enum and has a database CHECK constraint. A separate
+logical CHECK enforces the `superseded_by_request_number` state relationship and
+self-reference prohibition.
 
-- `codestream_name` comes from `target_releaseproject` in the action
-  payload (verified on wire), NOT from `targetproject`. At SR creation
-  time, `targetproject` is the generic maintenance project (e.g.,
-  `SUSE:Maintenance`), while `target_releaseproject` contains the actual
-  codestream (e.g., `SUSE:SLE-15-SP5:Update`).
-- `package_name` is extracted from `sourcepackage` by stripping the
-  codestream suffix (verified on wire). Example:
-  `sourcepackage = "PackageKit.SUSE_SLE-15-SP5_Update"` ->
-  `package_name = "PackageKit"`. See Package Name Extraction in Data
-  Sources.
-- `incident_number` is extracted from `targetproject` in the
-  `request.state_change` event when the SR is accepted. At that point,
-  IBS updates the action's `targetproject` to the incident project (e.g.,
-  `SUSE:Maintenance:12345` -> `incident_number = 12345`). This is
-  confirmed by OBS source code analysis; wire verification pending (see
-  Open Questions).
-- SUSE convention for security updates ensures one `maintenance_incident`
-  action per SR. The payload may contain additional spurious actions
-  (e.g., `delete` for cleanup of temporary projects) — these must be
-  filtered out.
+No author, actor, comment, description, review, event payload, or raw response
+is retained.
 
-### SubmissionRequestState Enum
+### IBSRequestAction
 
-| Value       | Final? | Description                                    |
-|-------------|--------|------------------------------------------------|
-| open        | No     | Request created, pending review/acceptance. Maps to IBS states `new` and `review`. |
-| accepted    | Yes    | Request accepted, incident created/updated     |
-| declined    | No     | Request rejected, but can be reopened. On reopen, transitions back to `open`. |
-| revoked     | Yes    | Request withdrawn, irreversible                |
-| superseded  | Yes    | Request replaced by a newer request            |
+One normalized relevant action belonging to one `IBSRequest`.
 
-### ReleaseRequest
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Local action identifier. |
+| `ibs_request_id` | UUID | FK(`ibs_request.id`) ON DELETE RESTRICT, NOT NULL | Parent request. |
+| `action_type` | VARCHAR(32) | NOT NULL | `maintenance_incident` or `maintenance_release`; classification validated by `IBSRequestActionType`. |
+| `source_project` | VARCHAR(255) | nullable | Exact normalized action source project. |
+| `source_package` | VARCHAR(255) | nullable | Exact normalized physical source package. |
+| `target_project` | VARCHAR(255) | nullable | Exact normalized target project. For an accepted SR this may be the incident project. |
+| `target_package` | VARCHAR(255) | nullable | Exact normalized physical target package. |
+| `target_release_project` | VARCHAR(255) | nullable | Exact SR target release project. |
+| `logical_package` | VARCHAR(255) | NOT NULL | Validated Sentinel logical package name. |
+| `codestream_name` | VARCHAR(255) | NOT NULL | Exact IBS track reference represented by this action. |
+| `incident_number` | INTEGER | nullable, positive | Incident established from accepted-SR target or RR source provenance. Required for a retained RR action. |
+| `source_revision` | VARCHAR(255) | nullable | Action source revision when supplied. |
+| `accepted_revision` | VARCHAR(255) | nullable | Action `acceptinfo` target revision. |
+| `accepted_srcmd5` | VARCHAR(32) | nullable, lowercase hexadecimal | Accepted target source checksum. |
+| `accepted_xsrcmd5` | VARCHAR(32) | nullable, lowercase hexadecimal | Accepted expanded source checksum. |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Local row creation time. |
+| `updated_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Local row update time. |
 
-Tracks an IBS release request (type `maintenance_release`) relevant to
-Sentinel.
+Type-specific structural checks require:
 
-| Column             | Type         | Constraints          | Description                              |
-|--------------------|--------------|----------------------|------------------------------------------|
-| id                 | UUID         | PK                   | Internal identifier                      |
-| request_number     | INTEGER      | UNIQUE, NOT NULL     | IBS request number (from payload `number`) |
-| package_name       | VARCHAR(255) | NOT NULL             | Target package (from payload `actions[0].targetpackage`) |
-| codestream_name    | VARCHAR(255) | NOT NULL             | Target codestream (from payload `actions[0].targetproject`) |
-| state              | VARCHAR(20)  | NOT NULL, DEFAULT open | See ReleaseRequestState below           |
-| incident_number    | INTEGER      | NOT NULL             | Extracted from `actions[0].sourceproject` (e.g., `SUSE:Maintenance:12345` -> `12345`) |
-| created_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record creation timestamp                |
-| updated_at         | TIMESTAMPTZ    | NOT NULL, DEFAULT    | Record update timestamp                  |
+- `maintenance_incident`: non-null `source_project`, `source_package`, and
+  `target_release_project`; `codestream_name` equals the validated target
+  release project. `target_project`, `target_package`, incident, revision, and
+  acceptinfo fields may be absent until IBS exposes them.
+- `maintenance_release`: non-null `source_project`, `source_package`,
+  `target_project`, `target_package`, and `incident_number`;
+  `codestream_name` equals the validated target project.
 
-**Notes**:
+Optional fields are omitted by IBS rather than represented as null. A later
+complete observation may fill a retained nullable provenance field. Omission in
+a later response never erases retained provenance. A conflicting non-null
+immutable identity or acceptinfo value makes that scope incomplete and rolls
+back its local outcome.
 
-- Unlike SRs, the RR `codestream_name` comes directly from
-  `targetproject` (the codestream where the fix will land).
-- `incident_number` is always known at RR creation time — it comes from
-  `sourceproject` (the incident project from which the release is made).
-- The `incident_number` links the RR to the SR(s) that populated the
-  incident (`SR.incident_number = RR.incident_number`).
+The type-specific structural CHECK has one branch for each
+`IBSRequestActionType` value and therefore rejects unknown action types while
+also enforcing the field requirements below. The durable semantic identities
+are conceptually request plus action type and the fields below. The
+partial-index predicate fixes the action type, so that redundant column is
+omitted from each key:
 
-### ReleaseRequestState Enum
+- maintenance incident: `(ibs_request_id, source_project,
+  source_package, target_release_project)`;
+- maintenance release: `(ibs_request_id, target_project,
+  target_package)`.
 
-| Value       | Final? | Description                                    |
-|-------------|--------|------------------------------------------------|
-| open        | No     | RR created, in QA / pending acceptance. Maps to IBS states `new` and `review`. |
-| accepted    | Yes    | RR accepted, fix released to codestream and product repositories |
-| declined    | No     | RR rejected, but can be reopened. On reopen, transitions back to `open`. |
-| revoked     | Yes    | RR revoked (must be revoked before a new RR can be created from the same incident) |
+Each identity has a type-specific unique partial index. For an SR,
+`target_project` and `target_package` are excluded from identity because
+acceptance can change or add them. Array position and event `action_id` are
+never stored or used. If a current representation has a different semantic
+identity, Sentinel retains the old recognized action and treats the new identity
+as a distinct action; it does not silently rewrite identity.
 
-### SubmissionRequestTrack (Join Table)
+### IBSRequestActionTrack
 
-Links a `SubmissionRequest` to the specific `TicketPackageTrack`
-records whose CVEs are mentioned in the request's diff.
+Correlates one exact request action to one exact `TicketPackageTrack`.
+It is used for both SR and RR actions.
 
-| Column                        | Type      | Constraints                                | Description                        |
-|-------------------------------|-----------|--------------------------------------------|------------------------------------|
-| id                            | UUID      | PK                                         | Internal identifier                |
-| submission_request_id         | UUID      | FK(submission_request.id), NOT NULL        | Related submission request         |
-| ticket_package_track_id       | UUID      | FK(ticket_package_track.id), NOT NULL      | Related track record               |
-| created_at                    | TIMESTAMPTZ | NOT NULL, DEFAULT                          | Record creation timestamp          |
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | UUID | PK | Local identifier. |
+| `ibs_request_action_id` | UUID | FK(`ibs_request_action.id`) ON DELETE RESTRICT, NOT NULL | Relevant normalized action. |
+| `ticket_package_track_id` | UUID | FK(`ticket_package_track.id`) ON DELETE RESTRICT, NOT NULL | Exact Ticket/CVE/package/codestream occurrence. |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT | Time Sentinel first recognized the correlation. |
 
-**Unique constraint**: (submission_request_id, ticket_package_track_id)
+The pair `(ticket_package_track_id, ibs_request_action_id)` is unique. Track is
+the leading column because ticket-scoped APIs, maintainer projections, and
+reconciliation load correlations from the exact track scope.
+One action can correlate to multiple tracks when its diff names multiple Ticket
+CVEs or the same CVE/package/codestream occurs in multiple Tickets. Multiple
+actions can correlate to one track.
 
-### Why Explicit Correlation (Join Table)
+### Retention and Deletion
 
-Implicit matching (querying `TicketPackageTrack` by codestream_name +
-package_name at display time) was considered and rejected because it would
-create **false positives**: if package `curl` on `SLE-15-SP6:Update` is
-tracked by 3 tickets (CVE-A, CVE-B, CVE-C) but a submission only fixes
-CVE-A, implicit matching would show the submission on all 3 tickets.
+Recognized relevant requests, actions, and action-track correlations are
+retained indefinitely. They are factual domain evidence, not transient fetcher
+progress. A valid diff with no matching Ticket CVE does not create a correlation
+and never causes deletion of an existing request, action, or correlation.
 
-The join table ensures that a submission is only shown on tickets whose
-CVEs are actually mentioned in the request's diff (changelog).
+An upstream `deleted` state changes only `IBSRequest.state`; it does not delete
+the local row. Package-tree exclusion is soft deletion and leaves correlations
+intact. Restrictive FKs prevent request, action, or track deletion from
+cascading away recognized evidence. There is no routine physical-deletion
+workflow for these entities.
 
-### Why No Join Table for ReleaseRequest
+Retained evidence is not by itself current-state authority. Delivery is derived
+from a complete current observation plus retained provenance. A newer complete
+upstream observation can establish that retained historical actions are no
+longer effective without deleting them.
 
-The RR does not need its own join table. Its correlation to tickets is
-derived from the SR: given a `TicketPackageTrack`, find the correlated
-SRs via the join table, collect their `incident_number` values, then find
-the RRs with matching `incident_number`.
+## Upstream Evidence
 
-### Linking SR and RR: The Incident as Implicit Concept
+### Request Discovery and Detail
 
-The maintenance incident (`SUSE:Maintenance:XXXXX`) is not modeled as a
-separate entity. Instead, the `incident_number` field on both
-`SubmissionRequest` (populated at acceptance) and `ReleaseRequest`
-(always populated) serves as the implicit link:
+The reconciler uses narrowly bounded searches rooted in the finite local track
+scope. It never depends on an unordered global `limit`/`offset` collection scan.
 
-```
-SubmissionRequest.incident_number = ReleaseRequest.incident_number
-```
+For each track it may use all of these roots:
 
-This allows queries like:
-- "Given this ticket's SR, is there a RR in progress for the same
-  incident?" (join SR -> RR on incident_number)
-- "Which SRs contributed to this incident?" (filter SRs by
-  incident_number)
+- retained exact request and action identities;
+- exact request IDs in package or incident source history;
+- narrow ID-only search for `maintenance_incident` actions in `new` or
+  `review`, using an exact retained physical package or a source-package prefix
+  rooted in `{logical_package}.`;
+- incident-scoped `maintenance_release` search;
+- current package and patchinfo issue evidence; and
+- released-binary or published-advisory evidence as optional discovery or
+  corroboration only.
 
-## Data Sources
+A narrow ID search is complete only when the response reports all matches and
+does not hit the upstream search-result limit. Every returned ID is point-fetched
+and each action is validated against the exact logical package, codestream, and
+semantic identity. Prefix matching proposes candidates; it never proves package
+identity. The common physical-package suffix transformation is not universal
+and is not used as a completeness assumption.
 
-### IBS RabbitMQ Events (Real-Time)
+Every retained or candidate request is point-fetched. Current detail supplies
+the authoritative parent state and complete REST action set available upstream.
+RabbitMQ action content is never used to fill or replace detail. Supersession is
+closed by point-fetching each positive `superseded_by_request_number`, with a
+visited set and a finite cycle check. A cycle, missing required successor, or
+unknown successor state is incomplete evidence.
 
-The `IBSEventConsumer` is extended to consume two additional routing keys
-alongside the existing `suse.obs.package.commit`:
+Source-history traversal follows the IBS history operation until the available
+history is exhausted, using its exact revision and backward-traversal controls.
+No wall-clock cutoff is applied. Upstream retention can still make old evidence
+unavailable; that condition is handled as incomplete evidence, not as absence.
 
-#### `suse.obs.request.create`
+### Action-Scoped CVE Evidence
 
-Emitted when a new request is created in IBS. Used for both SRs
-(type `maintenance_incident`) and RRs (type `maintenance_release`).
+Request diffs are evaluated per action. An issue is positive correlation
+evidence only when all of these hold:
 
-**Payload** (verified empirically on IBS RabbitMQ wire 2026-04-24):
+- it belongs to the exact action's `sourcediff`;
+- `tracker = cve`;
+- `state` is `added` or `changed`; and
+- canonical `label` exactly equals the Ticket CVE ID.
 
-```
-Top-level keys:
-  author, comment, description, id, number, actions,
-  state, when, who, namespace
+The tracker-native `name` is not reinterpreted as a CVE ID. `deleted` is not
+positive correlation evidence. `changed` is accepted because a later SR can
+replace incident contents while retaining an existing CVE reference.
 
-Each action in actions[] contains:
-  action_id, type, sourceproject, sourcepackage, sourcerevision,
-  targetproject, targetpackage, target_releaseproject,
-  makeoriginolder
-```
+A completely parsed action diff with no qualifying issue is a successful
+no-match for that action. An absent diff for an action that does not have one is
+not an error unless that diff is required to determine correlation or effective
+contents. A malformed, unavailable, truncated, or ambiguous required diff is
+incomplete and never deletes retained history or proves a negative.
 
-Not all keys are present in every action — presence depends on the
-action type. Fields observed as absent in captured payloads:
-`targetrepository`, `sourceupdate` (present in OBS source but not
-seen on the wire).
+### Effective SR
 
-**Key fields for Sentinel**:
+An accepted SR is effective for an incident only when action acceptinfo,
+incident/package source history, and request IDs identify that action as the
+source of the incident contents under evaluation. When multiple accepted SRs
+populate the same incident, source-history order and matching accepted expanded
+source state select the most recent SR that produced those contents. A later SR
+whose effective diff no longer has positive evidence for the Ticket CVE makes
+an older SR historical rather than current progress.
 
-For SRs (`type = "maintenance_incident"`):
-- `number` — the SR number
-- `author` — who created it
-- `actions[0].type` — `"maintenance_incident"`
-- `actions[0].target_releaseproject` — the codestream (e.g.,
-  `"SUSE:SLE-15-SP5:Update"`) — **VERIFIED on wire**
-- `actions[0].targetproject` — at creation time, the generic maintenance
-  project (e.g., `"SUSE:Maintenance"`)
-- `actions[0].sourcepackage` — package name with codestream suffix (e.g.,
-  `"PackageKit.SUSE_SLE-15-SP5_Update"`)
-- `actions[0].targetpackage` — **NOT PRESENT** in SR payloads. The
-  package name must be extracted from `sourcepackage` by stripping the
-  codestream suffix (see Package Name Extraction below).
+An SR in `new` or `review` can establish current progress directly after exact
+action and CVE correlation. A `superseded` SR does not establish progress by
+itself; its successor chain inherits the role only if traversal completes and a
+successor action is relevant to the same track and CVE. `declined`, `revoked`,
+and `deleted` requests do not establish current progress.
 
-For RRs (`type = "maintenance_release"`):
-- `number` — the RR number
-- `actions[0].type` — `"maintenance_release"`
-- `actions[0].sourceproject` — the incident (e.g.,
-  `"SUSE:Maintenance:43905"`)
-- `actions[0].targetproject` — the codestream (e.g.,
-  `"SUSE:SLE-15-SP5:Update"`)
-- `actions[0].targetpackage` — package name with incident number suffix
-  (e.g., `"PackageKit.43905"`)
+If the current effective incident contents cannot be identified uniquely,
+provenance is incomplete and the previous delivery state is preserved.
 
-**Spurious actions**: SR payloads may contain additional actions of type
-`delete` (cleanup of temporary project `SUSE:Maintenance:REQUEST:XXXXX`).
-RR payloads may contain `patchinfo` actions. Sentinel must filter these and
-process only actions of type `maintenance_incident` or
-`maintenance_release`.
+### Accepted RR Provenance
 
-#### Package Name Extraction
+RR acceptance alone is insufficient for `RELEASED`. Sentinel must prove this
+chain for the exact effective SR and track:
 
-The package name is not directly available as a clean field in SR or RR
-payloads. Extraction rules:
-
-For SRs: extract from `sourcepackage` by stripping the codestream suffix.
-The suffix is `.` followed by `target_releaseproject` with `:` replaced
-by `_`:
-
-```
-sourcepackage:          "PackageKit.SUSE_SLE-15-SP5_Update"
-target_releaseproject:  "SUSE:SLE-15-SP5:Update"
-suffix to strip:        ".SUSE_SLE-15-SP5_Update"
-extracted package_name: "PackageKit"
+```text
+effective SR accepted_xsrcmd5
+    == accepted RR action source_revision
+    -> RR state is accepted
+    -> RR accepted_revision / accepted_srcmd5
+    == codestream target history revision / srcmd5
+    -> the matching target-history entry identifies the RR request number
 ```
 
-For RRs: extract from `targetpackage` by stripping the incident number
-suffix. The suffix is `.` followed by the incident number (which is the
-last component of `sourceproject`):
+Every comparison must be exact and belong to the same action, incident, package,
+and codestream. If `source_revision`, `accepted_revision`, or
+`accepted_srcmd5` required by this chain is absent, the proof is incomplete; no
+other acceptinfo field is substituted. A relevant RR in any state is correlated
+directly to the track through `IBSRequestActionTrack`; only the complete accepted
+provenance chain establishes release.
 
-```
-targetpackage:   "PackageKit.43905"
-sourceproject:   "SUSE:Maintenance:43905"
-suffix to strip: ".43905"
-extracted package_name: "PackageKit"
-```
+Current patchinfo, released binaries, and published advisories can discover or
+corroborate candidates. They cannot alone prove the historical contents at RR
+acceptance and this feature never uses them to set
+`TicketPackageProduct.released_at`.
 
-#### `suse.obs.request.state_change`
+## Observation Outcomes
 
-Emitted when a request changes state. Used for both SRs and RRs.
+Each track-scope reconciliation produces exactly one classification:
 
-**Routing key**: `suse.obs.request.state_change` — **verified on wire**.
-The OBS source defines it as `request.state_change` (with underscore in
-the class, but dots on the wire as part of the full routing key).
+| Outcome | Meaning | Local effect |
+|---|---|---|
+| Complete positive | All required roots and artifacts were validated and relevant current SR/incident/RR evidence exists. | Atomically upsert relevant domain evidence and derive delivery. |
+| Complete no-match | All required roots were exhausted successfully and no relevant current delivery evidence exists. | Retain history; a non-stale negative may derive `PENDING`. |
+| Incomplete | Required evidence is absent, retention-limited, truncated, contradictory, unknown, malformed, search-limited, cyclic, or ambiguous. | Preserve request/action/correlation and delivery state exactly. |
+| Failed | A required external or local operation failed. | Roll back the scope and preserve prior state. |
 
-**Additional payload keys** (beyond the base `Request` keys):
-- `state` — new state
-- `oldstate` — previous state
-- `duration` — time spent in the previous state
+Examples of incomplete evidence include a required detail 404, unknown request
+or action type, missing accepted provenance, non-exhaustive search, unavailable
+source history, an unresolved physical package mapping, conflicting equal-time
+request detail, and a direct source modification with no request provenance.
+None is translated into a negative result.
 
-**Key detail for SRs**: when a `maintenance_incident` SR is accepted,
-`actions[0].targetproject` in the event payload is updated to the incident
-project name (e.g., `SUSE:Maintenance:12345`). This happens because OBS
-modifies the action's `target_project` to the incident project before
-saving and emitting the event (see `bs_request.rb#changestate_accepted`
-and `bs_request_action_maintenance_incident.rb#execute_accept`). Sentinel
-extracts the `incident_number` from this field.
+No upstream source guarantees indefinite retention. The feature converges while
+enough request, diff, source-history, issue, binary, or advisory evidence remains
+discoverable. If all required evidence has disappeared, preserving the last
+established local delivery state is the intentional safe result.
 
-**State change events are only emitted for conclusive (final) state
-transitions** (`bs_request.rb#send_state_change`): accepted, declined,
-revoked, superseded. Transitions like `new -> review` or `declined -> new`
-(reopen) do NOT emit `state_change` events. This means Sentinel cannot detect
-reopens via RabbitMQ — the catch-up fetcher is the only mechanism for
-detecting them.
+## Delivery Derivation
 
-### IBS REST API (Catch-Up Fetcher)
+The three delivery values retain the meanings established by
+`package-model.md`:
 
-Two IBS API endpoints are used by the periodic catch-up fetcher:
+| Delivery status | Authoritative meaning here |
+|---|---|
+| `PENDING` | Sentinel has not established relevant current delivery progress. It does not prove no SR exists or that synchronization succeeded. |
+| `IN_PROGRESS` | Complete authoritative evidence establishes a relevant current SR or effective incident chain, but no accepted RR has been proven to release the effective SR contents. |
+| `RELEASED` | Exact accepted-RR and source/target provenance proves release of the effective SR contents to the track codestream. |
 
-#### Request Search
+For a complete observation, derive the strongest proven state:
 
-```
-GET /request?view=collection&project={codestream}&states=new,review
-```
+1. Proven accepted RR provenance yields `RELEASED`.
+2. Otherwise, a relevant `new`/`review` SR, effective accepted SR/incident, or
+   complete relevant supersession successor yields `IN_PROGRESS`.
+3. Otherwise, a complete authoritative no-match yields `PENDING`.
 
-Returns all requests targeting the given project in `new` or `review`
-state. Response is XML (`<collection>` of `<request>` elements).
+`RELEASED` is irreversible. An incomplete or failed observation never changes
+delivery. `IN_PROGRESS -> PENDING` is permitted only after complete negative
+reconciliation and the stale-negative guard below. A missed history can converge
+directly from `PENDING` to the proven final outcome; when the centralized
+package mutation contract requires adjacent transitions, the transaction
+applies `PENDING -> IN_PROGRESS -> RELEASED` atomically.
 
-Supports `limit` and `offset` parameters for pagination. Requires at
-least one filter parameter (project, package, user, states, types, or
-ids).
+All effective changes use `package_service.set_track_delivery_status()` with
+system attribution. Delivery changes create no Ticket audit event and do not
+invoke affectedness or Product-release mutations.
 
-Additional filter parameters (used by Step 1b for temporal lookback):
+## Shared Authoritative Reconciliation
 
-- `types` — comma-separated action types (e.g., `maintenance_incident`,
-  `maintenance_release`)
-- `created_at_from` — ISO 8601 datetime; only return requests created at
-  or after this timestamp. Verified in OBS source code
-  (`BsRequest::FindFor::Query`); not yet tested on-the-wire against IBS.
-- `created_at_to` — ISO 8601 datetime; upper bound (inclusive, with
-  1-minute tolerance in OBS implementation)
+The same track-scoped operation is used by the daily fetcher, package-add
+acceleration, Ticket-reactivation catch-up, and RabbitMQ request-number
+wake-ups. No caller has a reduced correlation or delivery algorithm.
 
-These temporal parameters allow the catch-up fetcher to query accepted
-requests within a bounded time window (e.g., last 25 hours) instead of
-scanning the entire history.
+### Scope Identity
 
-#### Request Details
+One scope is the exact tuple:
 
-```
-GET /request/{number}
-```
-
-Returns full details of a single request, including current state and
-action list. Used by the fetcher to check the current state of requests
-that are `open` in Sentinel but no longer appear in the search results
-(because they transitioned to accepted/declined/revoked/superseded).
-
-### IBS Diff API (CVE Correlation)
-
-To correlate a submission request with specific CVEs, Sentinel extracts
-CVE-IDs from the request's diff using:
-
-```
-POST /request/{id}?cmd=diff&withissues=1&view=xml
+```text
+(Ticket CVE, logical package, codestream, TicketPackageTrack.id)
 ```
 
-Operates directly on the request — no need to know source/target MD5s.
-Returns `<issues>` block with structured entries:
-
-```xml
-<issue state="added|changed|deleted" tracker="cve" name="2026-XXXXX"
-       label="CVE-2026-XXXXX" url="..."/>
-```
-
-Only issues with `state="added"` and `tracker="cve"` are processed.
-Issues with `state="changed"` (pre-existing CVE references in request-diff
-context) and `state="deleted"` (removed references) are skipped. This is a
-request-correlation rule owned by this specification; track release detection
-has different source-state semantics and also accepts `changed` evidence. See
-`docs/features/integrations/ibs-integration.md`.
-
-Verified empirically on IBS (2026-04-29) with SR#407603: a changelog
-containing six pre-existing CVE references correctly reports them as
-`state="changed"`, while two newly added CVEs appear as
-`state="added"` — no false positives from context lines.
-
-## Processing Pipelines
-
-Submission tracking is **independent** from release detection.
-`DetectIbsTrackReleases` and the existing `IBSEventConsumer`
-`package.commit` handler do NOT update `ReleaseRequest` records when
-they detect a codestream release. The RR state is updated exclusively
-by the submission tracking pipelines below (real-time consumer for
-conclusive state changes, catch-up fetcher for missed events and
-reopens).
-
-SR and RR state changes also drive `TicketPackageTrack.delivery_status`
-updates:
-- When an SR is created for a track, `delivery_status` transitions from
-  `PENDING` to `IN_PROGRESS`
-- When the RR is accepted, `delivery_status` transitions from
-  `IN_PROGRESS` to `RELEASED`
-
-All request-event pipelines obey the shared transaction boundary. External IBS
-I/O occurs without a pessimistic database lock. Each local request,
-correlation, delivery, and audit mutation commits before the event is counted
-as successfully processed. Celery publication, including correlation work,
-occurs only after the mutation it depends on commits. Retry, ACK, or immediate
-failure behavior for an unsuccessful RabbitMQ event remains owned by
-`ibs-rabbitmq-integration.md`; it must be non-blocking, observable, and leave
-ordinary polling recovery possible.
-
-### Pipeline 1: Real-Time (IBSEventConsumer)
-
-#### On `request.create` (type = maintenance_incident) — New SR
-
-```
-1. Parse event payload
-2. Filter actions: skip any action where type != "maintenance_incident"
-3. Extract from the maintenance_incident action:
-   - codestream_name = target_releaseproject
-   - package_name = extract from sourcepackage by stripping the
-     codestream suffix (see Package Name Extraction in Data Sources)
-4. Is codestream_name the `reference` of a track with `workflow_type = ibs`
-   from an active ticket (ticket status in New, Analysis, Analyzed)?
-   If no -> skip
-5. Is package_name tracked in at least one ticket for that
-   codestream? If no -> skip
-6. Create and commit SubmissionRequest record (state = open)
-7. After commit, enqueue Celery task:
-   correlate_submission_request(submission_id)
-```
-
-#### Celery Task: `correlate_submission_request`
-
-```python
-@celery_app.task(bind=True, max_retries=3)
-def correlate_submission_request(self, submission_id):
-    try:
-        # Pipeline steps 1-5
-        # 1. Call IBS diff API for the request (see Data Sources above)
-        # 2. Extract CVE-IDs from the diff response (filter for
-        #    state="added" and tracker="cve" only)
-        # 3. If no CVE-IDs found -> delete the SubmissionRequest (silent discard)
-        # 4. For each CVE-ID:
-        #    a. Find the ticket with that CVE
-        #    b. Find the TicketPackageTrack for (ticket, codestream, package)
-        #    c. Create SubmissionRequestTrack join record (idempotent:
-        #       skip if unique constraint already satisfied)
-        # 5. If no correlations EXIST for this SR (total count of join
-        #    records in the database = 0, not just those created in this
-        #    run) -> delete the SubmissionRequest (silent discard).
-        #    Note: unknown CVE-IDs are intentionally skipped — no
-        #    ticket/CVE creation. If a ticket for that CVE is created
-        #    later, discover_submissions_for_ticket_package (Pipeline 3)
-        #    will retroactively discover this SR via IBS query.
-        ...
-    except Exception as e:
-        if is_retryable_condition(e):
-            self.retry(exc=e, countdown=5 * 2 ** self.request.retries)
-        raise  # Non-retryable: task fails permanently
-```
-
-The `is_retryable_condition()` check wraps the entire task. In practice,
-only step 1 (IBS diff API call) can raise httpx exceptions (retryable);
-steps 2-5 (local parsing and DB operations) raise non-httpx exceptions
-that `is_retryable_condition()` classifies as non-retryable.
-
-**Retry parameters**: 3 retries with exponential backoff (5s → 10s →
-20s), matching `fetch_single_cve` and `run_catch_up` (see
-`docs/features/platform/cve-fetcher-infrastructure.md`, "Retry Policy
-for `fetch_single`"). After max retries, the SR remains without
-correlations. Recovery is limited — see Open Question 4 below for the
-known gap. The SR will eventually be reconciled when it transitions to a
-final state in IBS (Pipeline 2 Step 2), or if the same package is added
-to another ticket (Pipeline 3).
-
-**Behavioral change from catch-all retry**: HTTP 4xx (except 429) is
-now classified as non-retryable by `is_retryable_condition()`. This
-aligns `correlate_submission_request` with `fetch_single_cve` behavior
-and eliminates wasted retry attempts on permanent errors like HTTP 403.
-
-#### On `request.create` (type = maintenance_release) — New RR
-
-```
-1. Parse event payload
-2. Filter actions: skip any action where type != "maintenance_release"
-   (e.g., skip patchinfo actions)
-3. Extract from the maintenance_release action:
-   - codestream_name = targetproject
-   - incident_number = extract from sourceproject
-     (e.g., "SUSE:Maintenance:12345" -> 12345)
-   - package_name = extract from targetpackage by stripping the
-     incident number suffix (see Package Name Extraction in Data Sources)
-4. Does a SubmissionRequest with this incident_number exist in Sentinel?
-   If no -> skip (the incident is not tracked)
-5. Create ReleaseRequest record (state = open)
-```
-
-#### On `request.state_change` — SR or RR State Changed
-
-```
-1. Parse event payload
-2. Determine request type from actions[0].type:
-   - "maintenance_incident" -> SR
-   - "maintenance_release" -> RR
-
-For SRs:
-3. Find SubmissionRequest by request_number
-4. If not found -> ignore (not relevant to Sentinel)
-5. Map IBS state to Sentinel state:
-   - "accepted" -> accepted
-     - Extract incident_number from actions[0].targetproject
-       (now "SUSE:Maintenance:XXXXX")
-     - Call set_sr_incident_number(SR, extracted number)
-   - "declined" -> declined
-   - "revoked" -> revoked
-   - "superseded" -> superseded
-     - Set SR.superseded_by from payload if available
-6. Update SR.state
-
-For RRs:
-3. Find ReleaseRequest by request_number
-4. If not found -> ignore (not relevant to Sentinel)
-5. Map IBS state to Sentinel state:
-   - "accepted" -> accepted
-   - "declined" -> declined
-   - "revoked" -> revoked
-6. Update RR.state
-
-Delivery status regression on SR state change:
-7. After updating SR state to 'revoked' or 'declined' (step 6 for SRs):
-   a. Look up all TicketPackageTrack records linked to this SR via
-      SubmissionRequestTrack
-   b. For each linked track where delivery_status = IN_PROGRESS:
-      - Query all other SRs linked to the same track (via
-        SubmissionRequestTrack) that are in 'open' or 'accepted' state
-      - If no active SR remains: set delivery_status = PENDING
-      - If at least one active SR remains: no change
-   Note: SR 'superseded' does NOT trigger regression (the superseding
-   SR inherits the delivery role). RR 'revoked'/'declined' does NOT
-   trigger regression (the accepted SR/incident remains valid).
-```
-
-**Note on reopens**: IBS does not emit `state_change` events for
-non-conclusive transitions (e.g., `declined -> new`). If a declined SR
-or RR is reopened, Sentinel will not detect this via RabbitMQ. The catch-up
-fetcher handles this case (see Pipeline 2).
-
-### Pipeline 2: Periodic Catch-Up (SyncIbsRequests)
-
-A `BaseFetcher` subclass that runs every **24 hours** (02:30 UTC) to
-recover events missed during consumer downtime, reconcile state
-drift, and verify delivery status consistency. This is the only
-mechanism for detecting request reopens (declined -> new/review).
-
-The lookback window (controlled by the `lookback_hours` custom setting,
-default: **25 hours**) ensures overlap across consecutive fetcher runs,
-covering total platform outages of up to 25 hours (consumer + fetcher
-both down).
-
-#### Procedure
-
-```
-Step 1 — Discover missed open SRs and reconcile known ones:
-
-  1. Identify active codestreams (distinct `reference` values from
-      TicketPackageTrack records with `workflow_type = ibs` belonging to
-      active tickets — ticket status in New, Analysis, Analyzed).
-      VA-excluded and lifecycle-non-actionable tracks are included —
-      submission tracking records factual state regardless of operational
-      participation.
-
-  2. For each active codestream:
-     GET /request?view=collection&project={codestream}&states=new,review
-
-     For each request in the response:
-       a. Determine type from action: maintenance_incident (SR) or
-          maintenance_release (RR)
-
-       For SRs:
-        b. Filter: is the targetpackage tracked in at least one ticket
-           for this codestream?
-           If no -> skip
-       c. If NOT present in SubmissionRequest table:
-          -> Create SubmissionRequest (state = open)
-          -> Enqueue correlate_submission_request task
-       d. If ALREADY present in SubmissionRequest but state is
-          'declined':
-          -> Update state to 'open' (the SR was reopened and Sentinel
-             missed the event)
-
-       For RRs:
-       e. If NOT present in ReleaseRequest table:
-          -> Does a SubmissionRequest with this incident_number exist?
-             If no -> skip
-          -> Create ReleaseRequest (state = open)
-       f. If ALREADY present in ReleaseRequest but state is 'declined':
-          -> Update state to 'open' (the RR was reopened)
-
-Step 1b — Discover missed accepted SRs (temporal lookback):
-
-  3. For each active codestream:
-     GET /request?view=collection&project={codestream}
-         &states=accepted&types=maintenance_incident
-         &created_at_from={now - 25h}
-
-     For each SR in the response:
-       a. Already in SubmissionRequest table? -> skip
-        b. targetpackage tracked in at least one ticket for this
-           codestream? If no -> skip
-        c. Create SubmissionRequest (state=accepted)
-        d. Call set_sr_incident_number(SR, extracted incident_number)
-        e. Enqueue correlate_submission_request
-
-Step 2 — Reconcile requests no longer in new/review:
-
-  4. Query all SubmissionRequest records with state = 'open' that were
-     NOT seen in Step 1 (no longer in new/review state in IBS)
-
-  5. For each such record:
-     GET /request/{number}
-      -> Update state to the current IBS state (accepted, declined,
-        revoked, superseded)
-      -> If accepted: call set_sr_incident_number(SR, extracted
-         incident_number)
-      -> If declined or revoked: evaluate delivery status regression
-         for all linked tracks (same logic as Pipeline 1 step 7)
-
-  6. Query all ReleaseRequest records with state = 'open' that were
-     NOT seen in Step 1
-
-  7. For each such record:
-     GET /request/{number}
-      -> Update state to the current IBS state (accepted, declined,
-        revoked)
-      -> If declined or revoked: evaluate delivery status regression
-         for all linked tracks (same logic as Pipeline 1 step 7)
-
-Step 3 — Delivery status reconciliation:
-
-  8. Query all TicketPackageTrack records where:
-      - track type is IBS (codestream-based)
-      - delivery_status != RELEASED
-      - the parent ticket is in an active status
-     Note: tracks with delivery_status = RELEASED are pre-filtered as an
-     optimization — they are already in final delivery state and no
-     reconciliation can advance them further.
-  9. For each such track, verify that delivery_status is consistent
-     with the current SR/RR state:
-     - If an SR is correlated and in open or accepted state but
-       delivery_status is PENDING -> set to IN_PROGRESS
-     - If an accepted RR exists for the correlated incident but
-       delivery_status is not RELEASED -> set to RELEASED
-     If set_track_delivery_status() raises InvalidDeliveryStatusTransition
-     (possible due to a TOCTOU race with the real-time RabbitMQ consumer
-     advancing the delivery status between the query and the mutation),
-     log a warning: "SyncIbsRequests: transition to delivery status
-     {status} blocked for track {track_id}" and continue with the next
-     track without failing the batch.
-```
-
-#### Why This Approach
-
-The catch-up problem for request tracking differs from the
-`package.commit` catch-up (handled by `DetectIbsTrackReleases`):
-
-- For `package.commit`, each represented track retains the expanded source
-  state it last examined. Targeted current source info can detect a change and
-  compare from that per-track checkpoint regardless of missed events.
-- For requests, there is no equivalent "state to compare" — a request
-  created and accepted during downtime leaves no trace in Sentinel's local
-  state.
-- Additionally, IBS does not emit `state_change` events for reopens
-  (`declined -> new/review`), making the catch-up fetcher the only
-  mechanism for detecting them.
-
-The IBS Request Search API (`GET /request?view=collection`) fills this
-gap by allowing Sentinel to query for currently open requests. Combined with
-point-lookup for known requests (`GET /request/{number}`) and temporal
-lookback queries (`created_at_from`), this covers missed creations,
-missed state changes, reopens, and requests that were created and
-accepted during consumer downtime.
-
-**Volume estimate**: with ~20-30 active codestreams and ~30 open requests
-per codestream, Step 1 processes ~600-900 requests per run. Most will
-already be known to Sentinel (local DB lookup, fast). Only genuinely new
-requests trigger a diff API call. Step 1b adds one query per codestream
-for accepted SRs in the last 25 hours — typically 1-5 results per
-codestream, most already known (skipped immediately). Step 2 processes
-only requests in `open` state in Sentinel that were not seen in Step 1 —
-typically a small number.
-
-The 25-hour lookback is the permanent recovery window for ordinary continuous
-operation, not a claim that the daily path reconstructs an arbitrarily long
-inactive period. The periodic fetcher also reconciles known requests and owns
-finite reprocessing of known correlations that failed. Before implementation,
-this specification must define how a failed correlation reaches either a
-successful or observable terminal outcome; an unbounded daily retry set is not
-permitted.
-
-### Pipeline 3: Retroactive Discovery (`discover_submissions_for_ticket_package`)
-
-A Celery sub-operation task (not a `BaseFetcher`) registered as a post-commit
-effect when `add_package_to_ticket` creates at least one new IBS track.
-Discovers SRs and RRs that predate Sentinel's tracking of that IBS scope.
-
-This is an on-demand sub-operation triggered by a parent operation, with no
-independent schedule or dashboard presence.
-
-**Trigger**: after the package-tree transaction commits,
-`add_package_to_ticket` enqueues this task if it created at least one
-`TicketPackageTrack` with `workflow_type = ibs`. Package maintainership is
-acquired before the Ticket lock during package resolution; its non-blocking
-failure does not suppress submission discovery. Creating only Products,
-creating only Git tracks, or a package-tree
-no-op does not enqueue discovery. The rule is independent of what triggered
-the record creation (VA manual action, CVE ingestion, or Product catalog
-backfill). Track release detection does not create package-tree records.
-
-#### Procedure
-
-```
-1. Retrieve the ticket's CVE-ID
-2. Retrieve all TicketPackageTrack records for (ticket, package) where
-   workflow_type = ibs — no affectedness-status filter (includes ANALYSIS,
-   AFFECTED, FIXED, etc.)
-    and no VA-exclusion or lifecycle-actionability filter (includes
-    VA-excluded and lifecycle-non-actionable tracks)
-3. For each track:
-   a. Query IBS:
-      GET /request?view=collection&project={codestream}
-          &package={package}&states=new,review,accepted
-          &types=maintenance_incident
-          &created_at_from={now - 14d}
-   b. For each SR in the response:
-      - Already in SubmissionRequest AND a join record exists for
-        (this SR, this TicketPackageTrack)? → skip
-      - Already in SubmissionRequest but no join record for
-        (this SR, this TicketPackageTrack)?
-        → Re-enqueue correlate_submission_request(submission_id)
-      - Not in SubmissionRequest?
-        → Create SubmissionRequest record (state mapped from IBS)
-        → Enqueue correlate_submission_request(submission_id)
-   c. For each SR (newly created or re-enqueued) with incident_number:
-      - Call set_sr_incident_number(SR, incident_number)
-        (idempotent: if incident_number is already set to the same
-        value, discover_release_requests_for_incident is still called
-        but will skip existing RR records)
-```
-
-#### Design Decisions
-
-- **No status filter on tracks**: all tracks are checked regardless of
-  their `PackageStatus` or actionability. VA-excluded and
-  lifecycle-non-actionable tracks are included because submission tracking
-  records factual state regardless of operational participation (see Exclusion
-  and Actionability in `docs/features/packages/package-model.md`). This ensures SR/RR data
-  is captured even for tracks already in `FIXED` state or tracks excluded
-  by the VA. The data is not displayed in the UI for final-status or
-  excluded tracks but is retained for audit and future use.
-- **14-day lookback window**: limits the volume of accepted SRs returned
-  by IBS for long-lived packages. An SR older than 14 days whose ticket is
-  only being created now is an extreme edge case with low informational
-  value.
-- **Sub-operation task**: not a `BaseFetcher` — runs on-demand as a
-  side-effect of `add_package_to_ticket`.
-- **Location of trigger**: the enqueue lives in `add_package_to_ticket`
-  (in `package_service`). The discovery task performs external I/O (IBS
-  queries) which is outside the responsibility of the record mutation
-  functions.
-- **Reuse of `correlate_submission_request`**: Pipeline 3 delegates
-  diff API calls and CVE correlation to `correlate_submission_request`
-  (Pipeline 1) instead of reimplementing the logic. This ensures that
-  multi-CVE SRs are correlated with all matching tickets, not just the
-  one that triggered the discovery. `correlate_submission_request` is
-  idempotent: join records that already exist are skipped, and the SR
-  is only deleted if it has zero correlations in total.
-- **Strict IBS scope**: discovery never queries a track with
-  `workflow_type = git`, even when its `reference` resembles an IBS project.
-
-### Centralized Functions
-
-#### `set_sr_incident_number(submission_request, incident_number)`
-
-All code that sets `incident_number` on a `SubmissionRequest` MUST use
-this function instead of modifying the attribute directly.
-
-**Procedure**:
-
-```
-1. Persist `submission_request.incident_number = incident_number` through the
-   submission mutation boundary.
-2. After the caller's transaction commits, invoke
-   `discover_release_requests_for_incident(incident_number)` as an independent
-   external-I/O phase.
-```
-
-Note: currently all callers are within the submission tracking feature
-(IBSEventConsumer, SyncIbsRequests,
-`discover_submissions_for_ticket_package`). No external module has a
-reason to set `incident_number` directly. The centralized function
-exists to ensure `discover_release_requests_for_incident` is always
-called when an incident is discovered, not to enforce a cross-module
-boundary.
-
-#### `discover_release_requests_for_incident(incident_number)`
-
-An orchestration function that searches IBS for release requests associated
-with a given maintenance incident. It performs IBS I/O before opening each
-short database mutation transaction. It is registered after the transaction
-that first persists the incident number commits; it is not invoked while a
-Ticket or request row lock is held.
-
-**Procedure**:
-
-```
-1. Query IBS:
-   GET /request?view=collection
-       &project=SUSE:Maintenance:{incident_number}
-       &types=maintenance_release
-       &states=new,review,accepted
-2. For each RR in the response:
-   - Already in ReleaseRequest table? → skip
-   - Create ReleaseRequest record (state mapped from IBS state,
-     codestream_name and package_name extracted from action fields)
-```
-
-### Chain Selection Rules
-
-The chain returned for a given ticket/track is determined by:
-
-1. **If an incident exists** (at least one accepted SR with an
-   `incident_number`): return the chain based on the **most recent
-   incident**:
-   - SR = the most recent SR accepted into that incident
-   - SM = the incident
-   - RR = the most recent RR for that incident (if any)
-
-2. **If no incident exists**: return the **most recent SR** (pending or
-   declined, with no incident or RR in the chain).
-
-New SRs that are pending but not yet associated with an active incident
-are **not included** while an incident chain is active. They appear in the
-chain only after the UM accepts them into the incident.
-
-The chain is tracked for all tracks regardless of affectedness status.
-Display relevance is a presentation concern — the frontend can
-emphasize the chain for non-final statuses (`ANALYSIS`, `AFFECTED`) and
-de-emphasize it for final statuses (similar to the `delivery_relevant`
-computed field). The data remains in the database regardless of status.
-
-## API Endpoints
-
-Two read-only endpoints nested under the ticket resource. Both follow the
-same access rules as `GET /api/v1/tickets/{ticket_id}` — if the caller
-can access the ticket detail, they can access its submission and release
-requests.
-
-Both endpoints return unpaginated lists (expected volume is small — fewer
-than 20 records per ticket, similar to ticket references).
+The selected track must belong to an active Ticket and have
+`workflow_type = ibs`. Package and track exclusion, actionability, affectedness,
+eligibility, and Product lifecycle do not remove it from scope.
+
+### Algorithm
+
+For each selected scope:
+
+1. Capture `observation_started_at` in UTC and read the retained exact
+   request/action roots and the track's persisted `delivery_status` needed to
+   plan external queries without locking the Ticket. Retain the latter as the
+   pre-I/O delivery baseline.
+2. Discover current package, request, supersession, incident, and RR candidates
+   using the complete evidence rules above.
+3. Point-fetch current request detail and required action-scoped diffs and source
+   histories. Validate every consumed field, exhaust every required root, and
+   classify the observation. No database mutation occurs for an incomplete or
+   failed observation.
+4. For a complete observation, begin one independent local transaction and lock
+   the parent Ticket first.
+5. Reload the exact Ticket, CVE, package, track, workflow type, codestream, and
+   relevant retained request/action evidence. If the Ticket is no longer active,
+   the track no longer exists, its workflow is no longer IBS, or the semantic
+   scope no longer matches, return a successful stale/inapplicable no-op.
+6. Conditionally lock or upsert each existing request/action identity that this
+   scope will mutate. Reject the observation as stale if a newer authoritative
+   request observation has already committed. For equal
+   `upstream_updated_at`, identical normalized content is idempotent;
+   conflicting content is incomplete and rolls back.
+7. Upsert every validated relevant `IBSRequest` and `IBSRequestAction`, then
+   upsert each exact `IBSRequestActionTrack` pair. Unknown and irrelevant
+   actions are not persisted. Existing provenance omitted by IBS is retained;
+   contradictory immutable provenance rolls back the scope.
+8. Derive delivery from the complete observation and the reloaded retained
+   evidence. For a complete negative observation, do not regress
+   `IN_PROGRESS` if any relevant request, action, or correlation row changed
+   after `observation_started_at`, or if the track's delivery value differs from
+   the value observed before external I/O.
+9. Apply any effective delivery transition through
+   `package_service.set_track_delivery_status()` in the same transaction.
+10. Flush and commit the request, action, correlation, and delivery outcome
+    atomically. On any local failure, roll back all changes for this scope.
+
+All IBS HTTP work completes before the Ticket lock. No IBS, Redis, AMQP, or
+Celery I/O occurs while the lock is held. Each track scope has its own
+transaction, so successful siblings remain committed when another scope is
+incomplete or fails. The operation is idempotent; unchanged current evidence
+produces no write or delivery mutation.
+
+Concurrent callers serialize on the Ticket and database uniqueness constraints.
+Because one IBS request can correlate to tracks under different Tickets, every
+request/action upsert is also conditional on the currently stored upstream
+timestamp and normalized content; a Ticket lock alone is not treated as a
+cross-Ticket request lock. The timestamp/content checks prevent an older
+point-fetch from replacing newer request truth. Uniqueness conflicts on a
+concurrently inserted identity are resolved by reloading and applying the same
+condition, not by replacing the winner. The post-scan evidence and expected-
+delivery checks prevent a stale negative result from overwriting positive event
+or polling work committed after the scan began. Audit history is never queried
+for current state, idempotency, or provenance.
+
+## Accelerators
+
+### Package Addition
+
+After `add_package_to_ticket()` commits at least one new IBS track, it registers
+one best-effort post-commit invocation of the existing generic
+`run_catch_up("sync_ibs_requests", ticket_id)` mechanism. Creating only Products,
+Git tracks, maintainers, or no package-tree rows registers no request catch-up.
+
+The catch-up observes committed package-tree state. Publication failure is
+logged with sanitized Ticket and operation identity and does not roll back the
+package addition. The daily complete fetcher remains the permanent recovery
+owner. There is no `correlate_submission_request` or
+dedicated submission-correlation or discovery Celery task.
+
+### Ticket Reactivation
+
+`SyncIbsRequests.participates_in_catch_up = True`. The established reactivation
+workflow re-resolves package trees first and then invokes this fetcher's
+`catch_up(ticket_id, session)` through the generic `run_catch_up` wrapper. The
+catch-up silently returns when the Ticket or relevant IBS tracks do not exist.
+
+It applies the complete shared algorithm to every IBS track now belonging to
+that Ticket, with independent per-track mutations and failures. It recovers
+current authoritative request and delivery facts rather than replaying every
+transition that occurred while inactive.
+
+Request catch-up cannot create a track omitted by failed SMELT resolution. That
+broader package-tree recovery limitation remains owned by `package-model.md` and
+`package-service.md`.
+
+### RabbitMQ Request Wake-Ups
+
+Both `suse.obs.request.create` and `suse.obs.request.state_change` are
+acceleration signals only. For either routing key the consumer:
+
+1. Decodes the UTF-8 JSON body and validates only a positive numeric `number`.
+2. Ignores event state, timestamps, actors, action content, action order, and
+   RabbitMQ delivery metadata for domain decisions.
+3. Point-fetches current request detail by public request number.
+4. Selects every active-Ticket IBS track represented by validated current
+   actions and retained exact roots, including all relevant actions in a
+   multi-action request.
+5. Invokes the shared authoritative reconciliation inline for each selected
+   scope, with independent transactions.
+
+The event handler does not publish a Celery correlation or discovery task.
+Duplicate and out-of-order deliveries converge through current detail and
+idempotent reconciliation. If point lookup or reconciliation fails after the
+shared bounded HTTP transport retries, the consumer rolls back incomplete local
+work, records the sanitized failure, acknowledges according to the RabbitMQ
+integration contract, and continues. The next complete fetcher run owns
+recovery while required evidence remains upstream.
+
+A first-observed maintenance-incident action whose physical source package
+cannot be mapped unambiguously to one represented logical package from retained
+roots and current detail selects no scope in the event path. The delivery is an
+irrelevant acceleration no-op; the next complete `sync_ibs_requests` scan starts
+from each known logical package and owns discovery. Event fields never supply a
+fallback mapping.
+
+## Fetcher: sync_ibs_requests
+
+### Properties
+
+| Property | Value |
+|---|---|
+| Fetcher name | `sync_ibs_requests` |
+| Class name | `SyncIbsRequests` |
+| Description | Synchronize IBS maintenance request actions and reconcile track delivery state |
+| Schedule | `30 2 * * *` (daily at 02:30 UTC) |
+| Source | IBS |
+| Scope | Distinct IBS tracks belonging to active Tickets, including excluded and lifecycle-non-actionable tracks |
+| Auth | Existing IBS HTTP Basic authentication or API token through the shared IBS client |
+| `participates_in_catch_up` | `True` |
+| Custom settings | No |
+| Cursor | None; `FetcherRun.cursor` remains NULL |
+
+The fetcher has no temporal lookback setting or fixed historical window.
+It declares no inner `Settings` model, accepts no custom setting, and leaves
+`FetcherConfig.custom_settings = {}`. It does not read `previous_cursor` or set
+a cursor during execution.
+`FetcherConfig` continues to provide only the generic enabled, schedule,
+timeout, and request-delay controls. The first run, a run after re-enable, and a
+run after a long gap use the same complete state-based algorithm.
+
+### Algorithm
+
+1. Select the distinct finite track scopes belonging to active Tickets where
+   `workflow_type = ibs`. Include every affectedness and delivery status and all
+   exclusion/actionability states.
+2. Process each selected track with the shared authoritative reconciliation.
+3. Commit each complete local scope independently. Roll back and continue after
+   an incomplete or failed scope.
+4. Let `SoftTimeLimitExceeded` and `MemoryError` escape as whole-run signals;
+   they are never converted into per-scope failures.
+5. Return normally after all scopes have been attempted. `BaseFetcher` derives
+   success, partial, or failure from the non-overlapping metrics below.
+
+A complete valid no-match and an idempotent no-op are successful scope outcomes.
+The algorithm needs no special first-run branch, durable cursor, per-track
+progress row, or global request-history scan. Source retention can still limit
+what a long-gap run can prove; incomplete scopes preserve prior delivery.
+
+### Error Handling
+
+| Failure | Behavior |
+|---|---|
+| One track has a transport, timeout, rate-limit, HTTP, parse, validation, search-completeness, retention, ambiguity, or local transaction failure | Roll back that scope, increment `record_failed` once, log the track/Ticket/request identities and sanitized category, and continue. Raw response bodies, URLs, credentials, and personal identifiers are not logged. |
+| Scope enumeration or another whole-run database prerequisite fails | Raise so `BaseFetcher` finalizes the run as failure. Public `error_message` uses the infrastructure's sanitized generic category; restricted error fields retain diagnostics. |
+| Every selected scope fails | Return normally after counting failures; the `BaseFetcher` all-items-failed rule records run failure. |
+| Some scopes complete and some fail | Return normally; `BaseFetcher` records a partial run when at least one completed scope created or updated data. If successful scopes were all no-ops, the all-items-failed safety rule still records failure because every counted work item failed. |
+| Soft or hard run time limit | `SoftTimeLimitExceeded` reaches `BaseFetcher`; it records the sanitized timeout failure. The worker enforces the hard limit. No cursor advances. |
+
+The generic `run_fetcher` task has no top-level retry. The next daily execution,
+or the existing generic manual fetcher trigger, repeats the complete idempotent
+scan. No SR/RR-specific retry, discovery, correlation, or operator endpoint is
+introduced.
+
+When the fetcher is disabled, successful RabbitMQ events can still reduce
+latency, but lost events, terminal event-processing failures, and request
+reopens have no automatic recovery. Re-enabling the fetcher restores recovery;
+its next complete run processes all still-discoverable evidence.
+
+### Metrics
+
+Metrics use one selected track scope as the unit and are mutually exclusive:
+
+- `record_created`: increment once when a successful scope transaction creates
+  at least one relevant `IBSRequest`, `IBSRequestAction`, or
+  `IBSRequestActionTrack`, even if that transaction also updates existing data
+  or delivery.
+- `record_updated`: increment once when a successful scope transaction creates
+  no domain row but changes existing request state/provenance/correlation or
+  effectively changes delivery.
+- `record_failed`: increment once when a selected scope is incomplete or fails,
+  regardless of the number of failed external calls or validation findings in
+  that scope.
+- A complete no-match and idempotent no-op increment no metric.
+
+The per-ticket `catch_up()` sub-operation creates no `FetcherRun` and reports no
+fetcher metrics, as required by the generic catch-up contract. Its per-item logs
+identify terminal failures; partial success returns normally, while an
+all-scopes infrastructure failure may propagate to `run_catch_up` for its
+shared bounded retry policy.
+
+## Public API
+
+The feature keeps two existing ticket-scoped read operations. Both return one
+deduplicated relevant action projection per item. Multiple joins from the same
+action into the requested Ticket never duplicate that action. Persisted history
+is returned regardless of current Ticket status, track affectedness, exclusion,
+or actionability.
+
+Both endpoints inherit the ticket accessibility check. Anonymous callers can
+read non-confidential Tickets; confidential Ticket existence and data remain
+hidden according to the shared visibility contract.
+
+### Common Query Rules
+
+Both endpoints support standard `page` (default 1) and `per_page` (default 20,
+maximum 100) pagination. Filters combine with AND semantics.
+
+`state` accepts one exact value from `new`, `review`, `accepted`, `declined`,
+`revoked`, `superseded`, or `deleted`. Invalid enum values follow the shared
+enum-filter rule: an invalid value is removed and an empty valid filter set
+returns an empty result. Package and codestream filters are case-sensitive exact
+matches against normalized action fields.
+
+Client-controlled sorting is limited to:
+
+| Parameter | Values | Default |
+|---|---|---|
+| `sort_by` | `upstream_created_at`, `upstream_updated_at` | `upstream_updated_at` |
+| `sort_order` | `asc`, `desc` | `desc` |
+
+The selected upstream timestamp is the primary key and
+`IBSRequestAction.id` is the deterministic secondary key in the same direction.
+Invalid sort values return the shared `422 VALIDATION_ERROR`.
 
 ### List Submission Requests
 
-List all submission requests correlated to the ticket via the
-`SubmissionRequestTrack` join table.
+```http
+GET /api/v1/tickets/{ticket_id}/submission-requests
+```
 
 **`Access: Public`**
+
 **`Authentication: Optional`**
 
-**Query parameters** (all optional):
+Returns distinct correlated `maintenance_incident` actions.
 
-| Parameter        | Type   | Description                                      |
-|------------------|--------|--------------------------------------------------|
-| `package_name`   | string | Filter by package name (exact match)             |
-| `codestream_name`| string | Filter by codestream name (exact match)          |
-| `state`          | string | Filter by state: `open`, `accepted`, `declined`, `revoked`, `superseded` |
+**Filters**:
 
-**Response** (200):
+| Parameter | Type | Required | Semantics |
+|---|---|---|---|
+| `package_name` | string | No | Exact `logical_package`. |
+| `codestream_name` | string | No | Exact action codestream. |
+| `state` | request state | No | Exact current parent request state. |
+
+**Response: 200**
 
 ```json
 {
   "data": [
     {
-      "id": "uuid",
-      "request_number": 407175,
-      "package_name": "curl",
-      "codestream_name": "SUSE:SLE-15-SP6:Update",
+      "id": "00000000-0000-7000-8000-000000000101",
+      "action_type": "maintenance_incident",
+      "request_number": 410001,
       "state": "accepted",
-      "author": "jdoe",
-      "incident_number": 43894,
-      "superseded_by": null,
-      "ibs_url": "https://build.suse.de/request/show/407175",
-      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:43894",
-      "created_at": "2026-04-20T10:00:00Z",
-      "updated_at": "2026-04-20T12:00:00Z"
+      "superseded_by_request_number": null,
+      "package_name": "example-package",
+      "codestream_name": "SUSE:SLE-15-SP6:Update",
+      "incident_number": 45001,
+      "ibs_url": "https://build.suse.de/request/show/410001",
+      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:45001",
+      "upstream_created_at": "2026-08-10T09:15:00Z",
+      "upstream_updated_at": "2026-08-10T11:30:00Z"
     }
-  ]
+  ],
+  "meta": {
+    "total": 1,
+    "page": 1,
+    "per_page": 20
+  }
 }
 ```
 
-**Response fields**:
+**Item schema**:
 
-| Field              | Type              | Description                                      |
-|--------------------|-------------------|--------------------------------------------------|
-| `id`               | UUID              | Internal identifier                              |
-| `request_number`   | integer           | IBS request number                               |
-| `package_name`     | string            | Target package name                              |
-| `codestream_name`  | string            | Target codestream                                |
-| `state`            | string            | Current state (see `SubmissionRequestState`)      |
-| `author`           | string \| null    | IBS username who created the request             |
-| `incident_number`  | integer \| null   | Maintenance incident number (set on acceptance)  |
-| `superseded_by`    | integer \| null   | Request number of the superseding request        |
-| `ibs_url`          | string            | Computed: `https://build.suse.de/request/show/{request_number}` |
-| `incident_url`     | string \| null    | Computed: `https://build.suse.de/project/show/SUSE:Maintenance:{incident_number}`. Null when `incident_number` is null. |
-| `created_at`       | datetime (UTC)    | Record creation timestamp                        |
-| `updated_at`       | datetime (UTC)    | Record update timestamp                          |
+| Field | Type | Contract |
+|---|---|---|
+| `id` | UUID | Local `IBSRequestAction.id`; stable action projection identity. |
+| `action_type` | literal `maintenance_incident` | Action classification. |
+| `request_number` | positive integer | Public IBS request number. |
+| `state` | request state | Exact current persisted IBS state. |
+| `superseded_by_request_number` | positive integer or null | Current successor when state is `superseded`; otherwise null. |
+| `package_name` | string | Validated logical package. |
+| `codestream_name` | string | Exact IBS track reference. |
+| `incident_number` | positive integer or null | Established incident, if available. |
+| `ibs_url` | string | Computed request link using `request_number`. |
+| `incident_url` | string or null | Computed incident-project link; null without an incident. |
+| `upstream_created_at` | UTC datetime | IBS request creation time. |
+| `upstream_updated_at` | UTC datetime | Time of the current IBS request state. |
 
 ### List Release Requests
 
+```http
+GET /api/v1/tickets/{ticket_id}/release-requests
+```
+
 **`Access: Public`**
+
 **`Authentication: Optional`**
 
-List all release requests associated with the ticket. Derived via the
-SR correlation: find SRs correlated to the ticket, collect their
-`incident_number` values, then return RRs with matching
-`incident_number`.
+Returns distinct correlated `maintenance_release` actions. RR actions are
+queried through their direct `IBSRequestActionTrack` correlation, not inferred
+at response time from request-level incident equality.
 
-**Query parameters** (all optional):
+**Filters**:
 
-| Parameter         | Type    | Description                                      |
-|-------------------|---------|--------------------------------------------------|
-| `package_name`    | string  | Filter by package name (exact match)             |
-| `codestream_name` | string  | Filter by codestream name (exact match)          |
-| `state`           | string  | Filter by state: `open`, `accepted`, `declined`, `revoked` |
-| `incident_number` | integer | Filter by maintenance incident number            |
+| Parameter | Type | Required | Semantics |
+|---|---|---|---|
+| `package_name` | string | No | Exact `logical_package`. |
+| `codestream_name` | string | No | Exact action codestream. |
+| `state` | request state | No | Exact current parent request state. |
+| `incident_number` | positive integer | No | Exact incident number. |
 
-**Response** (200):
+**Response: 200**
 
 ```json
 {
   "data": [
     {
-      "id": "uuid",
-      "request_number": 407225,
-      "package_name": "curl",
+      "id": "00000000-0000-7000-8000-000000000102",
+      "action_type": "maintenance_release",
+      "request_number": 410101,
+      "state": "review",
+      "superseded_by_request_number": null,
+      "package_name": "example-package",
       "codestream_name": "SUSE:SLE-15-SP6:Update",
-      "state": "open",
-      "incident_number": 43894,
-      "ibs_url": "https://build.suse.de/request/show/407225",
-      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:43894",
-      "created_at": "2026-04-21T08:00:00Z",
-      "updated_at": "2026-04-21T08:00:00Z"
+      "incident_number": 45001,
+      "ibs_url": "https://build.suse.de/request/show/410101",
+      "incident_url": "https://build.suse.de/project/show/SUSE:Maintenance:45001",
+      "upstream_created_at": "2026-08-11T08:00:00Z",
+      "upstream_updated_at": "2026-08-11T08:20:00Z"
     }
-  ]
+  ],
+  "meta": {
+    "total": 1,
+    "page": 1,
+    "per_page": 20
+  }
 }
 ```
 
-**Response fields**:
+**Item schema**:
 
-| Field              | Type           | Description                                      |
-|--------------------|----------------|--------------------------------------------------|
-| `id`               | UUID           | Internal identifier                              |
-| `request_number`   | integer        | IBS request number                               |
-| `package_name`     | string         | Target package name                              |
-| `codestream_name`  | string         | Target codestream                                |
-| `state`            | string         | Current state (see `ReleaseRequestState`)         |
-| `incident_number`  | integer        | Maintenance incident number                      |
-| `ibs_url`          | string         | Computed: `https://build.suse.de/request/show/{request_number}` |
-| `incident_url`     | string         | Computed: `https://build.suse.de/project/show/SUSE:Maintenance:{incident_number}` |
-| `created_at`       | datetime (UTC) | Record creation timestamp                        |
-| `updated_at`       | datetime (UTC) | Record update timestamp                          |
+| Field | Type | Contract |
+|---|---|---|
+| `id` | UUID | Local `IBSRequestAction.id`; stable action projection identity. |
+| `action_type` | literal `maintenance_release` | Action classification. |
+| `request_number` | positive integer | Public IBS request number. |
+| `state` | request state | Exact current persisted IBS state. |
+| `superseded_by_request_number` | positive integer or null | Current successor when state is `superseded`; otherwise null. |
+| `package_name` | string | Validated logical package. |
+| `codestream_name` | string | Exact IBS target codestream. |
+| `incident_number` | positive integer | Source maintenance incident. |
+| `ibs_url` | string | Computed request link using `request_number`. |
+| `incident_url` | string | Computed incident-project link. |
+| `upstream_created_at` | UTC datetime | IBS request creation time. |
+| `upstream_updated_at` | UTC datetime | Time of the current IBS request state. |
 
-## Background Tasks
+Neither endpoint exposes request author, actor, comments, descriptions, raw
+source/target fields, acceptinfo, RabbitMQ metadata, or local row timestamps.
+They introduce no endpoint-specific errors.
 
-### Fetcher: `sync_ibs_requests`
+No new endpoint, capability, or error code is introduced. The existing generic
+fetcher trigger remains the only API operation for an operator to rerun the
+complete fetcher.
 
-| Property | Value |
-|----------|-------|
-| Fetcher name | `sync_ibs_requests` |
-| Class name | `SyncIbsRequests` |
-| Schedule | Daily at 02:30 UTC (`30 2 * * *`) |
-| Source | IBS (`build.suse.de`) |
-| Scope | Active codestreams with `TicketPackageTrack.workflow_type = ibs` records in active tickets, plus open `SubmissionRequest`/`ReleaseRequest` records for reconciliation |
-| Auth | HTTP Basic / API token (internal) |
-| `participates_in_catch_up` | `True` — participates in per-ticket catch-up on ticket reactivation |
-| Custom settings | Yes (see "sync_ibs_requests — Custom Settings" below) |
+The request and incident links use the fixed IBS web origin
+`https://build.suse.de`; they are not derived from `IBS_API_URL` and introduce no
+new configuration. `ibs_url` appends `/request/show/{request_number}`. An
+incident link reconstructs the established project identity as
+`SUSE:Maintenance:{incident_number}` and appends it to `/project/show/`.
 
-#### Algorithm
+## Testing Requirements
 
-See "Pipeline 2: Periodic Catch-Up (SyncIbsRequests)" above for the
-full procedure.
+Implementation coverage must include:
 
-#### Catch-Up
+- all seven request states, including `declined -> new|review`, explicit
+  `deleted`, incomplete 404 handling, and supersession cycles;
+- multi-action parsing and semantic-identity constraints without array position
+  or RabbitMQ `action_id`;
+- action-scoped `added`/`changed` CVE correlation, valid no-match, malformed and
+  missing diff evidence, and unknown action/state handling;
+- effective-SR and accepted-RR provenance success, mismatch, unavailable
+  history, missing acceptinfo, and retention-limited outcomes;
+- every delivery transition, irreversible `RELEASED`, complete-negative
+  regression, and stale-negative concurrency with independent sessions;
+- atomic request/action/join/delivery commit and rollback, including successful
+  sibling scopes when another fails;
+- first run, long gap, re-enable, package-add and reactivation catch-up,
+  duplicate/out-of-order event acceleration, and fetcher metric precedence;
+- API authentication, confidential-Ticket visibility, action deduplication,
+  exact filters, pagination, deterministic sorting, and response schemas; and
+- log, API, and persistence assertions proving that authors, actors, comments,
+  descriptions, raw payloads, credentials, and raw response bodies are absent.
 
-`SyncIbsRequests` implements `catch_up()` as a custom override. See
-[fetcher-infrastructure.md](../platform/fetcher-infrastructure.md)
-("Per-Ticket Catch-Up: `catch_up()` Method") for the base class
-contract.
+## Security and Privacy
 
-**Scope**: after package-tree re-resolution has committed, extracts only the
-Ticket's tracks with `workflow_type = ibs`. It performs a targeted historical
-search sufficient to reconstruct the current relevant SR/RR chain,
-correlations, and resulting `delivery_status` for those tracks, including
-requests older than the ordinary 25-hour periodic lookback. It does not import
-every intermediate upstream transition.
+- The public read endpoints process optional authentication and enforce the
+  shared confidential-Ticket visibility rules before querying actions.
+- IBS HTTP requests use existing configured credentials and the shared TLS and
+  HTTP-client contracts. Credentials never enter persisted request evidence,
+  API output, metrics, or logs.
+- Personal identifiers and free text from IBS are neither persisted nor
+  returned. Logs never include raw event payloads, raw response bodies, actors,
+  comments, descriptions, credentials, or credential-bearing URLs.
+- RabbitMQ event action arrays and personal fields are ignored. Only the public
+  positive request number is consumed as the request wake-up identity.
 
-The exact IBS query bounds and pagination strategy remain owned by this
-specification and must be complete before implementation. The operation
-uses per-item failure isolation and the shared `run_catch_up` retry policy. If
-historical catch-up still fails permanently, the daily 25-hour path is not
-claimed to recover the omitted history. The failure is an accepted operational
-risk: logs identify `ticket_id`, fetcher, affected track/request, sanitized
-cause, and `celery_task_id`; this specification must define an explicit
-idempotent operator rerun surface. No durable catch-up progress table or daily
-full-history scan is introduced.
+## Recovery Guarantees
 
-#### Metrics
+The complete daily state-based scan is the permanent recovery owner for active
+Ticket IBS tracks. While sufficient upstream evidence remains, it covers first
+enablement, long disablement, missed or duplicate events, transient queue loss,
+failed package-add acceleration, tracks added after older requests, request
+reopens, supersession, and partial prior runs without a cursor or temporal
+window.
 
-- `record_created`: a new `SubmissionRequest` or `ReleaseRequest` record
-  was created
-- `record_updated`: an existing SR/RR state was updated, or delivery
-  status was reconciled
-- `record_failed`: an IBS API call failed for a specific codestream or
-  request
+Package-add catch-up, Ticket-reactivation catch-up, manual generic fetcher runs,
+and RabbitMQ events only reduce latency. They all use the same idempotent
+reconciliation and cannot establish a different domain result.
 
-### Sub-operation tasks
-
-- `correlate_submission_request`: on-demand Celery task that calls the
-  IBS diff API, extracts CVE-IDs, and creates join records
-- `discover_submissions_for_ticket_package`: sub-operation for
-  retroactive SR/RR discovery when a package is added to a ticket
-
-Both are sub-operation tasks: on-demand, with no independent schedule or
-dashboard presence.
-
-## Error Handling
-
-| Scenario                                                     | Behavior                                                                                     |
-|--------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-| IBS diff API unreachable / timeout / HTTP 5xx / 429 (`correlate_submission_request`) | `is_retryable_condition()` returns `True` — Celery retry (3 retries, 5s → 10s → 20s backoff). After max retries, SR remains without correlations — recovery limited (see Open Question 4). |
-| IBS diff API returns HTTP 4xx (except 429) (`correlate_submission_request`) | `is_retryable_condition()` returns `False` — task fails immediately (non-retryable). SR remains without correlations. |
-| IBS REST API unreachable (`SyncIbsRequests`)              | Fetcher run fails, reported via `BaseFetcher` metrics. The next scheduled run covers ordinary open/recent/known-request work; it does not guarantee recovery of a permanently failed historical reactivation catch-up. |
-| RabbitMQ event with malformed/incomplete payload             | Log warning, skip event. Catch-up fetcher recovers.                                          |
-| SR/RR references a codestream not tracked in any active ticket  | Silent skip (not relevant to Sentinel).                                                         |
-| IBS diff API returns no CVE-IDs for an SR                    | SR is deleted (silent discard — see Pipeline 1, `correlate_submission_request` step 3).      |
-
-## Configuration
-
-| Setting                         | Type                    | Default    | Description                                                  |
-|---------------------------------|-------------------------|------------|--------------------------------------------------------------|
-| `SyncIbsRequests` schedule   | Cron (BaseFetcher)      | Every 24h  | Overridable via fetcher config API                           |
-| Consumer routing keys           | Static (code)           | `suse.obs.request.create`, `suse.obs.request.state_change` | Added to existing `IBSEventConsumer` bindings |
-| Catch-up lookback window        | Custom setting (`sync_ibs_requests`) | 25h | `lookback_hours` — configurable via admin dashboard |
-| Retroactive discovery window    | Custom setting (`sync_ibs_requests`) | 14d | `retroactive_discovery_days` — configurable via admin dashboard |
-
-### sync_ibs_requests — Custom Settings
-
-This fetcher declares the following custom settings (see
-`docs/features/platform/fetcher-infrastructure.md`, "Custom Settings
-Schema" for the schema structure and validation rules):
-
-| Setting | Type | Default | Range | Description |
-|---------|------|---------|-------|-------------|
-| `lookback_hours` | int | 25 | 1–168 | Hours to look back for missed events during catch-up |
-| `retroactive_discovery_days` | int | 14 | 1–90 | Days to look back for retroactive SR/RR discovery |
-
-## Security
-
-The submission tracking feature introduces no new authentication
-mechanisms or credentials:
-
-- **API endpoints**: same access rules as
-  `GET /api/v1/tickets/{ticket_id}` — no additional capability required.
-- **IBS API calls**: use the same IBS credentials already configured
-  for `DetectIbsTrackReleases` and the existing `IBSEventConsumer`
-  (see `ibs-rabbitmq-integration.md` and `ibs-integration.md`).
-- **No sensitive data exposed**: endpoints return only IBS request
-  numbers, package names, codestream names, and states.
-
-## Dependencies
-
-- `ibs-rabbitmq-integration.md` — consumer architecture, connection
-  management, routing key bindings
-- `ibs-integration.md` — IBS REST API and diff API
-- `package-model.md` — `TicketPackageTrack` model,
-  `add_package_to_ticket` trigger
-- `tickets.md` — ticket model and access rules
-- `fetcher-infrastructure.md` — `BaseFetcher` base class contract
+No mechanism can reconstruct facts after every relevant request detail, action
+diff, source-history entry, issue index, binary, and advisory artifact has
+disappeared upstream. Such a scope is incomplete and preserves the last proven
+delivery state. Synchronization health is represented by `FetcherRun`, consumer
+status, metrics, and sanitized logs, never by another delivery state.
 
 ## Scope Exclusions
 
-The following are explicitly out of scope for this feature:
+- Git/SLFO submission or event tracking.
+- Creating or modifying IBS requests.
+- Manual action-to-track correlation or unlinking.
+- Persisting unrelated requests or actions with no established relevant track.
+- A separate maintenance-incident entity.
+- Dedicated Celery correlation or discovery tasks.
+- A durable event inbox, retry-attempt table, failure table, cursor, or
+  per-track request progress row.
+- Product publication detection or mutation of `released_at`.
+- A dedicated SR/RR recovery API, CLI-only operation, capability, or error code.
+- Periodic SMELT package-tree discovery; request reconciliation cannot create a
+  missing track.
 
-- **Git-based workflow**: this spec covers only the MU process. Tracking
-  submissions for git-based products (SLE 16+) will require a separate
-  specification using Gitea API/webhooks. The design of this feature is
-  intentionally specific to the MU/IBS workflow — no premature abstraction
-  is introduced to accommodate Git. The eventual unification at the
-  API/UI level will be evaluated when both workflows are implemented.
-- **Manual correlation**: the VA cannot manually link/unlink SRs to
-  tickets. Correlation is fully automatic via the diff API.
-- **Orphan submissions**: SRs for which the diff API returns no CVE-IDs
-  are silently discarded (not saved).
-- **PackTrack integration**: PackTrack tracks a subset of submissions
-  (coodpool team packages only). Sentinel consumes IBS events directly for
-  universal coverage.
-- **Product-level tracking**: SRs and RRs are tracked at the codestream
-  level only. Products inherit the codestream fix when released.
-- **Multi-codestream SRs**: while technically possible in IBS, SUSE
-  convention for security updates requires one package + one codestream
-  per SR. Sentinel assumes this convention and processes only `actions[0]`.
+## Cross-References
 
-## Open Questions
-
-The following should be verified before implementation, but are not
-blocking for the specification:
-
-### 1. SR Accepted Payload — `targetproject` Update
-
-When a `maintenance_incident` SR is accepted, the OBS source code shows
-that `action.target_project` is updated to the incident project name
-(e.g., `SUSE:Maintenance:12345`) before the `state_change` event is
-emitted. This has been confirmed by reading the OBS source
-(`bs_request.rb#changestate_accepted`,
-`bs_request_action_maintenance_incident.rb#execute_accept`) but has NOT
-been observed on the wire — no SR acceptance events were captured during
-the test window.
-
-**Risk**: low. The code path is clear and the logic is straightforward.
-If for some reason `targetproject` is not updated in the event payload,
-Sentinel can fall back to querying `GET /request/{number}` to obtain the
-incident number after detecting an accepted state.
-
-**Action**: verify opportunistically during implementation by logging
-the first SR accepted event received by the consumer.
-
-### 2. `request.create` for `maintenance_incident` — Payload Structure
-
-No `request.create` events of type `maintenance_incident` were captured
-during the test window (~2.5 hours). The `state_change` payload for a
-declined SR confirms the field structure (`target_releaseproject` present,
-`targetpackage` absent), and it is reasonable to assume `request.create`
-uses the same structure (both use `event_parameters` ->
-`notify_params`).
-
-**Risk**: very low. The same `notify_params` method generates both
-payloads.
-
-**Action**: verify opportunistically during implementation.
-
-### 3. IBS Request Search by Incident Project
-
-`discover_release_requests_for_incident` queries IBS using
-`project=SUSE:Maintenance:{incident_number}` to find release requests
-for a specific incident. OBS source code confirms that the `project`
-parameter matches both `source_project` and `target_project` (via OR
-in `BsRequest::FindFor::Query`), and for `maintenance_release` requests
-the source project is always the incident. However, this specific usage
-(querying with an incident project name rather than a codestream) has
-NOT been tested on-the-wire against IBS.
-
-**Risk**: low. The `project` parameter is standard and the query logic
-is straightforward.
-
-**Fallback**: if the query does not return expected results, revert to
-querying by codestream with a `created_at_from` temporal filter. The
-exact signature and parameter sourcing for the fallback will be decided
-at implementation time if needed. One option is to derive
-`created_at_from` from the parent `SubmissionRequest.created_at` (the
-RR is necessarily created after the SR), which the function can resolve
-from the database using the `incident_number`.
-
-**Action**: verify empirically during implementation by running a
-manual test query against IBS for a known incident with an active RR.
-
-### 4. Recovery of Uncorrelated Submission Requests
-
-If `correlate_submission_request` fails permanently (non-retryable error
-after max retries exhausted), the `SubmissionRequest` record remains in
-the database with `state = open` and zero `SubmissionRequestTrack` join
-records. Pipeline 2 (`SyncIbsRequests`) does NOT re-correlate it:
-
-- Step 1, sub-step 2c: skipped (SR already present in table)
-- Step 1, sub-step 2d: skipped (state is `open`, not `declined`)
-- Step 2 reconcile: excluded (SR is still in `new`/`review` in IBS, so
-  it was seen in Step 1)
-
-Pipeline 3 (`discover_submissions_for_ticket_package`) handles this case
-(re-enqueues correlation for SRs with zero join records), but only runs
-when a new package is added to a ticket — not periodically.
-
-**Impact**: an uncorrelated SR is a correctness gap, not merely a presentation
-gap: correlation is needed to derive the affected track's delivery state and
-to associate a later RR. The permanent owner is `SyncIbsRequests`.
-
-Before implementation, this specification must define finite reprocessing that
-distinguishes a temporarily failed correlation from a completed request that
-has no relevant Sentinel Ticket. It must provide an observable terminal
-outcome and MUST NOT retry every zero-join row forever. This issue deliberately
-does not add a correlation-status column or another progress table before that
-algorithm and real IBS contract are resolved.
-
-## Cross-references
-
-- `docs/api-spec.md` — global API conventions (envelope format, error codes,
-  pagination, shared 422 responses)
-- `docs/data-model.md` — full database schema
-- `docs/features/packages/package-model.md` — `TicketPackageTrack` model,
-  `add_package_to_ticket` trigger, delivery status dimension
-- `docs/features/tickets/tickets.md` — ticket model and access rules
-- `docs/features/integrations/ibs-integration.md` — IBS REST API endpoints
-  and diff API
-- `docs/features/integrations/ibs-rabbitmq-integration.md` — consumer
-  architecture, connection management, routing key bindings
-- `docs/features/platform/fetcher-infrastructure.md` — `BaseFetcher` base
-  class contract, custom settings
-- `docs/features/platform/networking.md` — `is_retryable_condition()` Celery
-  retry classification
+- `docs/api-spec.md` - API envelopes, optional authentication, filtering,
+  pagination, deterministic sorting, and derived responses.
+- `docs/data-model.md` - canonical database schema.
+- `docs/features/identity/rbac.md` - confidential Ticket visibility and the
+  Endpoint Permission Map.
+- `docs/features/integrations/ibs-integration.md` - IBS request, diff, search,
+  and source-history client contracts.
+- `docs/features/integrations/ibs-rabbitmq-integration.md` - request wake-up,
+  acknowledgement, process, and heartbeat contracts.
+- `docs/features/packages/package-model.md` - orthogonal dimensions, strict IBS
+  applicability, active-Ticket scope, and reactivation ordering.
+- `docs/features/packages/package-service.md` - centralized delivery mutation
+  and Ticket locking.
+- `docs/features/packages/ibs-track-release-detection.md` - independent
+  affectedness release detection.
+- `docs/features/packages/ibs-product-release-detection.md` - independent
+  Product publication detection.
+- `docs/features/platform/fetcher-infrastructure.md` - `BaseFetcher`, generic
+  trigger, metrics, catch-up, transaction, and error-sanitization contracts.
+- `docs/features/platform/networking.md` - shared HTTP transport retries and
+  retry classification.

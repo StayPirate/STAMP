@@ -29,8 +29,8 @@ This specification defines the following fetcher endpoints:
 
 The `GET /api/v1/ibs-consumer/status` endpoint is defined in
 `docs/features/integrations/ibs-rabbitmq-integration.md`, not here. It
-will be implemented when the IBS RabbitMQ consumer integration is
-enabled.
+observes the standalone IBS RabbitMQ consumer and is not a fetcher
+operation.
 
 ## Fetcher Operations Service
 
@@ -1505,7 +1505,7 @@ Name                       Enabled   Last Run              Status               
 sync_nvd_cves              yes       2026-04-27 12:00 UTC  running (1m 30s elapsed)     —
 sync_smelt_products        yes       2026-04-26 06:00 UTC  success (45s)                —
 detect_ibs_track_releases  no        2026-04-25 02:00 UTC  failure                      —
-sync_ibs_requests          yes       2026-04-27 02:30 UTC  success (2m 15s)             2 custom
+sync_ibs_requests          yes       2026-04-27 02:30 UTC  success (2m 15s)             —
 sync_redhat_cves           yes       2026-04-27 12:10 UTC  queued (5s elapsed)          —
 
 Deregistered (historical data only):
