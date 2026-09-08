@@ -25,8 +25,8 @@ from app.services.base_fetcher import BaseFetcher
 
 #: Registry name for the test-only fetcher. Referenced by
 #: `backend/tests/system/conftest.py` and the image-exclusion assertions
-#: in `backend/tests/image/test_celery.py` /
-#: `backend/tests/image/test_fetchers_api.py`.
+#: in `backend/tests/image/test_celery.py` and
+#: `backend/tests/image/test_image_build.py`.
 SYSTEM_FETCHER_NAME = "evaluate_test_pipeline"
 
 

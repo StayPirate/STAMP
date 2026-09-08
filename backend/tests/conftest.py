@@ -407,9 +407,7 @@ def cleanup_users_by_username(
     `cli_session_factory`, bypassing the ordinary per-test rollback.
     Call the returned function with the usernames created during the
     test; cleanup runs at teardown (even after an assertion failure),
-    using the same `NullPool` engine on its own transient event loop —
-    mirroring the black-box image-suite cleanup pattern in
-    `tests/image/test_admin_user_mutations.py`.
+    using the same `NullPool` engine on its own transient event loop.
 
     Deletion order respects foreign-key dependencies: `ApiKey` (matched
     by either `user_id` or `revoked_by`, since a revoker may be a

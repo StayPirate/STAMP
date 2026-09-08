@@ -1,4 +1,4 @@
-# Self-contained full-stack for black-box image smoke testing.
+# Self-contained full-stack for OCI artifact smoke testing.
 #
 # Unlike docker-compose.yml (the local dev-infra stack used by
 # scripts/dev-env.sh), this file is SELF-CONTAINED: it defines its own
@@ -27,7 +27,7 @@
 # commented out and are uncommented by the change that implements the
 # corresponding process role, together with its smoke assertion (see
 # docs/features/platform/testing-strategy.md, Image / Container Smoke
-# Testing — Growth Rule). Keeping them commented lets the argument-free
+# Testing — Artifact-Risk Rule). Keeping them commented lets the argument-free
 # `up --wait` stay green so the CI gate does not block `latest`
 # publication before those services land. `worker` and `beat` are active
 # (Celery runtime — see docs/features/platform/fetcher-infrastructure.md);

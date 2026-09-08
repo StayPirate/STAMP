@@ -378,6 +378,31 @@ class TestListFetchersLastRun:
         assert last_run.finished_at is None
         assert last_run.duration_seconds is None
 
+    async def test_failure_status_is_exposed_for_latest_run(
+        self,
+        db_session: AsyncSession,
+        celery_test_app: Celery,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_run_factory: FetcherRunFactory,
+    ) -> None:
+        _register(_NoSettingsFetcher)
+        config = await fetcher_config_factory(fetcher_name=_NoSettingsFetcher.name)
+        await fetcher_run_factory(
+            fetcher_name=config.fetcher_name,
+            status="failure",
+            error_message="sanitized failure",
+        )
+
+        items = await list_fetchers(
+            db_session, has_manage_fetchers=False, celery_app=celery_test_app
+        )
+
+        last_run = items[0].last_run
+        assert last_run is not None
+        assert last_run.status == "failure"
+        assert last_run.error_message == "sanitized failure"
+        assert last_run.stale is False
+
     async def test_stale_reflects_run_timeout_plus_margin(
         self,
         db_session: AsyncSession,
@@ -1369,6 +1394,30 @@ class TestDisabledPeriodDerivation:
             fetcher_name=config.fetcher_name,
             event_type="enabled",
             created_at=now - timedelta(days=9),
+        )
+
+        timeline = await get_fetcher_timeline(
+            db_session,
+            fetcher_name=config.fetcher_name,
+            has_manage_fetchers=False,
+            from_date=now - timedelta(days=10),
+            to_date=now,
+        )
+
+        assert timeline.disabled_periods == []
+
+    async def test_non_state_event_is_ignored(
+        self,
+        db_session: AsyncSession,
+        fetcher_config_factory: FetcherConfigFactory,
+        fetcher_audit_event_factory: FetcherAuditEventFactory,
+    ) -> None:
+        config = await fetcher_config_factory()
+        now = datetime.now(UTC)
+        await fetcher_audit_event_factory(
+            fetcher_name=config.fetcher_name,
+            event_type="triggered",
+            created_at=now - timedelta(days=1),
         )
 
         timeline = await get_fetcher_timeline(

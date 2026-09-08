@@ -130,9 +130,9 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
-# Exclude the black-box container smoke suite and the local process
-# system suite from the default run. The image suite requires a running
-# container (started by scripts/image-smoke.sh); the system suite spawns
+# Exclude the OCI artifact suite and the local process system suite from
+# the default run. The image suite requires a running container (started
+# by scripts/image-smoke.sh); the system suite spawns
 # real worker/Beat processes (see docs/features/platform/testing-strategy.md,
 # Local Process System Testing). Neither must be pulled into
 # `uv run pytest` or the coverage measurement — both run as separate,
@@ -146,7 +146,7 @@ markers = [
     "unit: Fast, isolated tests (no DB, no Redis, no network)",
     "integration: Tests with real PostgreSQL",
     "e2e: Full HTTP request/response cycle tests",
-    "image: Black-box container smoke tests (require Docker Engine and Docker Compose; excluded from default run)",
+    "image: OCI artifact and publication-gate tests (require Docker Engine and Docker Compose; excluded from default run)",
     "system: Local process system tests (spawn worker/Beat; excluded from default run)",
 ]
 filterwarnings = [

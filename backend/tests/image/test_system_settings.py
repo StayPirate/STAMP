@@ -12,7 +12,7 @@ administrator-selected `"4.0"` value, a missing required table prevents
 `api` from starting at all.
 
 See docs/features/platform/testing-strategy.md (Image / Container Smoke
-Testing, Growth Rule — System Settings Growth Requirements).
+Testing, Artifact-Risk Rule).
 """
 
 from __future__ import annotations
