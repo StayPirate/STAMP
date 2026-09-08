@@ -20,6 +20,7 @@ PREFLIGHT_TIMEOUT="${IMAGE_SMOKE_PREFLIGHT_TIMEOUT-20}"
 INFRA_PULL_TIMEOUT="${IMAGE_SMOKE_INFRA_PULL_TIMEOUT-300}"
 LOCAL_BUILD_TIMEOUT="${IMAGE_SMOKE_LOCAL_BUILD_TIMEOUT-900}"
 STARTUP_TIMEOUT="${IMAGE_SMOKE_STARTUP_TIMEOUT-300}"
+BEAT_READINESS_TIMEOUT="${IMAGE_SMOKE_BEAT_READINESS_TIMEOUT-45}"
 PORT_DISCOVERY_TIMEOUT="${IMAGE_SMOKE_PORT_DISCOVERY_TIMEOUT-30}"
 IMAGE_VERIFICATION_TIMEOUT="${IMAGE_SMOKE_IMAGE_VERIFICATION_TIMEOUT-30}"
 PYTEST_TIMEOUT="${IMAGE_SMOKE_PYTEST_TIMEOUT-600}"
@@ -64,6 +65,7 @@ validate_bounds() {
         validate_positive_bound IMAGE_SMOKE_INFRA_PULL_TIMEOUT "${INFRA_PULL_TIMEOUT}" &&
         validate_positive_bound IMAGE_SMOKE_LOCAL_BUILD_TIMEOUT "${LOCAL_BUILD_TIMEOUT}" &&
         validate_positive_bound IMAGE_SMOKE_STARTUP_TIMEOUT "${STARTUP_TIMEOUT}" &&
+        validate_positive_bound IMAGE_SMOKE_BEAT_READINESS_TIMEOUT "${BEAT_READINESS_TIMEOUT}" &&
         validate_positive_bound IMAGE_SMOKE_PORT_DISCOVERY_TIMEOUT "${PORT_DISCOVERY_TIMEOUT}" &&
         validate_positive_bound IMAGE_SMOKE_IMAGE_VERIFICATION_TIMEOUT "${IMAGE_VERIFICATION_TIMEOUT}" &&
         validate_positive_bound IMAGE_SMOKE_PYTEST_TIMEOUT "${PYTEST_TIMEOUT}" &&
@@ -285,6 +287,54 @@ start_stack() {
     run_bounded startup "${STARTUP_TIMEOUT}" docker compose \
         -p "${COMPOSE_PROJECT}" -f "${SMOKE_COMPOSE}" \
         up -d --wait --no-build --pull never
+}
+
+wait_for_beat_readiness() {
+    local container status
+    if capture_bounded container beat-container "${IMAGE_VERIFICATION_TIMEOUT}" \
+        docker compose -p "${COMPOSE_PROJECT}" -f "${SMOKE_COMPOSE}" \
+        ps --all -q beat; then
+        :
+    else
+        status=$?
+        echo "Error: cannot resolve the Beat container in project '${COMPOSE_PROJECT}'." >&2
+        return "${status}"
+    fi
+    if [[ ! "${container}" =~ ^[0-9a-f]{12,64}$ ]]; then
+        echo "Error: invalid or missing Beat container ID '${container}'." >&2
+        return 1
+    fi
+
+    # shellcheck disable=SC2016  # inner Bash receives the container as $1
+    run_bounded beat-readiness "${BEAT_READINESS_TIMEOUT}" bash -c '
+        set -euo pipefail
+        container="$1"
+        while true; do
+            running="$(docker inspect --format "{{.State.Running}}" "${container}")"
+            if [[ "${running}" != "true" ]]; then
+                echo "Error: Beat container ${container} exited before readiness." >&2
+                exit 1
+            fi
+            logs="$(docker logs --timestamps --tail 200 "${container}" 2>&1)"
+            if [[ "${logs}" == *beat_startup_completed* ]]; then
+                break
+            fi
+            sleep 1
+        done
+
+        docker exec "${container}" python -c '\''
+from app.celery_app import celery_app
+from redbeat import RedBeatSchedulerEntry
+from redbeat.schedulers import ensure_conf
+
+ensure_conf(celery_app)
+key = RedBeatSchedulerEntry.generate_key(celery_app, "cleanup_sessions")
+entry = RedBeatSchedulerEntry.from_key(key, app=celery_app)
+assert entry.task == "cleanup_sessions", entry.task
+assert entry.enabled is True, entry.enabled
+print("BEAT-READY")
+'\''
+    ' bash "${container}"
 }
 
 discover_api_port() {
@@ -555,6 +605,12 @@ main() {
             status=0
             start_stack || status=$?
             ((status == 0)) || record_failure "${status}" startup
+        fi
+
+        if ((PRIMARY_STATUS == 0)); then
+            status=0
+            wait_for_beat_readiness || status=$?
+            ((status == 0)) || record_failure "${status}" beat-readiness
         fi
 
         if ((PRIMARY_STATUS == 0)); then

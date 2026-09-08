@@ -1,9 +1,10 @@
 """OCI artifact probes for the packaged Alembic migration chain.
 
 Focused migration tests own exhaustive schema, constraint, index, downgrade,
-and re-upgrade coverage. These checks verify only that the candidate's migrate
-service runs as non-root, the packaged migration files reach the expected head
-and seed, and the packaged models report no Alembic drift.
+and re-upgrade coverage. These checks verify only that the packaged migration
+files reach the expected head and seed, report no Alembic drift, and gate every
+runtime role on failure. Shared-image non-root execution is verified in
+``test_image_build.py``.
 
 See ``docs/features/platform/testing-strategy.md`` (Artifact-Risk Rule).
 """
@@ -14,6 +15,8 @@ import subprocess
 from collections.abc import Callable
 
 import pytest
+
+from tests.image.conftest import IsolatedComposeStack
 
 _HEAD_AND_SEED_CHECK_SCRIPT = """
 import asyncio
@@ -52,19 +55,7 @@ asyncio.run(main())
 
 
 @pytest.mark.image
-def test_migration_ran_as_non_root(
-    compose_run: Callable[..., subprocess.CompletedProcess[str]],
-) -> None:
-    result = compose_run("migrate", "id", "-u")
-    assert result.returncode == 0, (
-        f"expected exit 0 for id -u (stdout={result.stdout!r}, "
-        f"stderr={result.stderr!r})"
-    )
-    assert result.stdout.strip() != "0", "migrate service runs as root"
-
-
-@pytest.mark.image
-def test_packaged_migrations_reach_head_and_seed(
+def test_packaged_migrations_reach_head_seed_without_drift(
     compose_exec: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
     result = compose_exec("api", "python", "-c", _HEAD_AND_SEED_CHECK_SCRIPT)
@@ -73,14 +64,44 @@ def test_packaged_migrations_reach_head_and_seed(
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
     assert "MIGRATION-HEAD-AND-SEED-OK" in result.stdout
+    drift = compose_exec("api", "alembic", "check")
+    assert drift.returncode == 0, (
+        f"alembic check failed (rc={drift.returncode}): "
+        f"stdout={drift.stdout!r} stderr={drift.stderr!r}"
+    )
 
 
 @pytest.mark.image
-def test_no_alembic_drift(
-    compose_exec: Callable[..., subprocess.CompletedProcess[str]],
+def test_failed_migration_prevents_every_runtime_role_from_starting(
+    isolated_compose_stack: IsolatedComposeStack,
 ) -> None:
-    result = compose_exec("api", "alembic", "check")
-    assert result.returncode == 0, (
-        f"alembic check failed (rc={result.returncode}): "
-        f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    """A disposable failed migration gates API, worker, and Beat startup."""
+    override = (
+        "services:\n"
+        "  api:\n"
+        "    ports: !reset []\n"
+        "  migrate:\n"
+        '    command: ["alembic", "upgrade", '
+        '"nonexistent_revision_id_smoke_test"]\n'
     )
+
+    result = isolated_compose_stack.up(override, "api", "worker", "beat")
+    assert result.returncode != 0, (
+        f"expected non-zero exit when migrate fails "
+        f"(stdout={result.stdout!r} stderr={result.stderr!r})"
+    )
+
+    migrate = isolated_compose_stack.service_state("migrate")
+    assert migrate.returncode == 0, migrate.stderr
+    assert migrate.stdout.strip().startswith("exited|"), migrate.stdout
+    assert not migrate.stdout.strip().endswith("|0"), migrate.stdout
+    migrate_logs = isolated_compose_stack.logs("migrate")
+    assert "Can't locate revision identified by" in migrate_logs, migrate_logs
+    assert "nonexistent_revision_id_smoke_test" in migrate_logs, migrate_logs
+
+    for service in ("api", "worker", "beat"):
+        state = isolated_compose_stack.service_state(service)
+        assert state.returncode == 0, state.stderr
+        assert not state.stdout.strip().startswith("running|"), (
+            f"{service} unexpectedly started after migration failure: {state.stdout!r}"
+        )

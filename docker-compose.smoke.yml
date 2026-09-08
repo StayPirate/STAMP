@@ -77,7 +77,8 @@ services:
 
   api:
     <<: *app-common
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Deliberately no command override: the gate exercises the image's default
+    # API command from backend/Dockerfile.
     # Depends on `migrate` reaching successful completion, not just on
     # infrastructure health — see docs/deployment.md (Container Images,
     # Startup Ordering). This makes the migration prerequisite
@@ -94,16 +95,15 @@ services:
     # explicit host IP prevents exposure beyond the pytest host loopback.
     ports:
       - "127.0.0.1::8000"
-    # Liveness probe: the runtime image is python:slim (no curl), so the
-    # probe uses urllib instead. Probes /health (see
-    # docs/features/platform/health-endpoints.md), which performs no
-    # dependency I/O and confirms the ASGI app booted successfully.
+    # Dependency-aware readiness probe: the runtime image is python:slim (no
+    # curl), so the probe uses urllib instead. /ready proves that the API can
+    # reach both PostgreSQL and Redis before Compose reports the role healthy.
     healthcheck:
       test:
         - "CMD"
         - "python"
         - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"
       interval: 10s
       timeout: 5s
       retries: 5
@@ -112,9 +112,8 @@ services:
   # One-shot schema migration, run as the image's non-root user (no
   # `user:` override here — same as `api`). `restart: no` so `up --wait`
   # treats a clean exit as success rather than a crash loop. See
-  # backend/tests/image/test_migration.py for the smoke assertions this
-  # step's outcome is verified against (non-root, no drift, tables and
-  # named constraints present).
+  # backend/tests/image/test_migration.py for the smoke assertions that verify
+  # this step's outcome (head/seed, no drift, and runtime startup gating).
   migrate:
     <<: *app-common
     command: ["alembic", "upgrade", "head"]
@@ -151,13 +150,11 @@ services:
       retries: 5
       start_period: 30s
 
-  # Periodic task scheduler (Celery Beat + RedBeat). No healthcheck is
-  # defined: Celery Beat exposes no broadcast-ping mechanism (that is a
-  # worker-only remote-control command), and `up --wait` already treats
-  # an unhealthy-by-crash container as non-running, which is a
-  # sufficient startup signal here. Beat's actual schedule registration
-  # is verified by the image test suite via RedBeat's public API (see
-  # backend/tests/image/test_celery.py).
+  # Periodic task scheduler (Celery Beat + RedBeat). Celery Beat exposes no
+  # broadcast-ping mechanism (that is worker-only), so the runner performs a
+  # separate bounded readiness phase against this exact container generation:
+  # it requires the structured startup-completion log and the static
+  # cleanup_sessions entry through RedBeat's public API.
   beat:
     <<: *app-common
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]

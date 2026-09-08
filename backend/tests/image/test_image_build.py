@@ -1,11 +1,4 @@
-"""OCI artifact probes for the packaged Sentinel application.
-
-These checks cover properties that focused tests against the local source tree
-cannot establish: the packaged FastAPI application serves OpenAPI, application
-imports work inside the candidate image, and test code is physically absent.
-
-See ``docs/features/platform/testing-strategy.md`` (Artifact-Risk Rule).
-"""
+"""Consolidated manifest and API probes for the packaged Sentinel image."""
 
 from __future__ import annotations
 
@@ -15,31 +8,73 @@ from collections.abc import Callable
 import httpx
 import pytest
 
+_RUNTIME_MANIFEST_SCRIPT = """
+import shutil
+import ssl
+from importlib.metadata import version
+from pathlib import Path
+
+import app
+from app.services.http_client import build_tls_context
+
+assert Path("/app/alembic.ini").is_file()
+assert Path("/app/alembic/versions").is_dir()
+assert Path("/app/certs/SUSE_Trust_Root.crt").is_file()
+assert not Path("/app/tests").exists(), "/app/tests is present"
+assert shutil.which("sentinel") is not None
+assert version("sentinel")
+
+subjects = [
+    dict(rdn[0] for rdn in cert.get("subject", ()))
+    for cert in ssl.create_default_context().get_ca_certs()
+]
+names = {subject.get("commonName") for subject in subjects}
+assert "SUSE Trust Root" in names, sorted(name for name in names if name)
+assert build_tls_context().verify_mode.name == "CERT_REQUIRED"
+print("RUNTIME-MANIFEST-OK")
+"""
+
 
 @pytest.mark.image
-def test_api_container_serves_openapi(http_client: httpx.Client) -> None:
-    """The packaged ASGI application starts and serves its OpenAPI schema."""
-    response = http_client.get("/openapi.json")
-    assert response.status_code == 200
-    assert response.json()["info"]["title"] == "Sentinel"
+def test_default_api_command_serves_health_readiness_and_openapi(
+    http_client: httpx.Client,
+) -> None:
+    """The image's default command exposes all external artifact probes."""
+    health = http_client.get("/health")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+
+    ready = http_client.get("/ready")
+    assert ready.status_code == 200
+    assert ready.json() == {
+        "status": "ok",
+        "checks": {"postgresql": "ok", "redis": "ok"},
+    }
+
+    openapi = http_client.get("/openapi.json")
+    assert openapi.status_code == 200
+    assert openapi.json()["info"]["title"] == "Sentinel"
 
 
 @pytest.mark.image
-def test_runtime_imports_app_and_excludes_test_code(
+def test_runtime_manifest_is_complete_non_root_and_excludes_test_code(
     compose_exec: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    """Application code is importable and ``/app/tests`` is not shipped."""
-    result = compose_exec(
-        "api",
-        "python",
-        "-c",
-        "from pathlib import Path\n"
-        "import app\n"
-        "assert not Path('/app/tests').exists(), '/app/tests is present'\n"
-        "print('RUNTIME-CONTENTS-OK')",
-    )
+    """Inspect the physical contents and metadata unique to the OCI artifact."""
+    user = compose_exec("api", "id", "-u")
+    assert user.returncode == 0, user.stderr
+    assert user.stdout.strip() != "0", "runtime image executes as root"
+
+    result = compose_exec("api", "python", "-c", _RUNTIME_MANIFEST_SCRIPT)
     assert result.returncode == 0, (
-        f"runtime contents check failed (rc={result.returncode}): "
+        f"runtime manifest check failed (rc={result.returncode}): "
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-    assert "RUNTIME-CONTENTS-OK" in result.stdout
+    assert "RUNTIME-MANIFEST-OK" in result.stdout
+
+    cli = compose_exec("api", "sentinel", "--version")
+    assert cli.returncode == 0, (
+        f"installed CLI version failed (rc={cli.returncode}): "
+        f"stdout={cli.stdout!r} stderr={cli.stderr!r}"
+    )
+    assert cli.stdout.strip(), "installed CLI returned an empty version"

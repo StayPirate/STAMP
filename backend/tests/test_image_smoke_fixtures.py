@@ -238,7 +238,7 @@ def test_image_setup_validates_only_image_marked_tests(
 
 
 @pytest.mark.unit
-def test_exec_run_and_restart_propagate_the_same_project_and_files(
+def test_exec_propagates_the_same_project_and_files(
     tmp_path: Path,
     compose_calls: tuple[
         list[tuple[list[str], float]],
@@ -248,12 +248,8 @@ def test_exec_run_and_restart_propagate_the_same_project_and_files(
     calls, _ = compose_calls
     context = _context(tmp_path)
     compose_exec = cast(Any, image_conftest.compose_exec).__wrapped__(context)
-    compose_run = cast(Any, image_conftest.compose_run).__wrapped__(context)
-    compose_restart = cast(Any, image_conftest.compose_restart).__wrapped__(context)
 
     compose_exec("api", "true", env={"CHECK": "one"}, timeout=11.0)
-    compose_run("migrate", "id", "-u", timeout=12.0)
-    compose_restart("worker", timeout=13.0)
 
     prefix = [
         "docker",
@@ -265,61 +261,11 @@ def test_exec_run_and_restart_propagate_the_same_project_and_files(
     ]
     assert calls == [
         ([*prefix, "exec", "-T", "-e", "CHECK=one", "api", "true"], 11.0),
-        (
-            [
-                *prefix,
-                "run",
-                "--rm",
-                "--no-deps",
-                "--pull",
-                "never",
-                "-T",
-                "migrate",
-                "id",
-                "-u",
-            ],
-            12.0,
-        ),
-        ([*prefix, "stop", "worker"], 13.0),
-        (
-            [
-                *prefix,
-                "up",
-                "-d",
-                "--wait",
-                "--no-build",
-                "--pull",
-                "never",
-                "worker",
-            ],
-            13.0,
-        ),
     ]
 
 
 @pytest.mark.unit
-def test_restart_can_skip_wait_and_does_not_up_after_stop_failure(
-    tmp_path: Path,
-    compose_calls: tuple[
-        list[tuple[list[str], float]],
-        Callable[..., subprocess.CompletedProcess[str]],
-    ],
-) -> None:
-    calls, queue_result = compose_calls
-    context = _context(tmp_path)
-    queue_result(1)
-
-    result = image_conftest._restart_compose_service(
-        "api", context=context, wait_for_ready=False
-    )
-
-    assert result.returncode == 1
-    assert len(calls) == 1
-    assert calls[0][0][-2:] == ["stop", "api"]
-
-
-@pytest.mark.unit
-def test_restart_without_wait_uses_candidate_safe_up_options(
+def test_disposable_exec_and_state_use_exact_project(
     tmp_path: Path,
     compose_calls: tuple[
         list[tuple[list[str], float]],
@@ -327,19 +273,25 @@ def test_restart_without_wait_uses_candidate_safe_up_options(
     ],
 ) -> None:
     calls, _ = compose_calls
-    context = _context(tmp_path)
+    context = _context(tmp_path, project="sentinel-smoke-isolated-abcd1234")
+    stack = image_conftest.IsolatedComposeStack(context, tmp_path / "override.yml")
 
-    image_conftest._restart_compose_service(
-        "api", context=context, wait_for_ready=False
-    )
+    stack.exec("worker", "python", "-V", timeout=12.0)
+    stack.service_state("worker")
 
-    assert calls[-1][0][-6:] == [
-        "up",
-        "-d",
-        "--no-build",
-        "--pull",
-        "never",
-        "api",
+    assert calls == [
+        ([*context.common_args, "exec", "-T", "worker", "python", "-V"], 12.0),
+        (
+            [
+                *context.common_args,
+                "ps",
+                "--all",
+                "--format",
+                "{{.State}}|{{.ExitCode}}",
+                "worker",
+            ],
+            10.0,
+        ),
     ]
 
 

@@ -113,13 +113,24 @@ if [[ "${1:-}" == "inspect" ]]; then
         dddddddddddd) role=beat ;;
         *) role=unknown ;;
     esac
-    if [[ "${ROLE_MISMATCH:-}" == "${role}" ]]; then
+    if [[ "$*" == *"{{.State.Running}}"* ]]; then
+        printf '%s\n' "${BEAT_RUNNING:-true}"
+    elif [[ "${ROLE_MISMATCH:-}" == "${role}" ]]; then
         printf '%s\n' "${mismatch_id}"
     elif [[ "$*" == *"{{.Name}} {{.Image}}"* ]]; then
         printf '/%s %s\n' "${role}" "${image_id}"
     else
         printf '%s\n' "${image_id}"
     fi
+    exit 0
+fi
+if [[ "${1:-}" == "logs" ]]; then
+    [[ "${BEAT_LOG_READY:-1}" == "1" ]] && printf 'beat_startup_completed\n'
+    exit 0
+fi
+if [[ "${1:-}" == "exec" ]]; then
+    [[ "${BEAT_ENTRY_READY:-1}" == "1" ]] || exit 6
+    printf 'BEAT-READY\n'
     exit 0
 fi
 
@@ -667,6 +678,9 @@ def test_compose_pins_app_roles_and_uses_dynamic_loopback_port() -> None:
     assert '- "127.0.0.1::8000"' in compose
     assert "image: postgres:18" in compose
     assert "image: redis:8" in compose
+    api_section = compose.split("  api:\n", 1)[1].split("\n  migrate:\n", 1)[0]
+    assert "command:" not in api_section
+    assert "http://localhost:8000/ready" in api_section
 
 
 @pytest.mark.unit
@@ -764,6 +778,11 @@ def test_pytest_failure_precedes_later_reference_drift(tmp_path: Path) -> None:
         ("infra-pull-postgres", "IMAGE_SMOKE_INFRA_PULL_TIMEOUT", "infra-pull"),
         ("local-build", "IMAGE_SMOKE_LOCAL_BUILD_TIMEOUT", "candidate"),
         ("startup", "IMAGE_SMOKE_STARTUP_TIMEOUT", "startup"),
+        (
+            "beat-readiness",
+            "IMAGE_SMOKE_BEAT_READINESS_TIMEOUT",
+            "beat-readiness",
+        ),
         ("port-discovery", "IMAGE_SMOKE_PORT_DISCOVERY_TIMEOUT", "port-discovery"),
         (
             "image-verification-api-container",
@@ -795,6 +814,74 @@ def test_configured_stage_routes_through_supervisor_and_times_out(
         call.startswith(f"supervisor {label} timeout=0.25 ")
         for call in _supervisor_calls(calls)
     )
+
+
+@pytest.mark.unit
+def test_beat_readiness_requires_current_container_log_and_static_entry(
+    tmp_path: Path,
+) -> None:
+    result, calls = _run_script(tmp_path, "--no-build")
+
+    assert result.returncode == 0, result.stderr
+    beat_container = next(call for call in calls if " ps --all -q beat" in call)
+    assert "sentinel-smoke-" in beat_container
+    assert any(
+        "docker inspect --format {{.State.Running}} dddddddddddd" in call
+        for call in calls
+    )
+    assert any(
+        "docker logs --timestamps --tail 200 dddddddddddd" in call for call in calls
+    )
+    assert any("docker exec dddddddddddd python -c" in call for call in calls)
+    runner = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "from redbeat.schedulers import ensure_conf" in runner
+    assert "ensure_conf(celery_app)" in runner
+    assert 'entry.task == "cleanup_sessions"' in runner
+    assert "entry.enabled is True" in runner
+
+
+@pytest.mark.unit
+def test_beat_container_exit_fails_before_pytest(tmp_path: Path) -> None:
+    result, calls = _run_script(
+        tmp_path,
+        "--no-build",
+        env_overrides={"BEAT_RUNNING": "false"},
+    )
+
+    assert result.returncode == 1
+    assert "phase=beat-readiness exit=1" in result.stderr
+    assert "exited before readiness" in result.stderr
+    assert not any(call.startswith("uv ") for call in calls)
+
+
+@pytest.mark.unit
+def test_missing_beat_completion_marker_times_out_before_pytest(tmp_path: Path) -> None:
+    result, calls = _run_script(
+        tmp_path,
+        "--no-build",
+        env_overrides={
+            "BEAT_LOG_READY": "0",
+            "TIMEOUT_LABEL": "beat-readiness",
+            "IMAGE_SMOKE_BEAT_READINESS_TIMEOUT": "0.25",
+        },
+    )
+
+    assert result.returncode == 124
+    assert "phase=beat-readiness exit=124" in result.stderr
+    assert not any(call.startswith("uv ") for call in calls)
+
+
+@pytest.mark.unit
+def test_missing_static_beat_entry_fails_before_pytest(tmp_path: Path) -> None:
+    result, calls = _run_script(
+        tmp_path,
+        "--no-build",
+        env_overrides={"BEAT_ENTRY_READY": "0"},
+    )
+
+    assert result.returncode == 6
+    assert "phase=beat-readiness exit=6" in result.stderr
+    assert not any(call.startswith("uv ") for call in calls)
 
 
 @pytest.mark.unit
