@@ -38,7 +38,17 @@ def test_sentinel_version_matches_installed_package(
         f"sentinel --version failed (rc={result.returncode}): "
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
     )
-    assert result.stdout.strip()
+    metadata = compose_exec(
+        "api",
+        "python",
+        "-c",
+        "from importlib.metadata import version; print(version('sentinel'))",
+    )
+    assert metadata.returncode == 0, (
+        f"installed package metadata lookup failed (rc={metadata.returncode}): "
+        f"stdout={metadata.stdout!r} stderr={metadata.stderr!r}"
+    )
+    assert result.stdout.strip() == metadata.stdout.strip()
 
 
 @pytest.mark.image
