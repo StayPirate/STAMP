@@ -151,34 +151,6 @@ def _run_compose_bounded(
         )
 
 
-def _restart_compose_service(
-    service: str,
-    *,
-    context: ImageSmokeContext,
-    wait_for_ready: bool = True,
-    timeout: float = 60.0,
-) -> subprocess.CompletedProcess[str]:
-    """Stop and start one service using the legacy restart sequence."""
-    stop_result = _run_compose_bounded([*context.common_args, "stop", service], timeout)
-    if stop_result.returncode != 0:
-        return stop_result
-
-    wait_args = ["--wait"] if wait_for_ready else []
-    return _run_compose_bounded(
-        [
-            *context.common_args,
-            "up",
-            "-d",
-            *wait_args,
-            "--no-build",
-            "--pull",
-            "never",
-            service,
-        ],
-        timeout,
-    )
-
-
 def _capture_compose_diagnostics(
     phase: str, context: ImageSmokeContext
 ) -> list[tuple[str, str]]:
@@ -332,86 +304,6 @@ def compose_exec(
     return _exec
 
 
-@pytest.fixture(scope="session")
-def compose_run(
-    image_smoke_context: ImageSmokeContext,
-) -> Callable[..., subprocess.CompletedProcess[str]]:
-    """Run a bounded one-shot container without rebuilding or pulling."""
-
-    def _run(
-        service: str,
-        *args: str,
-        env: dict[str, str] | None = None,
-        timeout: float = _DEFAULT_EXEC_TIMEOUT,
-    ) -> subprocess.CompletedProcess[str]:
-        env_args: list[str] = []
-        for key, value in (env or {}).items():
-            env_args.extend(["-e", f"{key}={value}"])
-        cmd = [
-            *image_smoke_context.common_args,
-            "run",
-            "--rm",
-            "--no-deps",
-            "--pull",
-            "never",
-            "-T",
-            *env_args,
-            service,
-            *args,
-        ]
-        return _run_compose_bounded(cmd, timeout)
-
-    return _run
-
-
-@pytest.fixture(scope="session")
-def compose_restart(
-    image_smoke_context: ImageSmokeContext,
-) -> Callable[..., subprocess.CompletedProcess[str]]:
-    """Restart a primary-stack service using the retained legacy helper."""
-
-    def _restart(
-        service: str, *, wait_for_ready: bool = True, timeout: float = 60.0
-    ) -> subprocess.CompletedProcess[str]:
-        return _restart_compose_service(
-            service,
-            context=image_smoke_context,
-            wait_for_ready=wait_for_ready,
-            timeout=timeout,
-        )
-
-    return _restart
-
-
-def wait_for_status(
-    http_client: httpx.Client,
-    *,
-    expect_healthy: bool,
-    timeout: float = 30.0,
-    poll_interval: float = 1.0,
-) -> bool:
-    """Poll ``GET /health`` until its status matches the expectation."""
-    deadline = time.monotonic() + timeout
-    if expect_healthy:
-        while time.monotonic() < deadline:
-            try:
-                if http_client.get("/health", timeout=2.0).status_code == 200:
-                    return True
-            except httpx.TransportError:
-                pass
-            time.sleep(poll_interval)
-        return False
-
-    while time.monotonic() < deadline:
-        try:
-            if http_client.get("/health", timeout=2.0).status_code == 200:
-                return False
-        except httpx.TransportError:
-            pass
-        time.sleep(poll_interval)
-    return True
-
-
 def _register_disposable_project(context: ImageSmokeContext, project: str) -> None:
     """Append one complete project record before any disposable operation."""
     _validate_compose_project(project, "disposable project")
@@ -489,6 +381,35 @@ class IsolatedComposeStack:
                 "-T",
                 service,
                 *args,
+            ],
+            timeout=10.0,
+        )
+
+    def exec(
+        self, service: str, *args: str, timeout: float = _DEFAULT_EXEC_TIMEOUT
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a bounded command in a running disposable service."""
+        return _run_compose_bounded(
+            [
+                *self.context.common_args,
+                "exec",
+                "-T",
+                service,
+                *args,
+            ],
+            timeout=timeout,
+        )
+
+    def service_state(self, service: str) -> subprocess.CompletedProcess[str]:
+        """Return the disposable service's container state and exit code."""
+        return _run_compose_bounded(
+            [
+                *self.context.common_args,
+                "ps",
+                "--all",
+                "--format",
+                "{{.State}}|{{.ExitCode}}",
+                service,
             ],
             timeout=10.0,
         )
