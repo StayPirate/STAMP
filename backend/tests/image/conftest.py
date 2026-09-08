@@ -1,4 +1,4 @@
-"""Fixtures for black-box verification of the built Sentinel image."""
+"""Fixtures for OCI artifact verification of the built Sentinel image."""
 
 from __future__ import annotations
 

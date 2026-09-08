@@ -127,6 +127,17 @@ class TestListMyApiKeys:
         response = await client.get("/api/v1/api-keys")
         assert response.status_code == 401
 
+    async def test_no_keys_returns_empty_default_page(
+        self, authenticated_client: AsyncClient
+    ) -> None:
+        response = await authenticated_client.get("/api/v1/api-keys")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "data": [],
+            "meta": {"total": 0, "page": 1, "per_page": 20},
+        }
+
     async def test_returns_only_own_keys_newest_first(
         self,
         admin_user_and_client: tuple[User, AsyncClient],

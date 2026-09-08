@@ -153,6 +153,18 @@ def test_command_help_exits_zero_without_bootstrap(
 
 
 @pytest.mark.unit
+def test_set_password_help_has_no_password_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _forbid_bootstrap(monkeypatch)
+    result = _invoke(["manage-user", "set-password", "--help"])
+
+    assert result.exit_code == 0
+    assert "--username" in result.output
+    assert "--password" not in result.output
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("command", ["list", "revoke"])
 def test_api_key_command_help_exits_zero_without_bootstrap(
     monkeypatch: pytest.MonkeyPatch, command: str

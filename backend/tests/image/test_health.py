@@ -1,9 +1,9 @@
-"""Black-box image smoke assertions for the public health/readiness
+"""OCI artifact smoke assertions for the public health/readiness
 endpoints.
 
 See docs/features/platform/health-endpoints.md for the contract and
 docs/features/platform/testing-strategy.md (Image / Container Smoke
-Testing, Growth Rule) for why this file exists: the api container's
+Testing, Artifact-Risk Rule) for why this file exists: the api container's
 own healthcheck (docker-compose.smoke.yml) now probes `/health`
 instead of `/openapi.json`, so container-observable behavior for these
 endpoints must be covered here.
