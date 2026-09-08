@@ -118,7 +118,7 @@ signature and behavior.
 
 Each user-facing function below follows the same pattern unless its section
 states a narrower no-op or system-derived-metadata exception. System-only
-operations such as `set_product_released_at()` and
+operations such as `set_track_delivery_status()`, `set_product_released_at()`, and
 `recalculate_product_eligibility_for_ticket()` omit auto-assignment as stated
 in their sections. `add_package_records()` also omits assignment and
 reconciliation when maintainership associations are its only mutation.
@@ -211,7 +211,10 @@ Checkpoint-only outcomes create no Ticket audit event and do not update
 
 ### `set_track_delivery_status()`
 
-Sets the delivery status of a `TicketPackageTrack` record.
+Sets the delivery status of a `TicketPackageTrack` record as a system-attributed
+mutation. This is the single package-owned delivery mutation boundary used by
+the authoritative reconciliation in `ibs-submission-tracking.md`; it performs
+no external I/O.
 
 **Parameters**:
 
@@ -220,43 +223,54 @@ Sets the delivery status of a `TicketPackageTrack` record.
 | `db` | `AsyncSession` | Yes | Database session |
 | `track_id` | `UUID` | Yes | TicketPackageTrack to modify |
 | `delivery_status` | `DeliveryStatus` | Yes | New delivery status value |
-| `acting_user_id` | `UUID \| None` | No | Who is performing the action |
+| `acting_user_id` | `None` | No | System-attribution marker; always `None` |
 
 **Preconditions**:
 
 - Parent ticket must be operable (`ensure_ticket_operable`)
 - Track must exist
 - The transition `current_delivery_status → new_delivery_status` must be
-  valid per the delivery status transition rules in
-  `docs/features/packages/package-model.md`. In particular, any regression
-  from `RELEASED` is illegal.
+  unchanged or one of `PENDING → IN_PROGRESS`, `IN_PROGRESS → RELEASED`, or
+  `IN_PROGRESS → PENDING` under the evidence and stale-negative rules in
+  `docs/features/packages/package-model.md`. Any change out of `RELEASED` is
+  illegal. A caller whose complete observation proves `RELEASED` from `PENDING`
+  applies the two approved forward transitions in one transaction.
 
 **Behavior**:
 
-1. Acquire `FOR UPDATE` on the parent Ticket row
+1. Acquire `FOR UPDATE` on the parent Ticket row. If the caller's current
+   transaction already holds that lock, acquiring it again is compatible and
+   does not establish a nested transaction.
 2. Call `ensure_ticket_operable(ticket)`
-3. Call `auto_assign_actor()`
-4. Validate preconditions
-4. Validate transition: verify that `current_delivery_status →
+3. Validate preconditions
+4. If delivery_status is unchanged, return (no-op)
+5. Validate transition: verify that `current_delivery_status →
    new_delivery_status` is a legal transition per the delivery status
    state machine defined in `package-model.md`. If the transition is
-   illegal (e.g., `RELEASED → IN_PROGRESS`, `RELEASED → PENDING`), raise
+   illegal, raise
    `InvalidDeliveryStatusTransition` without modifying the record.
-5. If delivery_status unchanged, return (no-op)
 6. Update `TicketPackageTrack.delivery_status`
-7. Return updated track
+7. Flush and return the updated track
 
-**Note**: delivery status transitions do NOT generate `TicketAuditEvent`
-records. The delivery progress is tracked by the submission tracking
-system (see `docs/features/packages/ibs-submission-tracking.md`). The
-meaningful milestones for the ticket timeline are: (1) `track_status_changed`
-when track source evidence causes the track to transition to FIXED, and
-(2) `product_released` when the update reaches the product repository.
-Delivery status is an intermediate signal — not a customer-facing event.
+The operation never calls `auto_assign_actor()` or
+`reconcile_ticket_status()`. Delivery is an independently derived system fact,
+not a VA mutation or a Ticket gate input. It does not generate a
+`TicketAuditEvent`; request/action provenance is retained by IBS submission
+tracking, while the Ticket timeline records the independent
+`track_status_changed` and `product_released` milestones.
+
+The function participates in the caller-owned transaction and never commits or
+rolls back. The shared IBS reconciler may upsert request, action, and
+action-track evidence before calling it while holding the same Ticket lock; all
+of those writes and the delivery change commit or roll back atomically.
 
 **TicketAuditEvent**: none.
 
 **Idempotency**: no-op if delivery_status is unchanged.
+
+**System attribution**: every caller passes `acting_user_id = None`. The
+function is not exposed as a user-facing mutation, and a delivery change has no
+user attribution because it creates no audit event.
 
 ---
 
@@ -920,11 +934,12 @@ async def add_package_to_ticket(
    `add_package_records()` — this is where
    the `FOR UPDATE` lock is acquired.
 8. If step 7 created at least one track whose persisted `workflow_type` is
-   `ibs`, register the best-effort post-commit
-   `discover_submissions_for_ticket_package()` effect. A package-only,
-   Product-only, Git-track-only, maintainer-only, fully no-op, or
+   `ibs`, register one best-effort post-commit invocation of the existing
+   generic `run_catch_up("sync_ibs_requests", ticket_id)` mechanism. A
+   package-only, Product-only, Git-track-only, maintainer-only, fully no-op, or
    `active_ticket_only` skip registers no effect. It never executes before the
-   database commit succeeds.
+   database commit succeeds, and no dedicated submission discovery or
+   correlation task is introduced.
 9. Return an `AddPackageResult` with creation/skip counts and the identities
    plus persisted workflow types of newly created tracks, or an equivalent
    semantic signal that lets the workflow owner determine whether step 8
@@ -972,12 +987,11 @@ the documented warning plus empty set; they never escape this function.
   dependency or other workflow owner executes these effects only after its
   caller-owned transaction commits. Failures do not roll back the created
   records.
-  - **Submission discovery enqueue**: if the task enqueue fails
-    (e.g., Redis unavailable), log a warning and continue. Ordinary active
-    request state remains covered by `SyncIbsRequests`; targeted historical
-    discovery for a newly introduced IBS track may require an observable
-    operator rerun if this acceleration task fails permanently. See
-    `ibs-submission-tracking.md`.
+  If generic catch-up publication fails (for example, Redis is unavailable),
+  log a sanitized warning and continue. The complete daily
+  `sync_ibs_requests` fetcher is the permanent recovery owner for the new IBS
+  track while sufficient upstream evidence remains available. See
+  `ibs-submission-tracking.md`.
 
 **Auto-assignment**: applied by `add_package_records()` only after it confirms
 that at least one package-tree record is missing. Maintainer associations alone
@@ -1206,7 +1220,7 @@ Handled by system callers directly (not mapped to HTTP responses):
 
 | Exception | Raised when | Handling |
 |-----------|-------------|----------|
-| `InvalidDeliveryStatusTransition` | Illegal delivery status transition (e.g., regression from `RELEASED`) | Caller logs warning and continues (`SyncIbsRequests`) or avoids via pre-check (`IBSEventConsumer`) |
+| `InvalidDeliveryStatusTransition` | Requested delivery transition is not one of the approved transitions or attempts to leave `RELEASED` | The shared IBS reconciler rolls back the track scope, records the sanitized local failure, and continues with independent scopes |
 
 ## Excluded and Non-Actionable Records
 
@@ -1306,6 +1320,17 @@ transitions. The test must cover:
   one service-owned event, and Ticket reconciliation commit atomically; local
   failure rolls back all three; and concurrent or repeated calls preserve the
   first committed timestamp without another event or reconciliation
+- **Delivery mutation composition**: verify every approved transition, an
+  unchanged no-op, rejection of direct `PENDING → RELEASED` and every change
+  out of `RELEASED`, two-step atomic advancement from `PENDING` to `RELEASED`,
+  compatibility when the caller already holds the Ticket lock, caller-owned
+  rollback, and the absence of assignment, Ticket reconciliation, and audit
+  events
+- **Package-add request catch-up**: verify one post-commit generic
+  `run_catch_up("sync_ibs_requests", ticket_id)` publication when at least one
+  IBS track is created, no publication for every documented non-triggering
+  outcome, no publication before commit, and best-effort failure without
+  rollback; no dedicated submission task is used
 
 ## Cross-references
 

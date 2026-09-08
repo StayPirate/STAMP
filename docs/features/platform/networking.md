@@ -305,9 +305,8 @@ as standalone Celery tasks (not inside `execute()` batch loops).
 def is_retryable_condition(exc: Exception) -> bool:
     """Classify whether a post-transport exception is worth retrying.
 
-    Used by Celery task wrappers (fetch_single_cve, run_catch_up,
-    correlate_submission_request) to decide self.retry() vs immediate
-    failure.
+    Used by Celery task wrappers (fetch_single_cve and run_catch_up) to
+    decide self.retry() vs immediate failure.
 
     Returns True for transient conditions where a subsequent attempt
     may succeed: infrastructure failures (network, timeout, proxy,
@@ -361,9 +360,8 @@ Neither function is implemented in terms of the other. They share the
 `INFRA_FAILURE_TYPES` tuple but apply independent logic for HTTP status
 codes.
 
-**Consumers**: `fetch_single_cve`, `run_catch_up`,
-`correlate_submission_request` (Celery task wrappers for on-demand and
-catch-up operations).
+**Consumers**: `fetch_single_cve` and `run_catch_up` (Celery task
+wrappers for on-demand and catch-up operations).
 
 #### HTTP Response Compression
 
@@ -597,8 +595,6 @@ by each component and documented in its respective spec.
 - `docs/features/platform/cve-fetcher-infrastructure.md` — `fetch_single`
   retry policy, batch error handling
 - `docs/features/tickets/cve-service.md` — `fetch_single_cve` orchestrator
-- `docs/features/packages/ibs-submission-tracking.md` —
-  `correlate_submission_request` retry policy
 - `docs/features/integrations/ibs-integration.md` — IBSClient usage
 - `docs/features/integrations/ibs-rabbitmq-integration.md` — AMQP TLS
   configuration

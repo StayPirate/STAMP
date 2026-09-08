@@ -137,11 +137,12 @@ following fields:
 | `request_id` | string (UUID or validated client-supplied value) | Only during API request processing | See Correlation IDs. |
 | `celery_task_id` | string (UUID) | Only during Celery task execution | See Correlation IDs. |
 | `fetcher_run_id` | string (UUID) | Only during a fetcher's `execute()` and the surrounding finalization phase of `run()` | See Correlation IDs. |
+| `ibs_event_id` | string (UUIDv7) | Only while the IBS RabbitMQ consumer handles one delivered message | See Correlation IDs. |
 | `exception` | string (traceback) | Only when logged with `exc_info` | See below. |
 
-Correlation fields (`request_id`, `celery_task_id`, `fetcher_run_id`)
-are **omitted entirely** from the record when not bound for the current
-unit of work — they are never serialized as `null`.
+Correlation fields (`request_id`, `celery_task_id`, `fetcher_run_id`,
+`ibs_event_id`) are **omitted entirely** from the record when not bound
+for the current unit of work — they are never serialized as `null`.
 
 **No process-role field.** The record does not include a field
 identifying which of the 5 runtime roles (`api`, `celery-worker`,
@@ -176,6 +177,7 @@ not propagate correctly across `await` boundaries):
 | API request | `request_id` | Adopts the incoming `X-Request-ID` header if present, otherwise generates a UUID. Realizes the existing contract in `docs/api-spec.md` (Request Tracing) — see "Relationship to the API Request Tracing contract" below. |
 | Celery task | `celery_task_id` | `task.request.id` (Celery's native task identifier), bound via the `task_prerun`/`task_postrun` signals. |
 | Fetcher run | `fetcher_run_id` | Bound by `BaseFetcher.run()` (the non-overridable lifecycle wrapper — see `docs/features/platform/fetcher-infrastructure.md`) after the `FetcherRun` record is acquired. |
+| IBS RabbitMQ delivery | `ibs_event_id` | A new local UUIDv7 generated and bound by the standalone consumer when handling begins. See `docs/features/integrations/ibs-rabbitmq-integration.md` (Correlation Scope). |
 
 ### Relationship to the API Request Tracing contract
 
@@ -194,18 +196,18 @@ generated instead.
 ### Scope boundary: per-execution-unit, no cross-enqueue propagation
 
 Each correlation ID is valid only for the lifetime of its own unit of
-execution — one HTTP request, one Celery task, one fetcher `run()`
-call. Correlation IDs do **not** automatically propagate across an
-`apply_async()` enqueue boundary: a Celery task enqueued by an API
-request or by a fetcher starts a fresh correlation scope with its own
-`celery_task_id`; it does not inherit the parent's `request_id` or
-`fetcher_run_id`. This is a deliberate simplicity choice for this
-phase — cross-boundary propagation (e.g., injecting the parent
-`request_id` as a task header and re-binding it in `task_prerun`) may
-be added in a future revision if operational experience shows the
-need. The "request-scoped debugging" wording in `docs/api-spec.md`
-(Request Tracing) describes the synchronous request-processing
-lifecycle, not asynchronous work it may enqueue.
+execution — one HTTP request, one Celery task, one fetcher `run()` call,
+or one IBS RabbitMQ delivery. Correlation IDs do **not** automatically
+propagate across an `apply_async()` enqueue boundary: a Celery task
+enqueued by an API request or by a fetcher starts a fresh correlation
+scope with its own `celery_task_id`; it does not inherit the parent's
+`request_id` or `fetcher_run_id`. This is a deliberate simplicity choice
+for the current contract — cross-boundary propagation (e.g., injecting the parent
+`request_id` as a task header and re-binding it in `task_prerun`) may be
+added in a future revision if operational experience shows the need. The
+"request-scoped debugging" wording in `docs/api-spec.md` (Request
+Tracing) describes the synchronous request-processing lifecycle, not
+asynchronous work it may enqueue.
 
 ### Fetcher run binding detail
 
@@ -238,11 +240,10 @@ multiple tasks in the same OS process over their lifetime.
 
 To guarantee cleanup even when `task_postrun` is skipped (hard time
 limit kill, unhandled exception in the signal handler itself),
-`task_prerun` MUST unconditionally clear all three correlation
-ContextVars — `request_id`, `celery_task_id`, and `fetcher_run_id` —
-before binding the new `celery_task_id`. The `task_postrun`
-reset remains as defense-in-depth but is not the sole cleanup
-mechanism.
+`task_prerun` MUST unconditionally clear all correlation ContextVars —
+`request_id`, `celery_task_id`, and `fetcher_run_id` —
+before binding the new `celery_task_id`. The `task_postrun` reset remains
+as defense-in-depth but is not the sole cleanup mechanism.
 
 For API requests specifically, "end of its unit of work" means
 completion of the full ASGI request lifecycle, including any Starlette
@@ -255,14 +256,22 @@ still carry `request_id`. Sentinel does not currently use
 for this case regardless, since nothing prevents a future handler from
 using it.
 
-### Known gap: IBS RabbitMQ consumer
+### IBS RabbitMQ delivery binding detail
 
-The IBS RabbitMQ consumer (a fifth first-class runtime role — see
-`docs/deployment.md`, Container Images) performs per-message
-processing and inline mutations with none of the three correlation IDs
-above applicable to it. This is a real gap, deliberately scoped to the
-consumer's own specification rather than resolved here — see
-`docs/features/integrations/ibs-rabbitmq-integration.md` (Open Points).
+The standalone IBS RabbitMQ consumer binds a fresh `ibs_event_id` before
+decoding each delivered message. The binding covers parsing, relevance
+selection, inline reconciliation, settlement, and cleanup for that
+delivery. The ID is local diagnostic metadata only: it is not persisted,
+returned by an API, sent upstream, or used for deduplication.
+
+The handler resets `ibs_event_id` in `finally` with the context-variable
+token returned by the bind operation. This reset is required for every
+outcome, including malformed input, irrelevance, success, exception,
+cancellation, connection loss, and shutdown, so the ID cannot leak into
+the next delivery or into connection-lifecycle logs. The complete
+per-delivery contract is defined in
+`docs/features/integrations/ibs-rabbitmq-integration.md` (Correlation
+Scope).
 
 ## Integration with Third-Party Loggers
 
@@ -317,9 +326,9 @@ structlog output through stdlib `logging` to stderr, uses plain-text
 format (not JSON, not colorized console), and sets the level to WARNING
 or above — so that DEBUG/INFO messages from service code do not pollute
 CLI output. Correlation IDs (`request_id`, `celery_task_id`,
-`fetcher_run_id`) are not bound in CLI processes and are omitted from
-log records. stdout remains reserved exclusively for CLI Output Contract
-output (`docs/conventions.md`).
+`fetcher_run_id`, `ibs_event_id`) are not bound in CLI processes and are
+omitted from log records. stdout remains reserved exclusively for CLI
+Output Contract output (`docs/conventions.md`).
 
 Alembic keeps its own independent logging configuration
 (`alembic.ini`, `fileConfig`), because it is a one-shot migration tool
@@ -428,12 +437,12 @@ by the fact that the two roles always run in separate containers per
 
 ## Consumption Model
 
-Logs are filtered and correlated by `request_id`, `celery_task_id`, or
-`fetcher_run_id` at the collector/query layer. Process-role/container
-filtering is done via platform-provided metadata (Kubernetes pod/
-container labels, Docker Compose service name) at the collector/
-orchestrator level — not via any field emitted by the application (see
-"No process-role field" above).
+Logs are filtered and correlated by `request_id`, `celery_task_id`,
+`fetcher_run_id`, or `ibs_event_id` at the collector/query layer.
+Process-role/container filtering is done via platform-provided metadata
+(Kubernetes pod/container labels, Docker Compose service name) at the
+collector/orchestrator level — not via any field emitted by the
+application (see "No process-role field" above).
 
 Rotation, long-term retention, and backup of the log stream are the
 platform's responsibility, not the application's. Concrete
@@ -459,10 +468,11 @@ are expected to be tested as follows:
   generates a UUID otherwise, and that the value appears both in the
   response header and in log records emitted during that request
   (using `structlog.testing.capture_logs` or equivalent).
-- **Reset behavior**: a test verifying that `request_id`/
-  `celery_task_id`/`fetcher_run_id` do not leak into log records
-  emitted by a subsequent, unrelated unit of work in the same process
-  (relevant for Celery prefork workers).
+- **Reset behavior**: tests verifying that `request_id`/
+  `celery_task_id`/`fetcher_run_id` do not leak into log records emitted
+  by a subsequent, unrelated unit of work in the same process (relevant
+  for Celery prefork workers), and that `ibs_event_id` is reset after
+  every delivery outcome and cancellation path.
 - Application-level log assertions (e.g., "a WARNING is logged when
   X occurs", prescribed by individual feature specs) use `caplog`
   (pytest) or `structlog.testing.capture_logs` as appropriate.
@@ -486,6 +496,5 @@ are expected to be tested as follows:
   logs).
 - `docs/features/platform/fetcher-infrastructure.md` — `run()` binds
   `fetcher_run_id`; see its own contract for the exact binding point.
-- `docs/features/integrations/ibs-rabbitmq-integration.md` — tracks
-  the open point for consumer-side correlation IDs, deliberately out
-  of scope here.
+- `docs/features/integrations/ibs-rabbitmq-integration.md` — owns the
+  per-delivery `ibs_event_id` lifecycle and allowed consumer log context.

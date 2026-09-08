@@ -21,7 +21,7 @@ relevant feature specifications in `docs/features/`.
 | Red Hat Security Data | Public | CVSS assessments | Specified |
 | IBS | Internal | Source packages, builds, repos, declarative product channels | Active |
 | OBS | Public | Source packages, builds, repos (openSUSE) | Not planned |
-| IBS RabbitMQ | Internal | Real-time build and publish events | Active |
+| IBS RabbitMQ | Internal | Package and request wake-up events | Active |
 | OBS RabbitMQ | Public | Real-time build and publish events | Not planned |
 | SMELT | Internal | Aggregated Product catalog, package-target resolution, and maintainership | Active |
 | SCC | Internal | Product registration catalog, architectures, extensions, migrations | Reference only |
@@ -296,13 +296,16 @@ Source packages for maintenance updates are maintained in codestream projects
 (e.g., `SUSE:SLE-15-SP6:Update`), and released binaries are published to
 product-specific update repositories.
 
-IBS is the primary source for Sentinel's release detection: Sentinel queries IBS
-to determine whether security fixes have landed in source codestreams and
-whether update advisories have been published to product repositories.
+IBS is the primary source for Sentinel's release and maintenance-request
+tracking: Sentinel queries IBS to determine whether security fixes have landed
+in source codestreams, how relevant request actions relate to represented
+tracks, and whether update advisories have been published to product
+repositories.
 
 - **Relevant data**: expanded source package checksums, source diffs with
-  structured CVE and Bugzilla references, linked-package context, build
-  results, and Product repository metadata. Product detection consumes bounded
+  structured CVE and Bugzilla references, linked-package context, normalized
+  maintenance-request detail and action-scoped diffs, package source history,
+  build results, and Product repository metadata. Product detection consumes bounded
   `repomd.xml` integrity metadata and `updateinfo.xml.gz` stable security
   advisories with exact CVE, issued-time, and `src`/`nosrc` source-package
   fields
@@ -330,12 +333,27 @@ whether update advisories have been published to product repositories.
     expanded source diff. Track release detection uses canonical CVE identity
     from `issue.label`, accepts `added` and `changed`, and ignores `bnc` for CVE
     matching
+  - `GET /search/request/id?match={typed_narrow_predicate}` — complete ID-only
+    discovery for a bounded maintenance action, state, and source scope. Every
+    returned number is point-fetched; a search-result-limit or inconsistent
+    count is incomplete evidence, not a negative result
+  - `GET /request/{request_number}` — authoritative current request state and
+    complete REST action representation. Request-event state and action arrays
+    are not used as domain evidence
+  - `POST /request/{request_number}?cmd=diff&withissues=1&view=xml` —
+    semantically read-only action-scoped issue evidence
+  - `GET /source/{project}/{package}/_history` — source revision, checksum,
+    time, and optional request-number provenance used for request delivery
+    reconciliation
 - **Integration status**: **Active**. Codestream-level release detection
   uses two complementary mechanisms: the `IBSEventConsumer` (real-time
   via IBS RabbitMQ, see `docs/features/integrations/ibs-rabbitmq-integration.md`) and
   the periodic `detect_ibs_track_releases` fetcher (catch-up every 24
-  hours at 02:00 UTC). Product-level release detection
-  (`detect_ibs_product_releases`) runs daily at 04:00 UTC as a periodic
+  hours at 02:00 UTC). Maintenance-request and track-delivery reconciliation
+  uses the cursorless `sync_ibs_requests` complete state scan daily at 02:30
+  UTC; request RabbitMQ events and generic catch-up only accelerate that same
+  reconciliation. Product-level release detection remains polling-only:
+  `detect_ibs_product_releases` runs daily at 04:00 UTC as a periodic
   anonymous `BaseFetcher` subclass and validates current associations before
   retained historical associations.
   All IBS package operations require a parent track whose persisted
@@ -379,24 +397,25 @@ with separate projects, packages, and user accounts.
 ### IBS/OBS RabbitMQ Event Bus
 
 Both IBS and OBS operate RabbitMQ message brokers that publish real-time
-notifications of events occurring in the build service — package commits,
-build completions, repository publications, and more. This event bus
-provides an alternative to polling for detecting changes, enabling
-near-real-time reactivity.
+notifications of events occurring in the build service, including package
+commits, build completions, request activity, and repository activity. For
+Sentinel, the bus is a transient wake-up transport that reduces latency; it is
+not an alternative source of authoritative or durable domain state. Current
+state comes from the IBS REST API and PostgreSQL, and periodic polling owns
+recovery.
 
-- **Relevant data**: Real-time events with JSON payloads, published to a
-  `pubsub` topic exchange. Topics follow the format
+- **Relevant data**: Events published to a `pubsub` topic exchange. The three
+  Sentinel bindings carry UTF-8 JSON bodies with AMQP content type
+  `application/octet-stream`. Topics follow the format
   `SCOPE.APPLICATION.OBJECT.ACTION`. The IBS scope prefix is `suse`
   (e.g., `suse.obs.package.commit`); the OBS scope prefix is `opensuse`.
-  The complete list of available event types is:
+  The deployed event catalog includes:
 
   **Package events:**
-  - `*.obs.package.commit` — source package committed. Track release detection
-    consumes only validated `project` and `package` as a wake-up identity and
-    obtains current source state from the IBS HTTP API. The full source-inspected
-    field inventory and deployed-payload verification gate are in
-    `docs/features/integrations/ibs-rabbitmq-integration.md`. **Currently
-    consumed** by Sentinel for codestream-level release detection
+  - `*.obs.package.commit` — source package committed. Sentinel consumes only
+    non-empty string `project` and `package` as a wake-up identity and obtains
+    current source state from the IBS HTTP API. **Consumed** by Sentinel for
+    codestream-level release reconciliation
   - `*.obs.package.version_change` — package version changed (payload
     includes `project`, `package`, `oldversion`, `newversion`)
   - `*.obs.package.upstream_version_change` — upstream package version
@@ -406,7 +425,7 @@ near-real-time reactivity.
   - `*.obs.package.delete` — package deleted from a project
   - `*.obs.package.undelete` — package restored after deletion
   - `*.obs.package.upload` — file uploaded to a package
-  - `*.obs.package.branch_command` — package branched
+  - `*.obs.package.branch` — package branched
 
   **Build events:**
   - `*.obs.package.build_success` — package build completed successfully
@@ -423,23 +442,28 @@ near-real-time reactivity.
   - `*.obs.repo.build_started` — repository build started
   - `*.obs.repo.build_finished` — repository build finished
   - `*.obs.repo.publish_state` — repository publish state changed
-  - `*.obs.repo.container_published` — container image published
+  - `*.obs.repo.packtrack` — package-tracking backend notification
+  - `*.obs.repo.status_report` — repository status report
+  - `*.obs.published.status_report` — published-repository status report
+  - `*.obs.container.published` — container image published
 
   **Request events (maintenance/submit requests):**
-  - `*.obs.request.create` — new request created
-  - `*.obs.request.change` — request modified
-  - `*.obs.request.state_change` — request state changed (e.g., new →
-    accepted → revoked). **Currently consumed** by Sentinel alongside
-    `*.obs.request.create`
-  - `*.obs.request.delete` — request deleted
+  - `*.obs.request.create` — new request created. Sentinel consumes only the
+    positive numeric public `number` as a wake-up identity. **Consumed**
+  - `*.obs.request.state_change` — conclusive request state changed. Sentinel
+    consumes only the positive numeric public `number`; event state, action
+    arrays, order, timestamps, and actor data are ignored. **Consumed**
+  - `*.obs.request.change` — request metadata changed; not consumed as a
+    request-lifecycle signal
   - `*.obs.request.reviews_done` — all reviews for a request completed
   - `*.obs.request.review_changed` — individual review changed
   - `*.obs.request.review_wanted` — review requested
+  - `*.obs.request.comment` — comment on a request
 
   **Project events:**
   - `*.obs.project.create` — new project created
   - `*.obs.project.update` — project metadata updated
-  - `*.obs.project.update_config` — project build config updated
+  - `*.obs.project.update_project_conf` — project build config updated
   - `*.obs.project.delete` — project deleted
   - `*.obs.project.undelete` — project restored after deletion
 
@@ -451,7 +475,6 @@ near-real-time reactivity.
   **Comment events:**
   - `*.obs.comment.for_package` — comment on a package
   - `*.obs.comment.for_project` — comment on a project
-  - `*.obs.comment.for_request` — comment on a request
   - `*.obs.comment.for_report` — comment on a report
 
   **Status check events:**
@@ -479,20 +502,31 @@ near-real-time reactivity.
 
   **Workflow events:**
   - `*.obs.workflow_run.fail` — workflow run failed
+
+  **Telemetry events:**
+  - `*.obs.metrics` — upstream telemetry in Influx line protocol, not JSON
 - **Access**:
-  - IBS: `amqps://suse:suse@rabbit.suse.de`
+  - IBS: credential-bearing AMQPS URL configured by `IBS_RABBITMQ_URL`
+    (default host `rabbit.suse.de`, port 5671). The full URL is excluded from
+    settings representations and is never logged
   - OBS: `amqps://opensuse:opensuse@rabbit.opensuse.org`
-  - Both use the exchange named `pubsub` (type: topic, durable). Consumers
-    must declare an exclusive queue, bind it to the exchange with a
-    routing key filter, and consume messages. The exchange must be declared
-    with `passive=True` and `durable=True` (consumers cannot create it)
+  - Both use the existing `pubsub` exchange. Sentinel declares it as type
+    `topic` with `passive=True` and `durable=True`, creates one server-named
+    exclusive non-durable auto-delete queue per connection, requests a
+    60-second AMQP heartbeat, applies per-consumer prefetch 1, and creates
+    exactly three fixed, non-wildcard bindings: `suse.obs.package.commit`,
+    `suse.obs.request.create`, and `suse.obs.request.state_change`. Sentinel
+    never creates or modifies the exchange and never publishes to it
 - **Integration status**: **Active**. Sentinel consumes
   `suse.obs.package.commit`, `suse.obs.request.create`, and
-  `suse.obs.request.state_change` events from IBS for near-real-time release
-  and request tracking on IBS tracks of active Tickets. The periodic polling
-  fetcher (`detect_ibs_track_releases`, every 24 hours at 02:00 UTC) serves as
-  a catch-up mechanism for events missed during consumer downtime, since queues
-  are exclusive and transient. See
+  `suse.obs.request.state_change` events from IBS for near-real-time track and
+  request reconciliation. Package events carry only the package wake-up
+  identity; request events carry only the request-number wake-up identity.
+  Current IBS REST and PostgreSQL state determine every domain outcome. The
+  periodic `detect_ibs_track_releases` and `sync_ibs_requests` fetchers recover
+  missed or terminally failed deliveries while sufficient upstream evidence
+  remains available. Product-level release detection does not consume RabbitMQ
+  events and remains polling-only. See
   `docs/features/integrations/ibs-rabbitmq-integration.md` for the full specification
 - **Documentation**: https://rabbit.opensuse.org (OBS),
   https://github.com/openSUSE/suse_msg/blob/master/amqp_infra.md,
@@ -1122,7 +1156,7 @@ feature documentation (not its implementation status):
 | `detect_ibs_track_releases` | IBS | Daily at 02:00 UTC | HTTP Basic / API token (internal) | N/A (internal) | Reconciles existing active-Ticket IBS tracks from targeted expanded source state; one successfully examined checkpoint per track | [ibs-track-release-detection.md](features/packages/ibs-track-release-detection.md#fetcher-detect_ibs_track_releases) | Complete |
 | `detect_ibs_product_releases` | IBS Product repositories | Daily at 04:00 UTC | None | N/A (internal) | Reconciles unreleased occurrences below active-Ticket IBS tracks from bounded, integrity-validated stable security updateinfo advisories and exact source-package entries | [ibs-product-release-detection.md](features/packages/ibs-product-release-detection.md#fetcher-detect_ibs_product_releases) | Complete |
 | `evaluate_lifecycle_transitions` | Local (no external source) | Daily at 04:15 UTC | N/A | N/A | Reconciles automatic eligibility and Ticket gate state from derived Product lifecycle and package-tree actionability | [product-lifecycle-transitions.md](features/packages/product-lifecycle-transitions.md#fetcher-evaluate_lifecycle_transitions) | Complete |
-| `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | IBS SR/RR state and correlation for active-Ticket IBS tracks; targeted historical catch-up on reactivation | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Partial |
+| `sync_ibs_requests` | IBS | Daily at 02:30 UTC | HTTP Basic / API token (internal) | N/A (internal) | Cursorless complete state scan of active-Ticket IBS tracks; reconciles normalized request actions, exact track correlations, provenance, and delivery, with generic package-add/reactivation catch-up and RabbitMQ request-number acceleration using the same boundary | [ibs-submission-tracking.md](features/packages/ibs-submission-tracking.md#fetcher-sync_ibs_requests) | Complete |
 | `sync_cisa_kev` | CISA KEV | 4x daily (`0 4,10,18,22 * * *`) | None | None (single JSON file) | KEV date_added, reference_url, CWE classifications | [cve-sync-kev.md](features/tickets/cve-sync-kev.md#fetcher-definition) | Complete |
 | `sync_epss_scores` | FIRST.org EPSS | Daily at 14:00 UTC | None | 1000 req/min (public) | EPSS score + percentile per CVE | [cve-sync-epss.md](features/tickets/cve-sync-epss.md#fetcher-definition) | Complete |
 | `sync_ghsa_advisories` | GitHub Advisory DB | Every 3 hours (`0 */3 * * *`) | GitHub token (free) | 5,000 req/hour with token | CVSS GitHub (v3.x + v4.0, `provider_name = "GitHub"`), GHSA-ID (as CVEExternalIdentifier), CWE, affected versions (multi-ecosystem, `source_container = "ghsa"`), resolved packages (best-effort SMELT), references | [cve-sync-ghsa.md](features/tickets/cve-sync-ghsa.md#fetcher-definition) | Complete |

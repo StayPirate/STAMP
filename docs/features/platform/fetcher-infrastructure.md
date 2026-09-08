@@ -797,8 +797,15 @@ successfully added records.
 | `sync_osv_advisories` | CVEs with active tickets | **Inherited from `BaseCVEFetcher`** | Extract `cve_id` → call OSV API → upsert affected versions/refs/packages |
 | `detect_ibs_track_releases` | IBS tracks in active tickets | **Custom override** | Extract the Ticket's eligible IBS tracks and apply the same per-track checkpoint/current-state reconciliation as periodic execution |
 | `detect_ibs_product_releases` | Product occurrences below IBS tracks in active tickets | **Custom override** | Check current `updateinfo.xml` data, including valid advisories that predate reactivation |
-| `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Perform targeted historical query → recover current SR/RR chain, correlations, and delivery state |
+| `sync_ibs_requests` | IBS tracks in active tickets | **Custom override** | Apply the same complete per-track request, correlation, provenance, and delivery reconciliation as periodic execution |
 | `evaluate_lifecycle_transitions` | Product eligibility and gate-zone Ticket lifecycle reconciliation | **Custom override** | Extract Ticket Products after manual-zone exit → recalculate lifecycle-driven eligibility; EOL actionability itself is derived |
+
+`sync_ibs_requests.catch_up()` has no reduced catch-up algorithm: it
+applies the complete periodic reconciliation independently to every
+relevant IBS track under the Ticket. The fetcher declares no custom
+settings, and operator reruns use the existing generic manual fetcher
+trigger. The complete domain contract remains in
+`docs/features/packages/ibs-submission-tracking.md`.
 
 Note: for NVD, MITRE, and kernel CVE fetchers, `execute()` is global
 (not filtered by ticket status), but they still benefit from
@@ -1874,9 +1881,11 @@ Synchronization" below for the full mechanism.
 `default_schedule` and `FetcherConfig.schedule_override` are interpreted
 as UTC. The Celery app factory validates these settings at module import
 time and raises a `RuntimeError` if they are overridden — this prevents
-any Celery-based process (worker, Beat, consumer) from starting with
-incorrect timezone configuration. See `docs/conventions.md` (Timestamps
-& Timezones) and `docs/configuration.md` (Celery Worker Configuration).
+Celery workers or Beat from starting with incorrect timezone
+configuration. The standalone IBS RabbitMQ consumer does not import the
+Celery application and is outside this validation boundary. See
+`docs/conventions.md` (Timestamps & Timezones) and `docs/configuration.md`
+(Celery Worker Configuration).
 
 **Result handling**: the Celery application is configured with
 `task_ignore_result = True` and **no result backend**. Task return
@@ -2040,9 +2049,10 @@ signal handler** registered in the Celery app module.
 - **Import**: the Celery app module (`backend/app/celery_app.py`)
   imports the handler module to ensure registration occurs in every
   process that loads the Celery app. This is safe because `beat_init` is
-  only emitted when the Beat service starts — workers and the IBS
-  consumer import the same Celery app but never emit `beat_init`, so
-  the registered handler is never called in those processes.
+  only emitted when the Beat service starts — workers import the same
+  Celery app but never emit `beat_init`, so the registered handler is
+  never called in worker processes. The standalone IBS RabbitMQ consumer
+  does not import the Celery app.
 - **Async bridging**: the handler uses a single `asyncio.run()` call on
   an extracted `async def` function, per the sync-to-async bridging
   convention (`docs/conventions.md`, SQLAlchemy Conventions). The
@@ -2913,11 +2923,12 @@ This validation is satisfied by the default redbeat configuration (key =
 `redbeat::lock`, timeout derived from `max_interval * 5` = 300s). It
 fires only if an operator explicitly overrides the defaults.
 
-Since every Celery-based process (worker, Beat, IBS RabbitMQ consumer)
-MUST import the Celery app object to function, the validation is
-inherited automatically — no per-process signal handlers
-(`worker_init`, `beat_init`) are needed for these validations. The
-exception prevents any process from completing initialization.
+Since every Celery-based process (worker and Beat) MUST import the Celery
+app object to function, the validation is inherited automatically — no
+per-process signal handlers (`worker_init`, `beat_init`) are needed for
+these validations. The exception prevents either process from completing
+initialization. The standalone IBS RabbitMQ consumer neither imports the
+Celery app nor inherits these Celery-specific validations.
 
 Additionally, the Beat startup reconciliation (see "Startup
 Reconciliation" above) implicitly validates:
@@ -2932,8 +2943,8 @@ Reconciliation" above) implicitly validates:
 timezone and lock-sentinel validations above, the execution pool
 (`--pool`) is not part of the shared `Celery()` application object —
 it is resolved by each individual worker process from its own CLI
-invocation, and Beat and the IBS consumer have no pool to validate. For
-this reason, pool validation cannot live in the app factory; it is
+invocation, and Beat has no pool to validate. For this reason, pool
+validation cannot live in the app factory; it is
 performed by the Worker Startup Handler below, which runs once per
 worker process before that worker's consumer starts accepting tasks.
 

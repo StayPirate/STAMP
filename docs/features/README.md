@@ -7,8 +7,8 @@ Index of all feature specification domains.
 | Domain | Description |
 |--------|-------------|
 | [Identity](identity/) | User authentication, authorization, and lifecycle management |
-| [Integrations](integrations/) | Technical integration layers with external services |
-| [Packages](packages/) | Package affectedness, release detection, and submission tracking |
+| [Integrations](integrations/) | IBS REST evidence and RabbitMQ wake-up infrastructure |
+| [Packages](packages/) | Package affectedness, release and delivery reconciliation, and maintainership |
 | [Platform](platform/) | Cross-cutting infrastructure and system administration |
 | [Tickets](tickets/) | CVE ingestion, triage, severity, and audit trail |
 
@@ -29,8 +29,8 @@ Index of all feature specification domains.
 
 ### Integrations
 
-- [ibs-integration.md](integrations/ibs-integration.md) — IBS REST API client, endpoints, authentication
-- [ibs-rabbitmq-integration.md](integrations/ibs-rabbitmq-integration.md) — IBS RabbitMQ consumer, connection management
+- [ibs-integration.md](integrations/ibs-integration.md) — IBS REST source and request evidence plus anonymous Product repository downloads
+- [ibs-rabbitmq-integration.md](integrations/ibs-rabbitmq-integration.md) — Standalone IBS RabbitMQ wake-up consumer, heartbeat, and status API
 
 ### Packages
 
@@ -42,7 +42,7 @@ Index of all feature specification domains.
 - [git-product-release-detection.md](packages/git-product-release-detection.md) — Git product-level release detection
 - [product-lifecycle-transitions.md](packages/product-lifecycle-transitions.md) — Reactive Support and EOL reconciliation
 - [product-catalog.md](packages/product-catalog.md) — Product/ProductRepository, SMELT/AIMAAS sync
-- [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — SR/RR tracking via RabbitMQ + periodic sync
+- [ibs-submission-tracking.md](packages/ibs-submission-tracking.md) — IBS request-action evidence and authoritative track delivery reconciliation
 - [package-maintainership.md](packages/package-maintainership.md) — Package-wide maintainer acquisition, authorization, and work routing
 - [maintainer.md](packages/maintainer.md) — Maintainer operations (pending fixes, in-progress, completed)
 - [cpe-package-mapping.md](packages/cpe-package-mapping.md) — CPE-to-package resolution via static mapping file

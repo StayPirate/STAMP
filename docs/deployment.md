@@ -242,6 +242,7 @@ cd backend && uv run python -m app.cli manage-user create \
 | `DEBUG` | `false` | Never enable debug in staging |
 | `IBS_API_URL` | `https://api.suse.de` | |
 | `IBS_USERNAME` / `IBS_PASSWORD` | Service account credentials | |
+| `IBS_RABBITMQ_URL` | Credential-bearing AMQPS URL | Supply through the environment or secret store; never log it |
 
 #### Deployment Steps
 
@@ -269,6 +270,9 @@ cd backend && uv run python -m app.cli manage-user create \
   is known, a deployment workflow will be added to the CI pipeline
   following [Workflow Conventions](#workflow-conventions)
 - IBS/RabbitMQ integration is active — staging receives real events
+- Run the IBS RabbitMQ consumer as its own singleton process. It requires
+  PostgreSQL, uses Redis only for best-effort status heartbeat publication,
+  and has no Celery app or broker dependency
 
 ### Production Deployment
 
@@ -302,6 +306,7 @@ Before the first production deployment:
 - [ ] PostgreSQL provisioned and accessible
 - [ ] Redis provisioned and accessible
 - [ ] IBS service account created (`IBS_USERNAME` / `IBS_PASSWORD`)
+- [ ] IBS RabbitMQ credential-bearing URL supplied securely
 - [ ] SUSE Trust Root CA present in the built image, both at its
       repository-relative path and installed into the system trust store
       (automated by the Dockerfile build — see
@@ -984,6 +989,23 @@ Local environments run one instance of each. Kubernetes deployments must
 enforce singleton constraints unless a future design introduces
 distributed locking or leader election.
 
+The IBS RabbitMQ consumer is a standalone process, not a Celery worker. It
+does not import the Celery application or fetcher registry, consume or publish
+Celery messages, or depend on `CELERY_BROKER_URL`, Redbeat, or a Celery result
+backend. PostgreSQL is required for authoritative selection and reconciliation.
+Redis is non-authoritative and is used only through `REDIS_URL` for the
+best-effort consumer heartbeat.
+
+When enabled, the consumer validates configuration, verifies PostgreSQL, starts
+the best-effort heartbeat, and then connects and establishes its fixed AMQP
+topology. Transient RabbitMQ failures reconnect with exponential backoff from 5
+seconds to a 300-second cap; permanent TLS, authentication, authorization, or
+topology failures exit non-zero for operator correction and orchestrator
+restart. On SIGTERM or SIGINT, the consumer stops new deliveries, gives its one
+in-flight handler at most 30 seconds to finish, then cancels incomplete work and
+closes AMQP resources best-effort. `IBS_RABBITMQ_ENABLED=false` exits cleanly
+without connecting to PostgreSQL, Redis, IBS, or RabbitMQ.
+
 ### Celery Worker Pool Requirement
 
 Every Sentinel worker process (Celery worker and Git worker — see
@@ -1052,10 +1074,14 @@ This property is guaranteed by the following mechanisms:
   before serving requests. Database, schema, bootstrap, or commit failure
   aborts API startup rather than allowing degraded request serving; see
   `docs/features/platform/system-settings.md` (Bootstrap).
-- **The IBS RabbitMQ consumer** connects to RabbitMQ with retry semantics
-  — it operates independently of Beat and workers.
-- **Each process fails fast** if infrastructure dependencies (PostgreSQL,
-  Redis) are unreachable — no process silently waits for another
+- **The IBS RabbitMQ consumer** first verifies PostgreSQL, then starts its
+  best-effort Redis heartbeat and connects to RabbitMQ. PostgreSQL failure is
+  fatal because domain reconciliation cannot proceed. Redis connection or
+  heartbeat-write failure is monitoring degradation: it logs a warning and
+  consumption continues. RabbitMQ unavailability enters the consumer's bounded
+  reconnect loop, so it operates independently of Beat and workers.
+- **Other runtime roles** apply their own feature-defined infrastructure
+  dependency and degradation contracts. No process silently waits for another
   application process.
 
 If a future change introduces an inter-process startup dependency, this
@@ -1112,6 +1138,11 @@ at two levels:
    leave unset — most base images default to UTC). This ensures that
    system-level time functions (`datetime.now()`, file timestamps, log
    entries) are consistent with the Celery scheduler
+
+The Celery import-time validation applies only to Celery-based roles. The IBS
+RabbitMQ consumer does not import the Celery application; its UTC requirement
+is enforced by the process/container environment and its own UTC datetime
+handling.
 
 **Why this matters**: all fetcher cron schedules are expressed in UTC.
 Some external data sources publish at specific UTC times (e.g., EPSS at
@@ -1326,6 +1357,13 @@ The orchestrator MUST set `timeoutSeconds` (Kubernetes) or `timeout`
 (Docker) to at least 5 seconds to accommodate the internal check
 timeouts (2s per dependency, checks concurrent; 5s provides margin for network overhead).
 
+These are generic API-process probes; their PostgreSQL-plus-Redis readiness
+semantics are unchanged by the standalone consumer's dependency model. Monitor
+the IBS consumer through process supervision and
+`GET /api/v1/ibs-consumer/status`. That endpoint reports `disabled` when the
+consumer is configured off and `unreachable` when Redis cannot provide a valid
+fresh heartbeat; both are HTTP 200 operational observations.
+
 ### Redis Durability, Memory, and Persistence
 
 Sentinel uses Redis in two roles, addressed by two configuration URLs
@@ -1333,7 +1371,8 @@ Sentinel uses Redis in two roles, addressed by two configuration URLs
 
 - **Application cache/coordination** (`REDIS_URL`, db 0): session
   liveness cache, login lockout counters, on-demand fetch deduplication
-  locks, CVSS recalculation lock, IBS consumer heartbeat.
+  locks, CVSS recalculation lock, and the IBS consumer's best-effort
+  operational heartbeat.
 - **Celery broker + scheduler** (`CELERY_BROKER_URL`, db 1): task queue
   and `celery-redbeat` schedule entries (including the distributed lock
   used as recovery sentinel).
@@ -1384,6 +1423,13 @@ appendonly no
    (scheduled intervals range from 6 hours to 24 hours). On-demand
    fetches can be re-triggered via the API. The `FetcherRun` table in
    PostgreSQL tracks outcomes — no Celery result backend is used.
+
+The IBS consumer heartbeat is not a task result, delivery checkpoint, or domain
+state. The consumer writes the complete `sentinel:ibs_consumer_status` JSON
+value atomically through `REDIS_URL` every 30 seconds and on status changes,
+with a 60-second TTL. Redis loss or write rejection makes consumer liveness
+temporarily unobservable but does not pause event processing. PostgreSQL and
+the owning periodic fetchers remain the recovery authorities.
 
 #### Memory Configuration
 

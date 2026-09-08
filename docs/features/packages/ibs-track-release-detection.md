@@ -520,10 +520,14 @@ Verified behavior and remaining implementation gates are summarized in
 implementation, retain a sanitized live fixture for every consumed source-info
 and diff shape. The exact unavailable-history discriminator remains unverified.
 
-Before package-commit parser implementation, capture a sanitized deployed
-`suse.obs.package.commit` payload under the field contract and verification gate
-in `../integrations/ibs-rabbitmq-integration.md`. Neither event `srcmd5` nor
-`rev` is required by this detector boundary.
+Sanitized aggregate verification on 2026-09-08 covered 9,620 deployed
+`suse.obs.package.commit` deliveries. Every delivery had non-empty string
+`project` and `package` values, every observed `rev` was a string, no payload
+contained `srcmd5`, and 3,000 deliveries repeated a previously observed
+byte-equivalent payload. This closes the package-commit parser evidence gate.
+The detector consumes only `project` and `package`; the event remains a wake-up
+hint, while source info supplies authoritative current `srcmd5`. Event `rev`,
+delivery order, and duplicate delivery are not checkpoint authority.
 
 ## Cross-references
 

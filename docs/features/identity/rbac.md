@@ -499,7 +499,7 @@ here with the required authorization level and a link to the owning spec.
 
 | Method | Endpoint | Authorization | Owning Spec |
 |--------|----------|---------------|-------------|
-| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#operations-api-integration) |
+| GET | `/api/v1/ibs-consumer/status` | Public (optional auth) | [ibs-rabbitmq-integration](../integrations/ibs-rabbitmq-integration.md#get-ibs-consumer-status) |
 
 ### Maintainer Operations
 

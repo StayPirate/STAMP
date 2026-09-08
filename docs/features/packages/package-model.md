@@ -84,16 +84,17 @@ Delivery progress is tracked independently from affectedness:
 
 - **Delivery status** (`delivery_status` on `TicketPackageTrack`):
   tracks the fix through the maintenance pipeline (PENDING →
-  IN_PROGRESS → RELEASED), derived from SR/RR tracking data
+  IN_PROGRESS → RELEASED), derived from authoritative IBS request-action and
+  source-history evidence
 - **Product release confirmation** (`released_at` on
   `TicketPackageProduct`): confirms the fix appeared in the product's
   update repository via `updateinfo.xml` verification
 
-The `delivery_status` is persisted as a column (not computed from SR/RR
-joins) because the ticket resolution gate queries it frequently and
-anomaly detection benefits from having both axes on the same record.
-Disalignment risk is mitigated by `package_service` and the
-`SyncIbsRequests` reconciliation phase (see
+The `delivery_status` is persisted as a column (not computed from request-action
+joins at query time) because the ticket resolution gate queries it frequently
+and anomaly detection benefits from having both axes on the same record.
+Disalignment risk is mitigated by `package_service` and the authoritative
+`SyncIbsRequests` reconciliation (see
 [Delivery Reconciliation](#delivery-reconciliation)).
 
 ### 5. FIXED as a distinct affectedness state
@@ -276,7 +277,8 @@ authorization, audit, and retention semantics.
 Records the affectedness and delivery status of a source package in a
 specific maintenance track within the context of a ticket. The VA sets
 the affectedness status at this level. The delivery status is maintained
-by the system based on IBS SR/RR tracking data.
+by the system based on the authoritative IBS request-action and provenance
+rules in `ibs-submission-tracking.md`.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -429,21 +431,22 @@ eligibility recalculation skips the product.
 ### Axis 3: Delivery (per track)
 
 Factual observation of the fix's progress through the SUSE maintenance
-pipeline (SR/incident/RR lifecycle at the track level, `updateinfo.xml`
-advisory detection at the product level). Delivery tracking records
-what happened in IBS — it is independent of whether the code is
-vulnerable (affectedness) or whether the product meets threshold
-criteria (eligibility).
+pipeline (request-action/incident provenance at the track level,
+`updateinfo.xml` advisory detection at the product level). Delivery tracking
+records what Sentinel has established from IBS evidence; it is independent of
+whether the code is vulnerable (affectedness) or whether the product meets
+threshold criteria (eligibility).
 
 | State | Meaning | Condition |
 |-------|---------|-----------|
-| `PENDING` | No delivery action yet | No SR created |
-| `IN_PROGRESS` | Fix in the pipeline | SR created, until RR accepted |
-| `RELEASED` | Fix delivered to customers | RR accepted |
+| `PENDING` | Relevant delivery progress has not been established | Initial state, or a complete non-stale reconciliation found no relevant current progress. This does not prove that no SR exists or that synchronization succeeded |
+| `IN_PROGRESS` | Relevant fix delivery is authoritatively in progress | Complete evidence establishes a relevant current SR or effective incident chain, but does not prove that an accepted RR released the effective SR contents |
+| `RELEASED` | Release to the track is proven | Exact accepted-RR and source/target provenance proves that the RR released the effective SR contents; this state is irreversible |
 
-The delivery status is updated by the system when SR/RR state changes
-are detected (via IBS RabbitMQ events or the `SyncIbsRequests`
-catch-up).
+The delivery status is updated only by the shared authoritative IBS request
+reconciliation. IBS RabbitMQ events, package-add catch-up, Ticket-reactivation
+catch-up, and the daily `SyncIbsRequests` fetcher all invoke that same
+reconciliation and cannot establish different results.
 
 The two axes are independent — see
 [Affectedness-Delivery Independence](#affectedness-delivery-independence).
@@ -454,8 +457,10 @@ The `delivery_status` column on `TicketPackageTrack` always contains the
 real system value (`PENDING`, `IN_PROGRESS`, or `RELEASED`). However,
 `PENDING` is the system default and carries no operational meaning when
 the track's affectedness status does not imply that a fix is expected.
-For example, a track with `NOT_AFFECTED + PENDING` simply means no SR
-was ever created — the `PENDING` value is noise, not a signal.
+For example, a track with `NOT_AFFECTED + PENDING` simply means no relevant
+delivery progress has been established; it does not prove whether an SR exists.
+The `PENDING` value is noise in this affectedness context, not a delivery
+signal.
 
 To help API consumers distinguish meaningful delivery states from default
 noise, API responses for tracks include a computed boolean field
@@ -472,13 +477,13 @@ Rules:
 
 - `delivery_relevant = true`: the delivery status has operational
   meaning. Either the track is still being analyzed / is affected (so
-  delivery progress matters), or the delivery pipeline has moved beyond
-  the default (an SR exists or the fix was released).
+  delivery progress matters), or authoritative evidence has moved the delivery
+  state beyond the default.
 - `delivery_relevant = false`: the delivery status is the system default
   (`PENDING`) on a track with a final affectedness status
-  (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`) where no delivery activity was
-  ever detected. Consumers SHOULD treat the delivery status as noise —
-  do not display it or act on it.
+  (`NOT_AFFECTED`, `FIXED`, `WONT_FIX`). Consumers SHOULD treat the delivery
+  status as noise and not display or act on it; `PENDING` does not prove the
+  absence of delivery activity.
 
 When `delivery_relevant = true` **and** the affectedness is
 `NOT_AFFECTED` or `WONT_FIX`, the combination is anomalous: it signals
@@ -499,8 +504,9 @@ MUST include `Field(description=...)` on both fields that conveys the
 consumer-facing guidance:
 
 - `delivery_status`: explain that `PENDING` is the system default and
-  does not imply a fix is expected; reference `delivery_relevant` for
-  operational significance
+  does not imply a fix is expected, prove the absence of an SR, or establish
+  synchronization success; reference `delivery_relevant` for operational
+  significance
 - `delivery_relevant`: explain that when `false`, consumers should not
   display `delivery_status` or make decisions based on it
 
@@ -515,7 +521,7 @@ VA sets track to AFFECTED
 Maintainer prepares fix
         |
         v
-SR (Submission Request) created          --> delivery: IN_PROGRESS
+Relevant SR/current incident proven      --> delivery: IN_PROGRESS
         |
         v
 Incident (SUSE:Maintenance:XXXXX)
@@ -527,7 +533,8 @@ Incident (SUSE:Maintenance:XXXXX)
 RR (Release Request) created
         |
         v
-RR accepted (incident closed)            --> delivery: RELEASED
+RR acceptance and exact source/target provenance proven
+                                          --> delivery: RELEASED
         |
         v
 Fix evidence appears in track source     --> affectedness: FIXED (automatic, via expanded source diff)
@@ -537,14 +544,15 @@ Fix lands in Product repositories (updateinfo.xml) --> released_at set
 ```
 
 The two axes are managed independently:
-- `delivery_status` transitions to `RELEASED` when the RR is accepted
-  (via IBS submission tracking)
+- `delivery_status` transitions to `RELEASED` only when IBS submission
+  tracking proves that an accepted RR released the effective SR contents to
+  the track
 - `status` transitions to `FIXED` when track release detection confirms the
   Ticket CVE in the expanded codestream source diff
 
-In practice, the RR acceptance and the package appearing in the
-codestream happen nearly simultaneously, but Sentinel detects them
-through independent mechanisms.
+RR acceptance by itself is insufficient delivery proof. Sentinel validates the
+effective SR, accepted RR, and target source-history provenance independently
+from track affectedness detection and Product publication detection.
 
 #### Product Release Confirmation
 
@@ -573,15 +581,19 @@ maintenance process. Product confirmation verifies the end result.
 
 #### Delivery Reconciliation
 
-The `SyncIbsRequests` (daily at 02:30 UTC) includes a reconciliation
-phase after its primary catch-up of missed SR/RR events. For every IBS
-track (`workflow_type = 'ibs'`) in active tickets with
-`delivery_status != RELEASED`, it verifies that the persisted
-`delivery_status` is consistent with the current state of the SR/RR data
-in IBS. If a disalignment is found, the `delivery_status` is corrected.
+`SyncIbsRequests` runs the complete state-based reconciliation daily at 02:30
+UTC for every IBS track (`workflow_type = 'ibs'`) belonging to an active
+Ticket, including tracks in every affectedness, delivery, exclusion, and
+actionability state. It is the permanent recovery owner for missed events,
+failed accelerators, request reopens, supersession, first enablement, and long
+gaps while sufficient upstream evidence remains discoverable.
 
-This reconciliation applies only to IBS tracks. Git tracks will have
-their own delivery detection and reconciliation mechanism (TBD).
+Each track observation is classified as complete positive, complete no-match,
+incomplete, or failed under `ibs-submission-tracking.md`. Only a complete
+observation may change delivery. Incomplete, failed, retention-limited,
+ambiguous, or stale evidence preserves the persisted status. This
+reconciliation applies only to IBS tracks. Git tracks will have their own
+delivery detection and reconciliation mechanism (TBD).
 
 ---
 
@@ -596,16 +608,16 @@ context of the current affectedness — see
 
 | Affectedness | Delivery | Relevant | Anomaly | Meaning |
 |-------------|----------|----------|---------|---------|
-| `ANALYSIS` | `PENDING` | Yes | | Not yet analyzed, no SR |
-| `ANALYSIS` | `IN_PROGRESS` | Yes | | SR exists before VA analyzed the track |
+| `ANALYSIS` | `PENDING` | Yes | | Not yet analyzed; relevant delivery progress is not established |
+| `ANALYSIS` | `IN_PROGRESS` | Yes | | Relevant SR/incident progress is established before VA analysis |
 | `ANALYSIS` | `RELEASED` | Yes | | Fix released before VA analyzed the track |
-| `AFFECTED` | `PENDING` | Yes | | Affected, fix expected, no SR yet |
+| `AFFECTED` | `PENDING` | Yes | | Affected, fix expected, relevant delivery progress not established |
 | `AFFECTED` | `IN_PROGRESS` | Yes | | Fix in the pipeline |
 | `AFFECTED` | `RELEASED` | Yes | Yes | Fix released but VA considers it insufficient — needs review |
-| `NOT_AFFECTED` | `PENDING` | **No** | | Not affected; delivery is the system default — not meaningful |
+| `NOT_AFFECTED` | `PENDING` | **No** | | Not affected; default delivery state is not meaningful and proves no negative |
 | `NOT_AFFECTED` | `IN_PROGRESS` | Yes | Yes | SR in progress for unaffected code — possible confusion |
 | `NOT_AFFECTED` | `RELEASED` | Yes | Yes | Fix released for unaffected code — possible confusion |
-| `FIXED` | `PENDING` | **No** | | Fix confirmed via track release detection; no SR submitted yet — delivery not meaningful |
+| `FIXED` | `PENDING` | **No** | | Fix confirmed via track release detection; delivery progress not established and not meaningful here |
 | `FIXED` | `IN_PROGRESS` | Yes | | Fix confirmed, SR still in pipeline |
 | `FIXED` | `RELEASED` | Yes | | Fix confirmed and delivered |
 | `WONT_FIX` | `PENDING` | **No** | | Decided not to fix; delivery is the system default — not meaningful |
@@ -622,7 +634,7 @@ has moved beyond the default, it is always relevant regardless of
 affectedness. Conversely, the three `delivery_relevant = false`
 combinations (`NOT_AFFECTED + PENDING`, `FIXED + PENDING`,
 `WONT_FIX + PENDING`) are never anomalous — they are simply the system
-default with no delivery activity.
+default without established relevant delivery progress.
 
 These anomalous combinations are destined to be integrated into the
 future **Review Queue** — a mechanism that will automatically tag
@@ -669,40 +681,42 @@ eligible as source states for automatic transitions.
 
 | From | To | Trigger |
 |------|----|---------|
-| `PENDING` | `IN_PROGRESS` | SR created (state `open` or `accepted`) for the track |
-| `IN_PROGRESS` | `RELEASED` | RR accepted for the track |
-| `IN_PROGRESS` | `PENDING` | No SR linked to this track remains in `open` or `accepted` state |
+| `PENDING` | `IN_PROGRESS` | Complete authoritative evidence establishes a relevant `new` or `review` SR, effective accepted SR/incident chain, or complete relevant supersession successor |
+| `IN_PROGRESS` | `RELEASED` | Exact accepted-RR and source/target provenance proves release of the effective SR contents to the track |
+| `IN_PROGRESS` | `PENDING` | Complete authoritative reconciliation establishes no relevant current delivery progress, and the negative observation passes the stale-result guard |
+
+When a complete observation proves `RELEASED` while the persisted value is
+`PENDING`, the same transaction applies `PENDING → IN_PROGRESS → RELEASED`.
+No intermediate state is externally committed. An unchanged value is an
+idempotent no-op.
 
 #### Delivery status regression
 
-`delivery_status` can regress from `IN_PROGRESS` back to `PENDING` when
-no submission request linked to the track (via `SubmissionRequestTrack`)
-remains in `open` or `accepted` state. In practice this means all SRs
-are in `revoked` (final), `declined` (non-final — can be reopened), or
-`superseded` (final — but a superseding SR inherits the delivery role;
-see below). This signals to the VA that the maintainer's submission
-attempt has failed and a new submission is needed.
+`delivery_status` can regress from `IN_PROGRESS` to `PENDING` only when the
+shared reconciliation completely exhausts every required discovery root and
+artifact and establishes that no relevant current SR, effective incident, or
+complete relevant supersession successor remains. Exact request states are
+evaluated under `ibs-submission-tracking.md`: `declined`, `revoked`, and
+`deleted` do not establish current progress; a `superseded` request establishes
+progress only through a completely traversed relevant successor chain.
 
-Specific SR state change effects on `delivery_status`:
-
-- **SR `revoked` or `declined`**: evaluate whether any other SR linked to
-  the track is still in `open` or `accepted` state. If none remains,
-  regress `delivery_status` to `PENDING`
-- **SR `superseded`**: no regression — a superseding SR already exists and
-  inherits the delivery role
-- **RR `revoked` or `declined`**: no regression — `delivery_status` remains
-  `IN_PROGRESS`. The RR failure does not invalidate the accepted SR /
-  incident; a new RR can be created from the same incident
+A request-state change alone never proves the negative. A required detail 404,
+missing or retained-away history, search truncation, malformed data, ambiguous
+provenance, or any other incomplete or failed observation preserves
+`IN_PROGRESS`. A complete negative also preserves `IN_PROGRESS` when relevant
+request/action evidence changed after the observation began or the persisted
+delivery value changed during external I/O.
 
 #### RELEASED is irreversible
 
-Once `delivery_status` reaches `RELEASED`, it cannot regress. This is
-guaranteed by the IBS model: `accepted` is a final state for release
-requests, so a released RR cannot be revoked or declined.
+Once `delivery_status` reaches `RELEASED`, it cannot regress. The state records
+an accepted RR whose exact source and target provenance passed the complete
+proof contract at observation time; later disappearance or incomplete evidence
+does not reverse that accepted factual observation.
 
-These transitions are detected via IBS RabbitMQ events
-(`suse.obs.request.create`, `suse.obs.request.state_change`) and the
-`SyncIbsRequests` catch-up mechanism. See
+These transitions are derived by the shared authoritative reconciliation,
+invoked by IBS RabbitMQ wake-ups and the `SyncIbsRequests` scheduled or targeted
+catch-up paths. See
 `docs/features/packages/ibs-submission-tracking.md`.
 
 ### Manual Transitions
@@ -956,14 +970,14 @@ add_package_to_ticket(ticket_id, package_name) -> AddPackageResult
    Existing records and associations are never removed or rewritten.
    Association-only mutation neither auto-assigns nor reconciles the Ticket.
 4. If at least one new `TicketPackageTrack` with `workflow_type = ibs` was
-   created, register one best-effort post-commit effect:
-   - Enqueue `discover_submissions_for_ticket_package(ticket_id,
-     package_name)` to discover IBS submission requests (SRs) and release
-     requests (RRs) for the newly relevant IBS scope. See
-     `docs/features/packages/ibs-submission-tracking.md`, Pipeline 3.
-   This effect runs after commit. Creating only the package marker, only
-   Products, only Git tracks, or only maintainer associations registers no
-   submission-discovery effect.
+   created, register one best-effort post-commit invocation of the existing
+   generic `run_catch_up("sync_ibs_requests", ticket_id)` mechanism. The
+   catch-up uses the complete shared reconciliation for every IBS track now
+   belonging to the Ticket. This effect runs after commit. Creating only the
+   package marker, only Products, only Git tracks, or only maintainer
+   associations registers no request catch-up. The daily complete
+   `sync_ibs_requests` fetcher remains the permanent recovery owner; package
+   addition introduces no dedicated submission discovery or correlation task.
 5. Return an `AddPackageResult` containing:
    - `tracks_created`, `tracks_skipped`, `products_created`,
      `products_skipped`: counts of records created vs. skipped.
@@ -1268,8 +1282,8 @@ different data:
   (automatic) when track release detection finds qualifying canonical evidence
   for the Ticket CVE in the codestream's expanded source diff.
 - The track level updates `TicketPackageTrack.delivery_status` to
-  `RELEASED` when the Release Request (RR) for the track is accepted
-  (via IBS submission tracking).
+  `RELEASED` when IBS submission tracking proves that an accepted Release
+  Request released the effective SR contents to that codestream.
 - The product level sets `TicketPackageProduct.released_at` when the
   fix appears in that specific product's update repository.
 
@@ -1379,7 +1393,7 @@ mechanisms. The permanent ownership boundary is:
 |---------|--------------|--------------------------|--------------------|
 | Package tree | Explicit package addition; Product catalog backfill when a Product becomes newly current | Re-resolution on Ticket reactivation; no periodic per-package SMELT scan | Every persisted package marker on the reactivated Ticket, including soft-deleted markers |
 | Maintainership | Every successful package-target resolution, including a package-tree no-op | A later invocation of the same idempotent package-resolution operation; no periodic owner | Every TicketPackage occurrence, package-wide across IBS and Git/SLFO tracks |
-| SR/RR discovery and correlation | New-IBS-track post-commit discovery; IBS RabbitMQ request events | `sync_ibs_requests` for ordinary active-ticket convergence; targeted historical catch-up on Ticket reactivation | IBS tracks of active Tickets |
+| SR/RR discovery and correlation | New-IBS-track generic per-Ticket catch-up; IBS RabbitMQ request events | Complete daily `sync_ibs_requests` reconciliation | IBS tracks of active Tickets |
 | Track release observation | IBS RabbitMQ `package.commit` | `detect_ibs_track_releases` | IBS tracks of active Tickets |
 | Product advisory observation | None | `detect_ibs_product_releases` | Product occurrences below IBS tracks of active Tickets |
 
@@ -1411,8 +1425,8 @@ The workflow recovers current authoritative facts needed to represent the
 active Ticket; it does not reproduce every external transition that occurred
 while the Ticket was inactive. For example, an already-published valid
 advisory sets `released_at` to its original issue time, and an SR/RR catch-up
-recovers the current request chain and resulting delivery status rather than
-every intermediate request state.
+recovers current authoritative request actions and resulting delivery status
+rather than every intermediate request state.
 
 The ordering above is a behavioral contract. Whether it is implemented with
 task chaining, post-commit callbacks, or another equivalent mechanism is an
@@ -1426,8 +1440,8 @@ rerun of the same complete idempotent workflow for `ticket_id`. Successful
 package units and catch-ups may repeat safely; the rerun does not resume from a
 persisted progress position. The concrete operator interface MUST be defined
 before the workflow is implemented. This is required in particular because
-there is no periodic full-tree SMELT scan and historical SR/RR recovery is
-intentionally targeted to reactivation.
+there is no periodic full-tree SMELT scan; the complete daily request
+reconciliation cannot create a track omitted by package resolution.
 
 ### Checkpoint safety
 
@@ -1489,7 +1503,7 @@ Add a source package to a ticket. Sentinel queries SMELT to resolve all
 maintained tracks and Products and to acquire package-wide maintainership,
 creates package-tree and additive maintainer records via `package_service`,
 and, when at least one new IBS track is created, registers the documented
-post-commit submission-discovery effect.
+post-commit generic `sync_ibs_requests` catch-up.
 See [Adding Packages to a Ticket](#adding-packages-to-a-ticket) for the full
 behavior.
 
@@ -2083,6 +2097,11 @@ Product sync tasks (`sync_smelt_products`, `sync_aimaas_lifecycle`,
 `sync_aimaas_thresholds`) are specified in
 `docs/features/packages/product-catalog.md` (Background Tasks).
 
+- `sync_ibs_requests`: complete daily state-based fetcher (02:30 UTC) that
+  reconciles current IBS request actions and track delivery for all IBS tracks
+  belonging to active Tickets. It is the permanent recovery owner; package-add,
+  reactivation, and RabbitMQ paths invoke the same algorithm only to reduce
+  latency. See `docs/features/packages/ibs-submission-tracking.md`.
 - `detect_ibs_track_releases`: periodic task (every 24 hours at 02:00
   UTC via Celery Beat) that runs the `DetectIbsTrackReleases` fetcher and its
   shared reconciliation boundary. Serves as a catch-up mechanism for events missed by the
